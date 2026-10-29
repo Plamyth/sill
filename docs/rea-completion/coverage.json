@@ -10274,13 +10274,28 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "legacy_evidence_only",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "a23536f00676e43847e7db8ddbeff51079e0e826",
+        "sourceTree": "75d21fc63c608ee53530d33bd644c26cfd01ffa4",
+        "officialSourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "implementationRefs": [
+          "currentProgress.notOfficial.searchA235"
+        ],
+        "implementationStage": "independent_candidate",
+        "integrationStage": "candidate_not_integrated",
+        "reviewState": "pending_exact_union_review",
+        "automaticEvidence": "기존 실행·검수 이력만 참조하며 문서 담당 재실행0. a235 SDK37 최종 Git 입력 일치. exact 합본 검수 대기.",
+        "evidenceRefs": [
+          "R219",
+          "R220"
+        ],
+        "scope": "현재 페이지 첫 유효 native 필기 결과 이동·현재 연 EPUB 검색과 기존 Reader 소비부. 모듈/소비부의 이전 scoped 판정은 exact a235 최종 합본 CLEAR로 전이하지 않는다.",
+        "currentRemaining": "검수 중인 검색a235를 공식ccb의 기능/완료로 올리지 않는다. 전역·OCR·태그·랭킹·다른 페이지 검색과 실제 인식/화면 수용은 별도다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MS25.01"
       }
     },
     {
@@ -10334,13 +10349,28 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "legacy_evidence_only",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "a23536f00676e43847e7db8ddbeff51079e0e826",
+        "sourceTree": "75d21fc63c608ee53530d33bd644c26cfd01ffa4",
+        "officialSourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "implementationRefs": [
+          "currentProgress.notOfficial.searchA235"
+        ],
+        "implementationStage": "independent_candidate",
+        "integrationStage": "candidate_not_integrated",
+        "reviewState": "pending_exact_union_review",
+        "automaticEvidence": "기존 실행·검수 이력만 참조하며 문서 담당 재실행0. a235 SDK37 최종 Git 입력 일치. exact 합본 검수 대기.",
+        "evidenceRefs": [
+          "R219",
+          "R220"
+        ],
+        "scope": "현재 페이지 첫 유효 native 필기 결과 이동·현재 연 EPUB 검색과 기존 Reader 소비부. 모듈/소비부의 이전 scoped 판정은 exact a235 최종 합본 CLEAR로 전이하지 않는다.",
+        "currentRemaining": "검수 중인 검색a235를 공식ccb의 기능/완료로 올리지 않는다. 전역·OCR·태그·랭킹·다른 페이지 검색과 실제 인식/화면 수용은 별도다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MS25.02"
       }
     },
     {
@@ -10397,13 +10427,28 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "legacy_evidence_only",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "a23536f00676e43847e7db8ddbeff51079e0e826",
+        "sourceTree": "75d21fc63c608ee53530d33bd644c26cfd01ffa4",
+        "officialSourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "implementationRefs": [
+          "currentProgress.notOfficial.searchA235"
+        ],
+        "implementationStage": "independent_candidate",
+        "integrationStage": "candidate_not_integrated",
+        "reviewState": "pending_exact_union_review",
+        "automaticEvidence": "기존 실행·검수 이력만 참조하며 문서 담당 재실행0. a235 SDK37 최종 Git 입력 일치. exact 합본 검수 대기.",
+        "evidenceRefs": [
+          "R219",
+          "R220"
+        ],
+        "scope": "현재 페이지 첫 유효 native 필기 결과 이동·현재 연 EPUB 검색과 기존 Reader 소비부. 모듈/소비부의 이전 scoped 판정은 exact a235 최종 합본 CLEAR로 전이하지 않는다.",
+        "currentRemaining": "검수 중인 검색a235를 공식ccb의 기능/완료로 올리지 않는다. 전역·OCR·태그·랭킹·다른 페이지 검색과 실제 인식/화면 수용은 별도다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MS25.03"
       }
     },
     {
@@ -13767,13 +13812,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.PDFBookmarksC899"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_BOOKMARKS_EPUB_RUNNER_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R207",
+          "R208",
+          "R209"
+        ],
+        "scope": "CCR PDF 물리 페이지 책갈피의 명시 추가/제거·같은 원문 이동·기존 sidecar/복구 저장. MM11 Mac 관측과 MI12 iPad의 evidence_incomplete는 서로 전이하지 않음.",
+        "currentRemaining": "책갈피 모듈 없음/미통합 설명은 현재가 아니다. 제목/미리보기·원앱 iPad 지원·UIKit 화면·기기 저장/재열기 수용은 여전히 별도다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM11.03"
       }
     },
     {
@@ -14200,30 +14259,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
-        "implementationRefs": [],
-        "implementationStage": "independent_candidate",
-        "automaticEvidence": "Nash가 원19입력/원반례·확장10조건을 재사용해68b의 두P2를 scoped SOURCE_CLEAR로 닫았다. Ohm은70b 실제HTTP100을 별도 scoped evidence CLEAR로 수용했다. 새 native/SDK/HTTP 실행0.",
-        "integrationStage": "not_integrated_in_official_f4",
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.EPUB311b"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_EPUB_GROUP_PAPER_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R204",
+          "R205",
+          "R206"
+        ],
+        "scope": "검수된 제한 EPUB parser/Reader·Store의 가져오기, 원문/UTF16/quote/NCX 복귀와 전체 문서/Files 보존 경로. 전역 문서 검색·임의 서식·원앱 모든 리플로 행동 수용은 아님.",
+        "currentRemaining": "EPUB 모듈 없음/미통합부터 다시 구현하지 않는다. 공식311b→c899→1516→ccb에 보존됨. 원앱별 미관측·글꼴 변경 뒤 실제 화면·iPad·정상runtime은 별도이며 검색a235도 미통합 후보다.",
         "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
         "currentPhysicalAcceptance": false,
-        "sourceTree": "cee71266f8638cc48e23b077562840d8093ae139",
-        "evidenceRefs": [
-          "R189",
-          "R190",
-          "R197",
-          "R198",
-          "R199",
-          "R200",
-          "R201",
-          "R202",
-          "R203"
-        ],
-        "currentRemaining": "현재 공식은f4다. 결합1e4는 SDK/source-repairs10만0이며 부모의 whole Files·역수신·새Store 교차검사는 진행 중이다. 원앱 전체 동등성·최종 기기·정상runtime 수용은 여전히 미완료다.",
         "appRuntimeAccepted": false,
         "testAccepted": false,
         "wholeFeatureComplete": false,
-        "historyLocator": "/currentProgress/previousRowsAtCd5/MM12.01"
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM12.01"
       }
     },
     {
@@ -14271,30 +14327,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
-        "implementationRefs": [],
-        "implementationStage": "independent_candidate",
-        "automaticEvidence": "Nash가 원19입력/원반례·확장10조건을 재사용해68b의 두P2를 scoped SOURCE_CLEAR로 닫았다. Ohm은70b 실제HTTP100을 별도 scoped evidence CLEAR로 수용했다. 새 native/SDK/HTTP 실행0.",
-        "integrationStage": "not_integrated_in_official_f4",
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.EPUB311b"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_EPUB_GROUP_PAPER_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R204",
+          "R205",
+          "R206"
+        ],
+        "scope": "검수된 제한 EPUB parser/Reader·Store의 가져오기, 원문/UTF16/quote/NCX 복귀와 전체 문서/Files 보존 경로. 전역 문서 검색·임의 서식·원앱 모든 리플로 행동 수용은 아님.",
+        "currentRemaining": "EPUB 모듈 없음/미통합부터 다시 구현하지 않는다. 공식311b→c899→1516→ccb에 보존됨. 원앱별 미관측·글꼴 변경 뒤 실제 화면·iPad·정상runtime은 별도이며 검색a235도 미통합 후보다.",
         "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
         "currentPhysicalAcceptance": false,
-        "sourceTree": "cee71266f8638cc48e23b077562840d8093ae139",
-        "evidenceRefs": [
-          "R189",
-          "R190",
-          "R197",
-          "R198",
-          "R199",
-          "R200",
-          "R201",
-          "R202",
-          "R203"
-        ],
-        "currentRemaining": "현재 공식은f4다. 결합1e4는 SDK/source-repairs10만0이며 부모의 whole Files·역수신·새Store 교차검사는 진행 중이다. 원앱 전체 동등성·최종 기기·정상runtime 수용은 여전히 미완료다.",
         "appRuntimeAccepted": false,
         "testAccepted": false,
         "wholeFeatureComplete": false,
-        "historyLocator": "/currentProgress/previousRowsAtCd5/MM12.02"
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM12.02"
       }
     },
     {
@@ -15289,30 +15342,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
-        "implementationRefs": [],
-        "implementationStage": "independent_candidate",
-        "automaticEvidence": "Nash가 원19입력/원반례·확장10조건을 재사용해68b의 두P2를 scoped SOURCE_CLEAR로 닫았다. Ohm은70b 실제HTTP100을 별도 scoped evidence CLEAR로 수용했다. 새 native/SDK/HTTP 실행0.",
-        "integrationStage": "not_integrated_in_official_f4",
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.EPUB311b"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_EPUB_GROUP_PAPER_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R204",
+          "R205",
+          "R206"
+        ],
+        "scope": "검수된 제한 EPUB parser/Reader·Store의 가져오기, 원문/UTF16/quote/NCX 복귀와 전체 문서/Files 보존 경로. 전역 문서 검색·임의 서식·원앱 모든 리플로 행동 수용은 아님.",
+        "currentRemaining": "EPUB 모듈 없음/미통합부터 다시 구현하지 않는다. 공식311b→c899→1516→ccb에 보존됨. 원앱별 미관측·글꼴 변경 뒤 실제 화면·iPad·정상runtime은 별도이며 검색a235도 미통합 후보다.",
         "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
         "currentPhysicalAcceptance": false,
-        "sourceTree": "cee71266f8638cc48e23b077562840d8093ae139",
-        "evidenceRefs": [
-          "R189",
-          "R190",
-          "R197",
-          "R198",
-          "R199",
-          "R200",
-          "R201",
-          "R202",
-          "R203"
-        ],
-        "currentRemaining": "현재 공식은f4다. 결합1e4는 SDK/source-repairs10만0이며 부모의 whole Files·역수신·새Store 교차검사는 진행 중이다. 원앱 전체 동등성·최종 기기·정상runtime 수용은 여전히 미완료다.",
         "appRuntimeAccepted": false,
         "testAccepted": false,
         "wholeFeatureComplete": false,
-        "historyLocator": "/currentProgress/previousRowsAtCd5/MM16.01"
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM16.01"
       }
     },
     {
@@ -15360,13 +15410,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.EPUB311b"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_EPUB_GROUP_PAPER_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R204",
+          "R205",
+          "R206"
+        ],
+        "scope": "검수된 제한 EPUB parser/Reader·Store의 가져오기, 원문/UTF16/quote/NCX 복귀와 전체 문서/Files 보존 경로. 전역 문서 검색·임의 서식·원앱 모든 리플로 행동 수용은 아님.",
+        "currentRemaining": "EPUB 모듈 없음/미통합부터 다시 구현하지 않는다. 공식311b→c899→1516→ccb에 보존됨. 원앱별 미관측·글꼴 변경 뒤 실제 화면·iPad·정상runtime은 별도이며 검색a235도 미통합 후보다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM16.02"
       }
     },
     {
@@ -15414,30 +15478,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
-        "implementationRefs": [],
-        "implementationStage": "independent_candidate",
-        "automaticEvidence": "Nash가 원19입력/원반례·확장10조건을 재사용해68b의 두P2를 scoped SOURCE_CLEAR로 닫았다. Ohm은70b 실제HTTP100을 별도 scoped evidence CLEAR로 수용했다. 새 native/SDK/HTTP 실행0.",
-        "integrationStage": "not_integrated_in_official_f4",
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.EPUB311b"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_EPUB_GROUP_PAPER_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R204",
+          "R205",
+          "R206"
+        ],
+        "scope": "검수된 제한 EPUB parser/Reader·Store의 가져오기, 원문/UTF16/quote/NCX 복귀와 전체 문서/Files 보존 경로. 전역 문서 검색·임의 서식·원앱 모든 리플로 행동 수용은 아님.",
+        "currentRemaining": "EPUB 모듈 없음/미통합부터 다시 구현하지 않는다. 공식311b→c899→1516→ccb에 보존됨. 원앱별 미관측·글꼴 변경 뒤 실제 화면·iPad·정상runtime은 별도이며 검색a235도 미통합 후보다.",
         "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
         "currentPhysicalAcceptance": false,
-        "sourceTree": "cee71266f8638cc48e23b077562840d8093ae139",
-        "evidenceRefs": [
-          "R189",
-          "R190",
-          "R197",
-          "R198",
-          "R199",
-          "R200",
-          "R201",
-          "R202",
-          "R203"
-        ],
-        "currentRemaining": "현재 공식은f4다. 결합1e4는 SDK/source-repairs10만0이며 부모의 whole Files·역수신·새Store 교차검사는 진행 중이다. 원앱 전체 동등성·최종 기기·정상runtime 수용은 여전히 미완료다.",
         "appRuntimeAccepted": false,
         "testAccepted": false,
         "wholeFeatureComplete": false,
-        "historyLocator": "/currentProgress/previousRowsAtCd5/MM16.03"
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM16.03"
       }
     },
     {
@@ -15485,13 +15546,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.EPUB311b"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_EPUB_GROUP_PAPER_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R204",
+          "R205",
+          "R206"
+        ],
+        "scope": "검수된 제한 EPUB parser/Reader·Store의 가져오기, 원문/UTF16/quote/NCX 복귀와 전체 문서/Files 보존 경로. 전역 문서 검색·임의 서식·원앱 모든 리플로 행동 수용은 아님.",
+        "currentRemaining": "EPUB 모듈 없음/미통합부터 다시 구현하지 않는다. 공식311b→c899→1516→ccb에 보존됨. 원앱별 미관측·글꼴 변경 뒤 실제 화면·iPad·정상runtime은 별도이며 검색a235도 미통합 후보다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM16.04"
       }
     },
     {
@@ -16773,13 +16848,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.hierarchyOutlineCcb"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_OUTLINE_COMMON_REPAIR_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R214",
+          "R215",
+          "R216"
+        ],
+        "scope": "같은 원본 카드 ID/접힘/선택을 쓰는 지도↔개요와 기존 초점/그룹/태그 표시 범위. 새 영속 트리 없이 공통 Undo·입력 장벽을 사용.",
+        "currentRemaining": "개요 보기 없음/미통합 설명은 현재가 아니다. 개요 출력·임의 스타일/정렬·깊은 일괄 접기·원앱 iPad/실제 UIKit 수용은 이 범위에서 닫지 않는다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM23.01"
       }
     },
     {
@@ -16831,13 +16920,28 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.hierarchyFocus1516"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_HIERARCHY_FOCUS_TEARDOWN_REPAIR와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R210",
+          "R211",
+          "R213",
+          "R212"
+        ],
+        "scope": "기존 canonical 전체 원본을 보존한 선택 카드/자손 표시, 자식→상위→전체 복귀와 페이지별 초점/방문 이력. 설정 타입 CAS 및 임시 뷰 Undo 수리 포함.",
+        "currentRemaining": "초점/복귀를 새 모델로 재구현하지 않는다. 원앱 R085는 Mac 관측이며 실제 iPad·UIKit teardown·Pencil·정상 UserDefaults 내구성은 미수용이다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM23.02"
       }
     },
     {
@@ -16889,13 +16993,28 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.hierarchyFocus1516"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_HIERARCHY_FOCUS_TEARDOWN_REPAIR와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R210",
+          "R211",
+          "R213",
+          "R212"
+        ],
+        "scope": "기존 canonical 전체 원본을 보존한 선택 카드/자손 표시, 자식→상위→전체 복귀와 페이지별 초점/방문 이력. 설정 타입 CAS 및 임시 뷰 Undo 수리 포함.",
+        "currentRemaining": "초점/복귀를 새 모델로 재구현하지 않는다. 원앱 R085는 Mac 관측이며 실제 iPad·UIKit teardown·Pencil·정상 UserDefaults 내구성은 미수용이다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM23.03"
       }
     },
     {
@@ -17224,13 +17343,29 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "d83471cab2a31bb1f3739ebfa63d3a618e84d9ef",
+        "sourceTree": "6d480632edbd26a46269cb07e000da0469d66271",
+        "officialSourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "implementationRefs": [
+          "currentProgress.notOfficial.clozeRepairD834"
+        ],
+        "implementationStage": "independent_candidate",
+        "integrationStage": "candidate_not_integrated",
+        "reviewState": "CHANGES_REQUESTED",
+        "automaticEvidence": "기존 실행·검수 이력만 참조하며 문서 담당 재실행0. d834 원5반례/R2 해소와 새 parsed-boundary P2를 구분.",
+        "evidenceRefs": [
+          "R221",
+          "R222",
+          "R223"
+        ],
+        "scope": "원5 code 반례와 R2는 해소됐으나 parsed-boundary의 새2반례가 남는다. 기존 native/SDK 성공과 실패 이력은 보존하며 완료 행으로 승격하지 않는다.",
+        "currentRemaining": "parsed-boundary P2를 원저자가 수리·독립 재검수하기 전 수용하지 않는다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM25.04"
       }
     },
     {
@@ -18209,13 +18344,28 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "legacy_evidence_only",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "a23536f00676e43847e7db8ddbeff51079e0e826",
+        "sourceTree": "75d21fc63c608ee53530d33bd644c26cfd01ffa4",
+        "officialSourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "implementationRefs": [
+          "currentProgress.notOfficial.searchA235"
+        ],
+        "implementationStage": "independent_candidate",
+        "integrationStage": "candidate_not_integrated",
+        "reviewState": "pending_exact_union_review",
+        "automaticEvidence": "기존 실행·검수 이력만 참조하며 문서 담당 재실행0. a235 SDK37 최종 Git 입력 일치. exact 합본 검수 대기.",
+        "evidenceRefs": [
+          "R219",
+          "R220"
+        ],
+        "scope": "현재 페이지 첫 유효 native 필기 결과 이동·현재 연 EPUB 검색과 기존 Reader 소비부. 모듈/소비부의 이전 scoped 판정은 exact a235 최종 합본 CLEAR로 전이하지 않는다.",
+        "currentRemaining": "검수 중인 검색a235를 공식ccb의 기능/완료로 올리지 않는다. 전역·OCR·태그·랭킹·다른 페이지 검색과 실제 인식/화면 수용은 별도다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM31.01"
       }
     },
     {
@@ -18437,13 +18587,28 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "legacy_evidence_only",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "a23536f00676e43847e7db8ddbeff51079e0e826",
+        "sourceTree": "75d21fc63c608ee53530d33bd644c26cfd01ffa4",
+        "officialSourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "implementationRefs": [
+          "currentProgress.notOfficial.searchA235"
+        ],
+        "implementationStage": "independent_candidate",
+        "integrationStage": "candidate_not_integrated",
+        "reviewState": "pending_exact_union_review",
+        "automaticEvidence": "기존 실행·검수 이력만 참조하며 문서 담당 재실행0. a235 SDK37 최종 Git 입력 일치. exact 합본 검수 대기.",
+        "evidenceRefs": [
+          "R219",
+          "R220"
+        ],
+        "scope": "현재 페이지 첫 유효 native 필기 결과 이동·현재 연 EPUB 검색과 기존 Reader 소비부. 모듈/소비부의 이전 scoped 판정은 exact a235 최종 합본 CLEAR로 전이하지 않는다.",
+        "currentRemaining": "검수 중인 검색a235를 공식ccb의 기능/완료로 올리지 않는다. 전역·OCR·태그·랭킹·다른 페이지 검색과 실제 인식/화면 수용은 별도다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MM31.05"
       }
     },
     {
@@ -23284,13 +23449,27 @@
         "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
-        "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "sourceBasis": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "implementationRefs": [
+          "currentProgress.sourceIntegratedFollowups.PDFBookmarksC899"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "SOURCE_CLEAR_SCOPED_BOOKMARKS_EPUB_RUNNER_COMPOSITION와 해당 exact 입력/기존 실행 근거 재사용. 문서 담당 제품 검사 실행0.",
+        "evidenceRefs": [
+          "R207",
+          "R208",
+          "R209"
+        ],
+        "scope": "CCR PDF 물리 페이지 책갈피의 명시 추가/제거·같은 원문 이동·기존 sidecar/복구 저장. MM11 Mac 관측과 MI12 iPad의 evidence_incomplete는 서로 전이하지 않음.",
+        "currentRemaining": "책갈피 모듈 없음/미통합 설명은 현재가 아니다. 제목/미리보기·원앱 iPad 지원·UIKit 화면·기기 저장/재열기 수용은 여전히 별도다.",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtF4/MI12.05"
       }
     },
     {
@@ -31041,6 +31220,195 @@
       "locator": "사용자의 EPUB68b/HTTP 검수 수용 후속을 보존 영수증으로 대조. 문서 담당 새 native/SDK/HTTP/GUI/기기 실행0.",
       "role": "candidate1e4_standard_source_repairs10_exit0_not_whole_cross_acceptance",
       "reaEvidenceIds": []
+    },
+    "R204": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-311b3bc4.json",
+      "exists": true,
+      "bytes": 811,
+      "sha256": "fa278b5a84b4eaad9f73e6647508f9f493df9d5a9b1832288837c041eb2308ed",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "official_integration_311b3bc4",
+      "reaEvidenceIds": []
+    },
+    "R205": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/epub-group-paper-union-independent-review-311b3bc4-20261029-ohm/result.json",
+      "exists": true,
+      "bytes": 7162,
+      "sha256": "4b602f4a78254674434d5a4027b3c6bd0799faba18ee57c57cd4e80adf9f316f",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "311b3bc4_sourceReview",
+      "reaEvidenceIds": []
+    },
+    "R206": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/epub-group-paper-composition-20261029/SOURCE-BINDING-311b3bc4.json",
+      "exists": true,
+      "bytes": 2117,
+      "sha256": "5d4a227a77650d4ea465eaea83f7bc3b50c0a748d30330adac1e5bd982f6d5ff",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "311b3bc4_sourceEvidence",
+      "reaEvidenceIds": []
+    },
+    "R207": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-c8992bbe.json",
+      "exists": true,
+      "bytes": 805,
+      "sha256": "5533f1d3f6ec04ca5a18f1fffd8dffe2652bba1a2ff892dc39b7a0ed12c4921c",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "official_integration_c8992bbe",
+      "reaEvidenceIds": []
+    },
+    "R208": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/pdf-bookmarks-union-independent-review-c8992bbe-20261029-ohm/result.json",
+      "exists": true,
+      "bytes": 5184,
+      "sha256": "97d51f3fd19c6d524b80e01ccec701ba62329ada977a50831eb58edc206e4090",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "c8992bbe_sourceReview",
+      "reaEvidenceIds": []
+    },
+    "R209": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/pdf-bookmarks-final-union-20261029/SOURCE-BINDING-c8992bbe.json",
+      "exists": true,
+      "bytes": 1616,
+      "sha256": "b3e178383738d90f236bc795dd1ae768c395d53da67c229541173b5c6d6d3753",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "c8992bbe_sourceEvidence",
+      "reaEvidenceIds": []
+    },
+    "R210": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-1516fa0d.json",
+      "exists": true,
+      "bytes": 996,
+      "sha256": "72a782b45e01466b4f26a4a1d27453d25eab08e8a060576b8f55728c49a7b789",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "official_integration_1516fa0d",
+      "reaEvidenceIds": []
+    },
+    "R211": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/hierarchy-focus-teardown-independent-review-1516fa0d-20261029/result.json",
+      "exists": true,
+      "bytes": 5068,
+      "sha256": "c1f40df67ec94ef9ac4252dbc3bb926b3fd064c7c96cafdf4db8215f2bc6d843",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "1516fa0d_sourceReview",
+      "reaEvidenceIds": []
+    },
+    "R212": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/hierarchy-focus-pref-repair-independent-review-c3addfa3/result.json",
+      "exists": true,
+      "bytes": 3386,
+      "sha256": "5bf8ca40ff3b8aaa2d581fd15a1faeef7e6778d52f67ce4f2351802f1a6ddd71",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "1516fa0d_preferenceReview",
+      "reaEvidenceIds": []
+    },
+    "R213": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/hierarchy-focus-teardown-repair-20261029/HANDOFF-1516fa0d.json",
+      "exists": true,
+      "bytes": 6436,
+      "sha256": "72f8222329b0fec184529aaaad2c8599a55b22c263406a3b5677ba5a1c57ac2f",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "1516fa0d_sourceEvidence",
+      "reaEvidenceIds": []
+    },
+    "R214": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-ccb7578d.json",
+      "exists": true,
+      "bytes": 1015,
+      "sha256": "4046dd7e59f8ec06f890069441c26ecd13eecc292e002d8c9ebbc0d610d58dd5",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "official_integration_ccb7578d",
+      "reaEvidenceIds": []
+    },
+    "R215": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/hierarchy-outline-union-independent-review-ccb7578d-20261029-ohm/result.json",
+      "exists": true,
+      "bytes": 7678,
+      "sha256": "a9d868f01f2b014d3ebd32544f6faa332fe2538beca4665449e893f6d36a2258",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "ccb7578d_sourceReview",
+      "reaEvidenceIds": []
+    },
+    "R216": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/hierarchy-outline-final-union-20261029/HANDOFF-ccb7578d.json",
+      "exists": true,
+      "bytes": 5880,
+      "sha256": "cd2940d8fc4cce65d94462b528ad5a42ae6dbae24638f398555cf47125ebf313",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "ccb7578d_sourceEvidence",
+      "reaEvidenceIds": []
+    },
+    "R217": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/sourceguard-integration-ccb7578d.json",
+      "exists": true,
+      "bytes": 372,
+      "sha256": "a17ae56e6ef35a6660be6f93ceb1dc881a5c7a258c372c8908b3d248cc6b17d2",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "sourceguard-integration-ccb7578d",
+      "reaEvidenceIds": []
+    },
+    "R218": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/release-observation-ccb7578d.json",
+      "exists": true,
+      "bytes": 5263,
+      "sha256": "010206c4f0e3c64f151586dad29a765e93ef891ea856c3aff85b3fd9615e8e11",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "release-observation-ccb7578d",
+      "reaEvidenceIds": []
+    },
+    "R219": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/search-accepted-union-20261029/SOURCE-BINDING-a23536f0.json",
+      "exists": true,
+      "bytes": 4467,
+      "sha256": "06afd419b41196d70b69ede1a491cae0313fe4edbff5d449265a8681b9f6f21c",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "search_a235_candidate_binding_review_pending",
+      "reaEvidenceIds": []
+    },
+    "R220": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/search-accepted-union-20261029/search-navigation-2485e574-7979-470b-9aeb-5b15f4c75d68/result.json",
+      "exists": true,
+      "bytes": 17568,
+      "sha256": "e1dfef3820f4b0eea188ba8d898f229590e2fc9cf0ff568888062b869591e2e1",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "search_a235_exact_SDK37",
+      "reaEvidenceIds": []
+    },
+    "R221": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/cloze-independent-review-8938c239-20261029/result.json",
+      "exists": true,
+      "bytes": 2701,
+      "sha256": "868c0d1e8feb2ac79704e59c99ea3606a4d0c3ae230fdd25c0fbcdc7a9c991a5",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "cloze-independent-review-8938c239-20261029",
+      "reaEvidenceIds": []
+    },
+    "R222": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/cloze-repair-independent-review-f453cbc5-20261029/result.json",
+      "exists": true,
+      "bytes": 1798,
+      "sha256": "c29cef6a1752514928557f84a6fd2770d4fccd3ec4599743ab37b172c3e12c08",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "cloze-repair-independent-review-f453cbc5-20261029",
+      "reaEvidenceIds": []
+    },
+    "R223": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/cloze-markdown-context-independent-review-d83471ca-20261029/result.json",
+      "exists": true,
+      "bytes": 1828,
+      "sha256": "d6140fb3dd471d313d65467e5c91d8716acaf7cb06730e7022fe0cef2dac6557",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "cloze-markdown-context-independent-review-d83471ca-20261029",
+      "reaEvidenceIds": []
+    },
+    "R224": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/coverage-progress-ccb7578d-20261029/evidence/CURRENT-RESUME-snapshot.md",
+      "exists": true,
+      "bytes": 53056,
+      "sha256": "0694026c27dabe24b6822efe9880499da368982839529cbd7216b908a1c6a6ef",
+      "locator": "공식 ccb와 사용자 지정 검색 검수 대기·Cloze 미수용을 고정한 기존 근거. 이번 문서 작업의 새 제품 실행은 없음.",
+      "role": "parent_resume_fixed_local_snapshot",
+      "reaEvidenceIds": []
     }
   },
   "limitations": [
@@ -32357,123 +32725,142 @@
   ],
   "currentProgress": {
     "schema": "ccr.rea-current-implementation/v1",
-    "recordedAt": "2026-10-29T13:39:19+09:00",
-    "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-    "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+    "recordedAt": "2026-10-29T05:59:19.280291+00:00",
+    "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+    "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
     "officialEvidenceRefs": [
-      "R193",
-      "R194",
-      "R195",
-      "R196"
+      "R214",
+      "R215",
+      "R216",
+      "R217",
+      "R218"
     ],
     "sourceFiles": {
       "iOSClient/CanvasBridge/CanvasStore.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
-        "sha256": "0303895e3c63d02277dda3b2ab651cbfe6dbec829eef54e3e0fdcac8ef121dd7",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "2637d648bd1a67d78696c575a20a378155bfeca189a66ebe982e0032b1af26a3",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasWorkspace.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
-        "sha256": "a040721d898f89064fb4fcce0336046091cea10bc5dddf319298c4e41a8977bc",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "7df753bf6fb39b07c497571df0a0c38ffbf9d8f166ad2cc08da1c5486623967d",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasDocumentFiles.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "773fca39de1fd449933a28a8c52f5cc9901fcebd7cc3237f3631370d30144b70",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasDocument.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "990c76f6a1dc6fa1fc000bc55da24f6d99b09bc64b628f0aa454256f45c12c3f",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasModel.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "edd23ee591af91f4a1c2ff9bc0b57e9e86055f3fb3d3a75804b6e90c5e82ec28",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/PencilCanvas.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
-        "sha256": "d17a2f7a40d654a6b8c865fac724e54ecec53ec24916cfecb0d143a5270a508f",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "27b842741e8ea6a07436a3b666bb1954d969c8c74ffea360a3582d9b893f319c",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/Sill.xcodeproj/project.pbxproj": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
-        "sha256": "17404648ddf1a227b42e8cf70585f9397c3bd82fd35644663ff74246371a68c3",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "9909cba5cabd3284d98828dab686f4a38b960ad5f57e64344d193a86b232b3b5",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasRelay.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
-        "sha256": "9abe8d8bf84532b2128a405e9f4541e67b86abb9135cab83c9dd8932fc34fa42",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "f08632229418b4df8242071f641fe4acd94efa8285555a7e59357e13845e9d37",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasDocumentRelay.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "9d06c3fbf2efc6e1fd8a73e7099767f1947ae251b14559b10c2609ba24e3cb2b",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "CanvasRelay/relay/obsidian-vault.js": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
-        "sha256": "381c6beab5ddb8f7a3a4e8d0f4f6997ac7ce319199d33e7797a190f8eba3d0c9",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "0ca0706906edbb5a3dfcc2cf857a8e33878de46c0e9d97b2d5e7c8eaed6ad7f0",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "CanvasRelay/relay/canvas-document.js": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "def2e11dddcd3742d6d98459b32e1b36fc8dccb5c6466e2044ce9553e029634b",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasCardMerge.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "8e4c31275d92e29264ed86650f049891f75056f79cd5945dad99c6c84f57586d",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasCardTags.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "668986ac8b56abf0c175b6b1754ab8c6a141345000086717960b84121ec30097",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/CanvasPeleView.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "260acfbc924ae2f4d8f61a35dc9b46424fd2bbcc4ad0ab3bd44be3527d2a8ed9",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "CanvasRelay/relay/canvas-card-tags.js": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "5057b32868e11e9c5a23f7220337fc2a89964fcb7c35846773584ae19cb5b236",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/VaultPDFViewState.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
-        "sha256": "d8e00981f1abbb3a17314e194cc4064d513f6872c1c78976e82b3207ae302de5",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "88d07b3c29413e149c9bbc17ea52ab788161f8730d7c41b4e2573de19ca6c5c3",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/VaultPDFReader.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
-        "sha256": "c06bfda49e57dd69ec3fee2e553f5c95fe451914b1adbab01d2b8945fe7e37a5",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "62202e4b2ec6772bc7135caba23989eb9af7c74bc424b644c53ecd6b2556284e",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       },
       "iOSClient/CanvasBridge/SceneRenderer.swift": {
-        "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
         "sha256": "85e5de80f2f1774c354ea8f010cc98982fb4e65353cd3697ffaf15aa615f5f78",
-        "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
+      },
+      "iOSClient/CanvasBridge/VaultEPUB.swift": {
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "1282e0114688f02c2d70c0fc5d34bc25e909db7012655c095fecb773bc96d987",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
+      },
+      "iOSClient/CanvasBridge/VaultEPUBExcerpt.swift": {
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "4a3b76284f166958d11ca3f7a576f8008e601b49ff813b000af28f46a19dd1ce",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
+      },
+      "iOSClient/CanvasBridge/VaultEPUBReader.swift": {
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "sha256": "aa9f93d6397c293c705e2189391548af04904603635308b15bf91349fe9b1a81",
+        "inspection": "고정 ccb Git blob의 존재·SHA 참조 확인. 새 source 기능 검수나 native/SDK/HTTP 실행 아님."
       }
     },
     "moduleReviewBindings": [
@@ -33016,61 +33403,46 @@
       }
     },
     "notOfficial": {
-      "EPUBProduct": {
-        "productCommit": "70b3dc55c7b6a5d4ba04fcca111647275d1f65fd",
-        "productTree": "593ee57f0225fd80e8ceb3d8f05fbcf41dc7b9a1",
-        "followupCommit": "b979e9f031a439d046c0ed546ff882af96652fa6",
-        "followupTree": "37780af120c126d48745972e9260be4d44b51c88",
-        "sameProductBytes": true,
-        "exactSDKExitCodes": [
-          0,
-          0,
-          0
-        ],
-        "independentProductReview": "historical_70b_two_P2_resolved_by_scoped_68b_review",
-        "actualHTTP": "author_scoped_pass_100_observations_at_70b",
-        "integratedInCd5": false,
+      "searchA235": {
+        "sourceCommit": "a23536f00676e43847e7db8ddbeff51079e0e826",
+        "sourceTree": "75d21fc63c608ee53530d33bd644c26cfd01ffa4",
+        "baseOfficial": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "reviewState": "pending_exact_union_review",
+        "SDKInputCount": 37,
+        "SDKInputsMatchFinalGit": true,
         "evidenceRefs": [
-          "R189",
-          "R190",
-          "R197",
-          "R198",
-          "R199",
-          "R200",
-          "R201"
+          "R219",
+          "R220"
         ],
-        "wholeEPUBAccepted": false,
-        "repairCommit": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
-        "repairTree": "cee71266f8638cc48e23b077562840d8093ae139",
-        "repairReview": "SOURCE_CLEAR_SCOPED_EPUB_STORE_P2_REPAIR",
-        "actualHTTPEvidenceReview": "EVIDENCE_CLEAR_SCOPED_EPUB_STORE_HTTP",
-        "actualHTTPIsSourceClear": false,
-        "repairExactSDKAcceptance": null,
-        "unrepaired70bSourceClear": false,
-        "repairedSourceClear": true,
-        "repairReviewEvidenceRef": "R200",
-        "actualHTTPEvidenceReviewRef": "R201"
-      },
-      "EPUBUnion1e4": {
-        "sourceCommit": "1e4e9b67cb852288f31bf573a575daa1710d089a",
-        "sourceTree": "c6af5777194cb1ba56dea6d95328be11a48eb03c",
-        "baseOfficial": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
-        "sourceRepair": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
-        "exactIOS27ExitCodes": [
-          0,
-          0,
-          0
-        ],
-        "standardSourceRepairAssertions": 10,
-        "standardSourceRepairsExit": 0,
-        "evidenceRefs": [
-          "R202",
-          "R203"
-        ],
-        "wholeFilesReverseNewStoreCrossChecks": "in_progress_parent",
         "integratedInCurrentOfficial": false,
-        "wholeProductAccepted": false,
-        "physicalAccepted": false
+        "sourceClear": false,
+        "scope": "현재 페이지 첫 유효 native 필기 결과 이동·현재 연 EPUB 검색과 기존 Reader 소비부. 모듈/소비부의 이전 scoped 판정은 exact a235 최종 합본 CLEAR로 전이하지 않는다.",
+        "clozeFeatureIncluded": false,
+        "runtimeAccepted": false,
+        "physicalAccepted": false,
+        "wholeFeatureComplete": false
+      },
+      "clozeRepairD834": {
+        "sourceCommit": "d83471cab2a31bb1f3739ebfa63d3a618e84d9ef",
+        "sourceTree": "6d480632edbd26a46269cb07e000da0469d66271",
+        "priorCommits": [
+          "8938c23938685bad6b3c6c943b5ade8981e4af79",
+          "f453cbc5f28d44ac8d3bfddb7995a8f50193c7e3"
+        ],
+        "reviewState": "CHANGES_REQUESTED",
+        "openFinding": "CLOZE-R1-PARSED-BOUNDARY",
+        "P2": 1,
+        "evidenceRefs": [
+          "R221",
+          "R222",
+          "R223"
+        ],
+        "integratedInCurrentOfficial": false,
+        "sourceClear": false,
+        "scope": "원5 code 반례와 R2는 해소됐으나 parsed-boundary의 새2반례가 남는다. 기존 native/SDK 성공과 실패 이력은 보존하며 완료 행으로 승격하지 않는다.",
+        "runtimeAccepted": false,
+        "physicalAccepted": false,
+        "wholeFeatureComplete": false
       }
     },
     "allAppsComplete": false,
@@ -33086,7 +33458,7 @@
       "owner": "01a13ace-e372-7ed1-9946-149df37ee1c3"
     },
     "documentUpdateOwner": "01a1851d-12c4-7d92-9860-8c020e54fb43",
-    "documentBranch": "codex/ipad-coverage-current-cd5-20261029",
+    "documentBranch": "codex/ipad-coverage-progress-ccb7578d-20261029",
     "previousNextActions": [
       {
         "priority": 1,
@@ -33301,10 +33673,10 @@
       "documentUpdateOwner": "01a18303-cc5d-7932-bb37-6cd560ca44fb",
       "documentBranch": "codex/ipad-coverage-progress-f09-20261029"
     },
-    "documentUpdateOwnerStatus": "현재 실행 환경의 CODEX_THREAD_ID만 사용; 미노출이면 null이며 부모/이전 작성자 ID로 추정하지 않음.",
+    "documentUpdateOwnerStatus": "공식 ccb 시점의 문서 동반 갱신. 제품 완료·설치·실기기 수용 대체 아님.",
     "normalInstalledBuild": 68,
     "signedCandidateBuild": 74,
-    "testDeployStatus": "test-deploy-held; 기존 formal 영수증의 f4 integrationObserved와 과거 held 시도 이력만 확인. f4 testDeployed/testAccepted/productionEligible 없음.",
+    "testDeployStatus": "test-deploy-held; ccb integrationObserved만 수용. 설치68·testAccepted/physical/runtime/whole=false.",
     "wholeProductAccepted": false,
     "sourceIntegratedFollowups": {
       "pageActionsAndBlankPen": {
@@ -33372,6 +33744,76 @@
           "R194",
           "R195"
         ]
+      },
+      "EPUB311b": {
+        "sourceCommit": "311b3bc4ed21b4133b41cbdcec5d8011837829be",
+        "sourceTree": "2e7f48ef03b5e8b877d0f71099fdf314d7b24028",
+        "verdict": "SOURCE_CLEAR_SCOPED_EPUB_GROUP_PAPER_COMPOSITION",
+        "evidenceRefs": [
+          "R204",
+          "R205",
+          "R206"
+        ],
+        "scope": "기존 EPUB 읽기·발췌·quote/XPath/UTF16/NCX 복귀와 Store/Files 복구 접합. 68b 두 P2 수리·그룹/용지의 exact 결합이 공식311b에 반영되어 ccb에 포함됨. 임의 EPUB 전체 지원·실제 글꼴 리플로/화면 수용은 별도.",
+        "includedInCurrentOfficial": true,
+        "officialCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "installed": false,
+        "runtimeAccepted": false,
+        "physicalAccepted": false,
+        "wholeFeatureComplete": false
+      },
+      "PDFBookmarksC899": {
+        "sourceCommit": "c8992bbec29297148eb5a4b69b072fb3d579cdbf",
+        "sourceTree": "b61c8345664b2b2bf96f8b37d6930a7a3ac98588",
+        "verdict": "SOURCE_CLEAR_SCOPED_BOOKMARKS_EPUB_RUNNER_COMPOSITION",
+        "evidenceRefs": [
+          "R207",
+          "R208",
+          "R209"
+        ],
+        "scope": "기존 PDF 보기 sidecar v1/v2의 물리 페이지 책갈피 추가·명시 제거·목록 이동과 복구/EPUB/runner 결합. 제목·이미지 책갈피·원앱 iPad·물리 수용은 아님.",
+        "includedInCurrentOfficial": true,
+        "officialCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "installed": false,
+        "runtimeAccepted": false,
+        "physicalAccepted": false,
+        "wholeFeatureComplete": false
+      },
+      "hierarchyFocus1516": {
+        "sourceCommit": "1516fa0d3413e0270a3ed31a7406c0d426c5ba0e",
+        "sourceTree": "f7d2cf22dd6bbad5850f05e10a1612ce59847067",
+        "verdict": "SOURCE_CLEAR_SCOPED_HIERARCHY_FOCUS_TEARDOWN_REPAIR",
+        "preferenceRepairVerdict": "SOURCE_CLEAR",
+        "evidenceRefs": [
+          "R210",
+          "R211",
+          "R213",
+          "R212"
+        ],
+        "scope": "같은 카드/자손 초점·상위/전체 복귀·페이지별 방문 이력, 원본 전체 저장/AI 전달. c3 설정 타입 충돌 수리와1516 임시 뷰 Undo 수리의 독립 판정을 소비. 실제 UIKit teardown 실행 아님.",
+        "includedInCurrentOfficial": true,
+        "officialCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "installed": false,
+        "runtimeAccepted": false,
+        "physicalAccepted": false,
+        "wholeFeatureComplete": false
+      },
+      "hierarchyOutlineCcb": {
+        "sourceCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "sourceTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+        "verdict": "SOURCE_CLEAR_SCOPED_OUTLINE_COMMON_REPAIR_COMPOSITION",
+        "evidenceRefs": [
+          "R214",
+          "R215",
+          "R216"
+        ],
+        "scope": "동일 카드 ID·접힘을 쓰는 지도/개요 전환과 공통 Undo, 초점/태그/그룹 표시 범위. paper-only 전환 장벽 우선·fold 장벽과1516 공통 수리를 함께 검수. 개요 PDF 출력·스타일/정렬 확장은 아님.",
+        "includedInCurrentOfficial": true,
+        "officialCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+        "installed": false,
+        "runtimeAccepted": false,
+        "physicalAccepted": false,
+        "wholeFeatureComplete": false
       }
     },
     "previousCurrentVersionsAtCd5": {
@@ -34158,51 +34600,491 @@
       }
     },
     "updatedRowIDs": [
-      "MI12.02",
-      "MI16.01",
-      "MI16.02",
-      "MI16.03",
-      "MI21.02",
-      "MI21.04",
-      "MI33.01",
-      "MI33.03",
-      "MI33.04",
-      "MM11.04",
-      "MM11.05",
+      "MS25.01",
+      "MS25.02",
+      "MS25.03",
+      "MM11.03",
       "MM12.01",
       "MM12.02",
-      "MM14.06",
-      "MM15.01",
-      "MM15.03",
-      "MM15.04",
-      "MM15.05",
       "MM16.01",
+      "MM16.02",
       "MM16.03",
-      "MM22.03",
-      "MM22.04",
-      "MM22.05",
-      "MM22.06",
-      "MM22.07",
-      "MM32.01",
-      "MM32.02",
-      "MM32.03",
-      "MM32.04",
-      "MM41.01",
-      "MM41.03",
-      "MM41.04",
-      "MS12.03",
-      "MS14.01",
-      "MS14.02",
-      "MS14.03",
-      "MS15.01",
-      "MS15.03",
-      "MS32.01",
-      "MS32.03",
-      "MS32.04"
+      "MM16.04",
+      "MM23.01",
+      "MM23.02",
+      "MM23.03",
+      "MM25.04",
+      "MM31.01",
+      "MM31.05",
+      "MI12.05"
     ],
     "rowStatusPolicy": "이번 변경은 관련 currentProgress만 갱신한다. status/complete/remaining 및 385 분모·127/220/32/6 집계는 역사적 분류 그대로이며 새 원앱 완료 수가 아니다.",
-    "documentWorktreeBaseCommit": "cd5e79105904e25438c50a53b845c2d17a2b6b3e",
-    "documentWorktreeBaseTree": "5741ea4adac55e33b951c160462be7aaede4021b",
-    "currentOfficialObservation": "사용자 후속과 기존 f4 ff/push/원격readback/sourceguard0 영수증을 대조. 이 문서 담당이 통합·배포·reconcile을 실행하지 않음."
+    "documentWorktreeBaseCommit": "ccb7578dca4e09d4c82d2b2ec6fc16343eb0148b",
+    "documentWorktreeBaseTree": "889357e61e8b159f487d2a5327e5b36b1c63938d",
+    "currentOfficialObservation": "부모의 보존 product-integration/검수/sourceguard/release 영수증과 사용자 지시를 한 번 대조한 고정 snapshot. 새 원격/source/배포/reconcile 관측 없음.",
+    "previousSnapshotAtF4": {
+      "recordedAt": "2026-10-29T13:39:19+09:00",
+      "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+      "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+      "officialEvidenceRefs": [
+        "R193",
+        "R194",
+        "R195",
+        "R196"
+      ],
+      "sourceFiles": {
+        "iOSClient/CanvasBridge/CanvasStore.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "0303895e3c63d02277dda3b2ab651cbfe6dbec829eef54e3e0fdcac8ef121dd7",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasWorkspace.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "a040721d898f89064fb4fcce0336046091cea10bc5dddf319298c4e41a8977bc",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasDocumentFiles.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "773fca39de1fd449933a28a8c52f5cc9901fcebd7cc3237f3631370d30144b70",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasDocument.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "990c76f6a1dc6fa1fc000bc55da24f6d99b09bc64b628f0aa454256f45c12c3f",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasModel.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "edd23ee591af91f4a1c2ff9bc0b57e9e86055f3fb3d3a75804b6e90c5e82ec28",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/PencilCanvas.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "d17a2f7a40d654a6b8c865fac724e54ecec53ec24916cfecb0d143a5270a508f",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/Sill.xcodeproj/project.pbxproj": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "17404648ddf1a227b42e8cf70585f9397c3bd82fd35644663ff74246371a68c3",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasRelay.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "9abe8d8bf84532b2128a405e9f4541e67b86abb9135cab83c9dd8932fc34fa42",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasDocumentRelay.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "9d06c3fbf2efc6e1fd8a73e7099767f1947ae251b14559b10c2609ba24e3cb2b",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "CanvasRelay/relay/obsidian-vault.js": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "381c6beab5ddb8f7a3a4e8d0f4f6997ac7ce319199d33e7797a190f8eba3d0c9",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "CanvasRelay/relay/canvas-document.js": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "def2e11dddcd3742d6d98459b32e1b36fc8dccb5c6466e2044ce9553e029634b",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasCardMerge.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "8e4c31275d92e29264ed86650f049891f75056f79cd5945dad99c6c84f57586d",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasCardTags.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "668986ac8b56abf0c175b6b1754ab8c6a141345000086717960b84121ec30097",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/CanvasPeleView.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "260acfbc924ae2f4d8f61a35dc9b46424fd2bbcc4ad0ab3bd44be3527d2a8ed9",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "CanvasRelay/relay/canvas-card-tags.js": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "5057b32868e11e9c5a23f7220337fc2a89964fcb7c35846773584ae19cb5b236",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/VaultPDFViewState.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "d8e00981f1abbb3a17314e194cc4064d513f6872c1c78976e82b3207ae302de5",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/VaultPDFReader.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "c06bfda49e57dd69ec3fee2e553f5c95fe451914b1adbab01d2b8945fe7e37a5",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        },
+        "iOSClient/CanvasBridge/SceneRenderer.swift": {
+          "sourceCommit": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceTree": "54bd85c28a6e8245a43d685a7400da5e0f577b53",
+          "sha256": "85e5de80f2f1774c354ea8f010cc98982fb4e65353cd3697ffaf15aa615f5f78",
+          "inspection": "정확 공식f4의 Git blob 참조 확인만. 제품·SDK·실제HTTP·기기 검사 재실행0."
+        }
+      },
+      "notOfficial": {
+        "EPUBProduct": {
+          "productCommit": "70b3dc55c7b6a5d4ba04fcca111647275d1f65fd",
+          "productTree": "593ee57f0225fd80e8ceb3d8f05fbcf41dc7b9a1",
+          "followupCommit": "b979e9f031a439d046c0ed546ff882af96652fa6",
+          "followupTree": "37780af120c126d48745972e9260be4d44b51c88",
+          "sameProductBytes": true,
+          "exactSDKExitCodes": [
+            0,
+            0,
+            0
+          ],
+          "independentProductReview": "historical_70b_two_P2_resolved_by_scoped_68b_review",
+          "actualHTTP": "author_scoped_pass_100_observations_at_70b",
+          "integratedInCd5": false,
+          "evidenceRefs": [
+            "R189",
+            "R190",
+            "R197",
+            "R198",
+            "R199",
+            "R200",
+            "R201"
+          ],
+          "wholeEPUBAccepted": false,
+          "repairCommit": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
+          "repairTree": "cee71266f8638cc48e23b077562840d8093ae139",
+          "repairReview": "SOURCE_CLEAR_SCOPED_EPUB_STORE_P2_REPAIR",
+          "actualHTTPEvidenceReview": "EVIDENCE_CLEAR_SCOPED_EPUB_STORE_HTTP",
+          "actualHTTPIsSourceClear": false,
+          "repairExactSDKAcceptance": null,
+          "unrepaired70bSourceClear": false,
+          "repairedSourceClear": true,
+          "repairReviewEvidenceRef": "R200",
+          "actualHTTPEvidenceReviewRef": "R201"
+        },
+        "EPUBUnion1e4": {
+          "sourceCommit": "1e4e9b67cb852288f31bf573a575daa1710d089a",
+          "sourceTree": "c6af5777194cb1ba56dea6d95328be11a48eb03c",
+          "baseOfficial": "f4a00d0d146b900b10e186f189f5ddcdd452b09d",
+          "sourceRepair": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
+          "exactIOS27ExitCodes": [
+            0,
+            0,
+            0
+          ],
+          "standardSourceRepairAssertions": 10,
+          "standardSourceRepairsExit": 0,
+          "evidenceRefs": [
+            "R202",
+            "R203"
+          ],
+          "wholeFilesReverseNewStoreCrossChecks": "in_progress_parent",
+          "integratedInCurrentOfficial": false,
+          "wholeProductAccepted": false,
+          "physicalAccepted": false
+        }
+      },
+      "documentUpdateOwnerStatus": "현재 실행 환경의 CODEX_THREAD_ID만 사용; 미노출이면 null이며 부모/이전 작성자 ID로 추정하지 않음.",
+      "documentBranch": "codex/ipad-coverage-current-cd5-20261029",
+      "testDeployStatus": "test-deploy-held; 기존 formal 영수증의 f4 integrationObserved와 과거 held 시도 이력만 확인. f4 testDeployed/testAccepted/productionEligible 없음.",
+      "updatedRowIDs": [
+        "MI12.02",
+        "MI16.01",
+        "MI16.02",
+        "MI16.03",
+        "MI21.02",
+        "MI21.04",
+        "MI33.01",
+        "MI33.03",
+        "MI33.04",
+        "MM11.04",
+        "MM11.05",
+        "MM12.01",
+        "MM12.02",
+        "MM14.06",
+        "MM15.01",
+        "MM15.03",
+        "MM15.04",
+        "MM15.05",
+        "MM16.01",
+        "MM16.03",
+        "MM22.03",
+        "MM22.04",
+        "MM22.05",
+        "MM22.06",
+        "MM22.07",
+        "MM32.01",
+        "MM32.02",
+        "MM32.03",
+        "MM32.04",
+        "MM41.01",
+        "MM41.03",
+        "MM41.04",
+        "MS12.03",
+        "MS14.01",
+        "MS14.02",
+        "MS14.03",
+        "MS15.01",
+        "MS15.03",
+        "MS32.01",
+        "MS32.03",
+        "MS32.04"
+      ],
+      "currentOfficialObservation": "사용자 후속과 기존 f4 ff/push/원격readback/sourceguard0 영수증을 대조. 이 문서 담당이 통합·배포·reconcile을 실행하지 않음.",
+      "documentWorktreeBaseCommit": "cd5e79105904e25438c50a53b845c2d17a2b6b3e",
+      "documentWorktreeBaseTree": "5741ea4adac55e33b951c160462be7aaede4021b"
+    },
+    "snapshotBoundary": {
+      "capturedAtUTC": "2026-10-29T05:59:19.280291+00:00",
+      "parentResumeEvidenceRef": "R224",
+      "parentResumeOriginalPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/program/CURRENT-RESUME.md",
+      "laterSourceObserved": false,
+      "policy": "이 문서의 현재는 공식 ccb의 정확 시점이다. 이후 통합·검수 변동을 자동 추적하지 않는다. 부모 resume의 과거 대기·b773 진행은 이력이며 검색 a235 대기와 Cloze d834 parsed-boundary P2는 사용자 지정 후속 근거를 우선한다.",
+      "historicalFields": "top-level currentVersions/nextActions/sourceFileRegistry/implementationUpdates 및 기존 ccr/status/remaining은 당시 원장으로 보존. 현재 착수 판단은 currentProgress와 행 currentProgress.currentRemaining을 먼저 읽는다."
+    },
+    "previousRowsAtF4": {
+      "MM12.01": {
+        "sourceBasis": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
+        "implementationRefs": [],
+        "implementationStage": "independent_candidate",
+        "automaticEvidence": "Nash가 원19입력/원반례·확장10조건을 재사용해68b의 두P2를 scoped SOURCE_CLEAR로 닫았다. Ohm은70b 실제HTTP100을 별도 scoped evidence CLEAR로 수용했다. 새 native/SDK/HTTP 실행0.",
+        "integrationStage": "not_integrated_in_official_f4",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "sourceTree": "cee71266f8638cc48e23b077562840d8093ae139",
+        "evidenceRefs": [
+          "R189",
+          "R190",
+          "R197",
+          "R198",
+          "R199",
+          "R200",
+          "R201",
+          "R202",
+          "R203"
+        ],
+        "currentRemaining": "현재 공식은f4다. 결합1e4는 SDK/source-repairs10만0이며 부모의 whole Files·역수신·새Store 교차검사는 진행 중이다. 원앱 전체 동등성·최종 기기·정상runtime 수용은 여전히 미완료다.",
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtCd5/MM12.01"
+      },
+      "MM12.02": {
+        "sourceBasis": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
+        "implementationRefs": [],
+        "implementationStage": "independent_candidate",
+        "automaticEvidence": "Nash가 원19입력/원반례·확장10조건을 재사용해68b의 두P2를 scoped SOURCE_CLEAR로 닫았다. Ohm은70b 실제HTTP100을 별도 scoped evidence CLEAR로 수용했다. 새 native/SDK/HTTP 실행0.",
+        "integrationStage": "not_integrated_in_official_f4",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "sourceTree": "cee71266f8638cc48e23b077562840d8093ae139",
+        "evidenceRefs": [
+          "R189",
+          "R190",
+          "R197",
+          "R198",
+          "R199",
+          "R200",
+          "R201",
+          "R202",
+          "R203"
+        ],
+        "currentRemaining": "현재 공식은f4다. 결합1e4는 SDK/source-repairs10만0이며 부모의 whole Files·역수신·새Store 교차검사는 진행 중이다. 원앱 전체 동등성·최종 기기·정상runtime 수용은 여전히 미완료다.",
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtCd5/MM12.02"
+      },
+      "MM16.01": {
+        "sourceBasis": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
+        "implementationRefs": [],
+        "implementationStage": "independent_candidate",
+        "automaticEvidence": "Nash가 원19입력/원반례·확장10조건을 재사용해68b의 두P2를 scoped SOURCE_CLEAR로 닫았다. Ohm은70b 실제HTTP100을 별도 scoped evidence CLEAR로 수용했다. 새 native/SDK/HTTP 실행0.",
+        "integrationStage": "not_integrated_in_official_f4",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "sourceTree": "cee71266f8638cc48e23b077562840d8093ae139",
+        "evidenceRefs": [
+          "R189",
+          "R190",
+          "R197",
+          "R198",
+          "R199",
+          "R200",
+          "R201",
+          "R202",
+          "R203"
+        ],
+        "currentRemaining": "현재 공식은f4다. 결합1e4는 SDK/source-repairs10만0이며 부모의 whole Files·역수신·새Store 교차검사는 진행 중이다. 원앱 전체 동등성·최종 기기·정상runtime 수용은 여전히 미완료다.",
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtCd5/MM16.01"
+      },
+      "MM16.02": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "not_evidenced",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MM16.03": {
+        "sourceBasis": "68b07ed418d9d5df3986b66bdd46928d2024df9f",
+        "implementationRefs": [],
+        "implementationStage": "independent_candidate",
+        "automaticEvidence": "Nash가 원19입력/원반례·확장10조건을 재사용해68b의 두P2를 scoped SOURCE_CLEAR로 닫았다. Ohm은70b 실제HTTP100을 별도 scoped evidence CLEAR로 수용했다. 새 native/SDK/HTTP 실행0.",
+        "integrationStage": "not_integrated_in_official_f4",
+        "installedStage": "normal68_historical_only_signed74_old624_uninstalled",
+        "currentPhysicalAcceptance": false,
+        "sourceTree": "cee71266f8638cc48e23b077562840d8093ae139",
+        "evidenceRefs": [
+          "R189",
+          "R190",
+          "R197",
+          "R198",
+          "R199",
+          "R200",
+          "R201",
+          "R202",
+          "R203"
+        ],
+        "currentRemaining": "현재 공식은f4다. 결합1e4는 SDK/source-repairs10만0이며 부모의 whole Files·역수신·새Store 교차검사는 진행 중이다. 원앱 전체 동등성·최종 기기·정상runtime 수용은 여전히 미완료다.",
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "wholeFeatureComplete": false,
+        "historyLocator": "/currentProgress/previousRowsAtCd5/MM16.03"
+      },
+      "MM16.04": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "not_evidenced",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MM11.03": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "not_evidenced",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MI12.05": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "not_evidenced",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MM23.02": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "not_evidenced",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MM23.03": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "not_evidenced",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MM23.01": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "not_evidenced",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MS25.01": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "legacy_evidence_only",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MS25.02": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "legacy_evidence_only",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MS25.03": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "legacy_evidence_only",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MM25.04": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "not_evidenced",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MM31.01": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "legacy_evidence_only",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      },
+      "MM31.05": {
+        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "implementationRefs": [],
+        "implementationStage": "legacy_evidence_only",
+        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+        "integrationStage": "feature_not_revalidated_at_current_source",
+        "installedStage": "normal68_historical_only",
+        "currentPhysicalAcceptance": false
+      }
+    },
+    "currentNextActions": [
+      "공식ccb의 검수된 EPUB/책갈피/초점/개요와 기존 문서·그룹·용지를 재구현하지 않고 해당 원앱 미관측·권한·실기기 경계를 이어간다.",
+      "검색a235는 SDK37 성공과 exact 합본 검수 대기를 구분한다. Cloze8938→f453→d834는 parsed-boundary P2 미수용이며 원본 실패·수리 계보를 보존한다.",
+      "설치68·test-deploy-held·whole/physical/runtime/testAccepted=false를 유지한다. 이후 공식 변동은 부모가 새 exact 근거로 별도 기록한다."
+    ]
   }
 }
