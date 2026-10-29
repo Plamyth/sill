@@ -46,6 +46,17 @@ import PencilKit
         let full=try CanvasFileWorkspace.bytes(scene)
         try CanvasLocalFile.write(full,to:sceneURL)
         var s=store();s.selectedNode=a
+        if CommandLine.arguments.contains("--aba-only") {
+            let original = try s.document.bytes()
+            check(s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"ABA enters original A root")
+            let oldA = s.hierarchyFocusOwner
+            check(s.focusHierarchy(b,owner:s.hierarchyFocusOwner),"ABA enters child B root")
+            check(s.focusHierarchyParent(owner:s.hierarchyFocusOwner) && s.hierarchyFocusRootID==a && s.selectedNode==a,"ABA returns to same A root and selected UUID")
+            check(!s.focusHierarchy(c,owner:oldA) && s.hierarchyFocusRootID==a,"same-root ABA rejects old A callback by monotonic owner")
+            check(try s.document.bytes()==original,"ABA never changes canonical original or revision")
+            try JSONSerialization.data(withJSONObject:["count":checks.count,"checks":checks,"ABAOnly":true,"whole58Repeated":false],options:[.prettyPrinted,.sortedKeys]).write(to:out.appendingPathComponent("observations.json"))
+            return
+        }
         let undoManager=s.inkHistory.activate(s.nativeHistoryOwner)
         var nativeUndoCalls=0
         undoManager.beginUndoGrouping();undoManager.registerUndo(withTarget:s) { _ in nativeUndoCalls += 1 };undoManager.endUndoGrouping()
@@ -70,7 +81,7 @@ import PencilKit
         let childOwner=s.hierarchyFocusOwner
         check(s.cardTagVisibility.nodeIDs==Set([b,c]),"child subtree projection excludes parent")
         check(s.focusHierarchyParent(owner:s.hierarchyFocusOwner) && s.hierarchyFocusRootID==a,"parent action follows original hierarchy")
-        check(!s.focusHierarchy(c,owner:childOwner),"parent-child ABA rejects former view callback")
+        check(!s.focusHierarchy(c,owner:childOwner),"child-to-parent transition rejects former view callback")
         try reopen(s)
         check(s.hierarchyFocusVisits==[b,a],"current root and unique ordered visit history are separate")
         check(s.focusHierarchyParent(owner:s.hierarchyFocusOwner) && s.hierarchyFocusRootID==nil,"top-level branch parent returns to full view")

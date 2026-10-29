@@ -2,7 +2,7 @@
 """초점의 실제 Store/원본/격리 환경설정/Files 경계만 검사한다."""
 import argparse,hashlib,json,os,plistlib,subprocess,uuid
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--sdk-check',action='store_true');p.add_argument('--sdk-only',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--sdk-check',action='store_true');p.add_argument('--sdk-only',action='store_true');p.add_argument('--aba-only',action='store_true');a=p.parse_args()
 if a.sdk_only:a.sdk_check=True
 root=Path(__file__).resolve().parents[3];canvas=root/'iOSClient/CanvasBridge'
 archive=Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))['path']).resolve()
@@ -26,6 +26,7 @@ env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',C
 sdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],env=env,text=True).strip()
 b=['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e-apple-macos27.0','-swift-version','5','-parse-as-library','-whole-module-optimization','-module-cache-path',out/'modules']
 commands=[('protocol',b+['-emit-module','-emit-object','-module-name','StreamProtocol',proto,'-emit-module-path',out/'StreamProtocol.swiftmodule','-o',out/'StreamProtocol.o']),('compile',b+['-I',out,*sources,reader,out/'StreamProtocol.o','-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',out/'Info.plist','-o',out/'check']),('native-focus',[out/'check',out,'--ccr-test-runtime',identity])]
+if a.aba_only:commands[-1][1].append('--aba-only')
 if a.sdk_only:commands=[('project-plist',['plutil','-lint',root/'iOSClient/Sill.xcodeproj/project.pbxproj'])]
 if a.sdk_check:
  ios=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip();(out/'ios').mkdir()
@@ -36,4 +37,4 @@ for name,cmd in commands:
  r=subprocess.run(list(map(str,cmd)),cwd=root,env=env,capture_output=True,text=True,timeout=240);(out/(name+'.log')).write_text(r.stdout+r.stderr);print(name,r.returncode,(r.stdout+r.stderr)[-7000:],flush=True);results.append(dict(name=name,exitCode=r.returncode,command=list(map(str,cmd))))
  if r.returncode:break
 after={str(p.relative_to(root)):sha(p) for p in inputs};normal=all(sha(Path(p))==h for p,h in protected.items());passed=len(results)==len(commands) and all(x['exitCode']==0 for x in results) and before==after and normal
-(out/'result.json').write_text(json.dumps(dict(commit=commit,tree=tree,dirty=subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True),inputs=before,after=after,sourceUnchanged=before==after,normalSentinels=protected,normalUnchanged=normal,results=results,passed=passed,SDKRequested=a.sdk_check,SDKOnly=a.sdk_only,actualStore=not a.sdk_only,GUI=False,HTTP=False,device=False,Host=False,installation=False,wholeOriginalAppAccepted=False,independentReview='pending'),ensure_ascii=False,indent=2)+'\n');print('FOCUS_RECEIPT',out/'result.json');raise SystemExit(0 if passed else 1)
+(out/'result.json').write_text(json.dumps(dict(commit=commit,tree=tree,dirty=subprocess.check_output(['git','status','--porcelain'],cwd=root,text=True),inputs=before,after=after,sourceUnchanged=before==after,normalSentinels=protected,normalUnchanged=normal,results=results,passed=passed,SDKRequested=a.sdk_check,SDKOnly=a.sdk_only,ABAOnly=a.aba_only,actualStore=not a.sdk_only,GUI=False,HTTP=False,device=False,Host=False,installation=False,wholeOriginalAppAccepted=False,independentReview='pending'),ensure_ascii=False,indent=2)+'\n');print('FOCUS_RECEIPT',out/'result.json');raise SystemExit(0 if passed else 1)

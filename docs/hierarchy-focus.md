@@ -35,3 +35,7 @@ native Undo는 초점 동안 기존 manager의 명령 진입만 막고 이력을
 ### iOS27 SDK
 
 `evidence/focus-1ca0b415-5821-4f9a-85ec-d505f2c8a00d/result.json`에서 정확 제품 commit `c5129946901d50b8d6cd58fdf1bd099a5f33763a` / tree `8ec6716e4f66d135f1f981094542e0957f1efbef`의 plist·iOS StreamProtocol·전체 Store/Workspace typecheck가 모두 exit0이었다. 시작/종료 입력 SHA와 normal sentinel이 같았다. native를 다시 실행하지 않은 `--sdk-only` 결과다. 기존 오디오/UIScreen API deprecation 경고는 수리 범위에 포함하지 않았다. 최종 문서 근거 추가는 제품 bytes를 바꾸지 않는다. SDK 통과는 UIKit/iPad/설치·독립 수용이 아니다.
+
+### 같은 루트로 돌아오는 ABA의 별도 반례
+
+기존58의 child-owner 거부는 자식→부모 전환 경계다. 같은 루트/선택 UUID까지 돌아오는 ABA는 `evidence/focus-1fbf4f76-bbd9-4827-8520-34fa2f8c696e/result.json`·`observations.json`의 별도6조건으로 확인했다. A 초점 owner를 캡처한 뒤 A→B→A를 실행하고, 과거 A owner로 C 초점을 적용하려는 callback을 거부하며 원문/revision도 그대로였다. `--aba-only`는 해당 반례만 실행했고 기존58/child3/SDK를 반복하지 않았다. 제품은 SDK를 통과한 c512 그대로이며 이 후속은 검사·문서만 바꾼다.
