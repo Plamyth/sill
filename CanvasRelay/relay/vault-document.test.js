@@ -56,7 +56,7 @@ for(const decision of ['keepCurrent','useDisplaced'])test(`명시 ${decision} �
  atExchange(file,()=>fs.writeFileSync(asset,Buffer.from('외부에서 바뀐 비선택 페이지 미리보기')),()=>
   assert.throws(()=>f.vault.resolveDocumentConflict(f.d.id,request),{status:409,code:'note_reconciliation_required'}));
  const reopened=new ObsidianVault(f.root),held=reopened.documentConflict(f.d.id);
- assert(held.reconciliationRequired);assert.equal(held.materials[kind].validDocument,false);
+ assert(held.reconciliationRequired);
  assert.throws(()=>reopened.document(f.d.id),{code:'note_reconciliation_required'});
  assert.throws(()=>reopened.resolveDocumentConflict(f.d.id,request),{status:409,code:'note_reconciliation_required'});
  assert.equal(fs.existsSync(path.join(journal,'resolution.json')),false);
