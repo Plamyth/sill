@@ -1,6 +1,6 @@
 {
   "schema": "ccr.rea.completion-coverage/v1",
-  "recordedAt": "2026-10-29T05:44:38+09:00",
+  "recordedAt": "2026-10-29T12:39:03+09:00",
   "owner": "01a13ace-e372-7ed1-9946-149df37ee1c3",
   "taskKey": "ipad-rea-coverage-20261029",
   "scope": "docs/rea-completion/ 문서만",
@@ -18,7 +18,7 @@
     "not_applicable": "원앱 비지원 직접 근거가 있을 때만 허용"
   },
   "currentVersions": {
-    "officialIntegration": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+    "officialIntegration": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
     "normalInstalled": {
       "build": 68,
       "source": "14e941099ca5d27bb4c1df171849d601a14a1455",
@@ -41,7 +41,10 @@
       "tree": "7af7eecdb1f5a8cfe439c23caca02fc8abc66764",
       "relay": "2250dfada987013e6fc09e40e8bf2a58db134245",
       "integrated": false,
-      "installed": false
+      "installed": false,
+      "historicalRecord": true,
+      "doNotUseAsCurrentNextAction": true,
+      "supersededBy": "implementationUpdates.pdfPagesRotation9006908 및 currentProgress의 f09/미통합013 구분"
     },
     "btCandidate": {
       "source": "163aa1f0b3a6a95cc1aa289da0f925d8b7851242",
@@ -50,8 +53,8 @@
       "integrated": false,
       "installed": false
     },
-    "testAcceptance": "9646469는 exact 격리 native/SDK와 signed72 로컬 검증까지. exact 새 iPad runtime testDeployed/testAccepted false. 과거 db6e 수용 보존.",
-    "officialIntegrationTree": "4e8b7abf92485050610da334d6ec0166094adacb",
+    "testAcceptance": "공식 f09의 source 통합과 제한 native/Files/HTTP 증거를 분리한다. Store HTTP79는 Helm scoped evidence 수용이고 성공200 ACK는 Nash 검수 대기다. 최신 앱 runtime/testAccepted/physical은 false.",
+    "officialIntegrationTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
     "signedCandidate72": {
       "source": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
       "tree": "4e8b7abf92485050610da334d6ec0166094adacb",
@@ -85,8 +88,8 @@
       "MN-IPAD-4.4.6": 129
     },
     "byStatus": {
-      "parity_gap": 120,
-      "implementation_evidence_missing": 227,
+      "parity_gap": 127,
+      "implementation_evidence_missing": 220,
       "support_unverified": 32,
       "integration_pending": 6
     },
@@ -7657,20 +7660,41 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        ".nebo/원앱 서재 전체 해독·제목 있는 서재·빈 페이지/페이지 순서 편집 전체 구현이 아니다.",
+        "다른 API 작성자의 순서 변경 역수신 검증은 f09에 순서 이동 UI가 있다는 뜻이 아니다.",
+        "7e53 페이지 추가/순서 후보는 공식 f09 밖이며 새 구현 지시 대신 원담당 후속 판정을 따른다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files"
+          "filesDocumentF09",
+          "pagesStoreF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R163",
+          "R166"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MS12.03"
       },
       "priorCoverageSnapshot": {
         "status": "implementation_evidence_missing",
@@ -7941,21 +7965,44 @@
         ],
         "profile": "none"
       },
-      "status": "implementation_evidence_missing",
+      "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
-        "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
-        "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        ".nebo/원앱 서재 전체 해독·제목 있는 서재·빈 페이지/페이지 순서 편집 전체 구현이 아니다.",
+        "다른 API 작성자의 순서 변경 역수신 검증은 f09에 순서 이동 UI가 있다는 뜻이 아니다.",
+        "7e53 페이지 추가/순서 후보는 공식 f09 밖이며 새 구현 지시 대신 원담당 후속 판정을 따른다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "implementationRefs": [
+          "pagesStoreF09",
+          "filesDocumentF09"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R163",
+          "R165",
+          "R166",
+          "R167",
+          "R175",
+          "R176",
+          "R168"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MS14.03"
       },
       "additionalOriginalEvidenceRefs": [
         "R156",
@@ -11466,20 +11513,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MS32.01"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -11609,20 +11678,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MS32.03"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -11705,23 +11796,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용.",
-        "exact 구현된 두 결정과 barrier/IO 복구만. 원앱 클라우드 동기화·자동 병합 전체 동등성은 미수용.",
-        "최종 signed 후보의 UI·실기기·media/relay 구간·Pencil은 대기."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files",
-          "conflict"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MS32.04"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -16103,21 +16213,36 @@
         ],
         "profile": "none"
       },
-      "status": "implementation_evidence_missing",
+      "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
-        "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
-        "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "원앱의 원본 숨김/이동을 포함한 전체 한 카드 병합 동등성이 아니다.",
+        "중첩/그룹/하위 맵과 이력의 프로세스 재시작 지속성은 별도.",
+        "preview는 fixture이며 실제 터치·렌더·Pencil/FileProvider 수용은 없다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "implementationRefs": [
+          "cardMergeF09"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R169",
+          "R170",
+          "R162",
+          "R164"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": false,
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM22.06"
       }
     },
     {
@@ -16161,21 +16286,36 @@
         ],
         "profile": "none"
       },
-      "status": "implementation_evidence_missing",
+      "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
-        "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
-        "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "원앱의 원본 숨김/이동을 포함한 전체 한 카드 병합 동등성이 아니다.",
+        "중첩/그룹/하위 맵과 이력의 프로세스 재시작 지속성은 별도.",
+        "preview는 fixture이며 실제 터치·렌더·Pencil/FileProvider 수용은 없다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "implementationRefs": [
+          "cardMergeF09"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R169",
+          "R170",
+          "R162",
+          "R164"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": false,
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM22.07"
       }
     },
     {
@@ -17995,21 +18135,37 @@
         ],
         "profile": "none"
       },
-      "status": "implementation_evidence_missing",
+      "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
-        "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
-        "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "MM32.04에서 확인된 해제는 보기/검색 필터 해제이며 저장 태그의 전역/개별 영구 삭제 완료로 세지 않는다.",
+        "태그 필터는 보기 상태이고 저장하지 않는다. AND/OR·배치·계층 태그는 별도다.",
+        "관리 태그줄의 외부 수정은409 보존이며 자동역파싱·Obsidian 실제 인덱스/iPad UI 수용은 별도다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "implementationRefs": [
+          "cardTagsF09"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R171",
+          "R172",
+          "R173",
+          "R174",
+          "R162"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": false,
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM32.01"
       }
     },
     {
@@ -18049,21 +18205,37 @@
         ],
         "profile": "none"
       },
-      "status": "implementation_evidence_missing",
+      "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
-        "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
-        "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "MM32.04에서 확인된 해제는 보기/검색 필터 해제이며 저장 태그의 전역/개별 영구 삭제 완료로 세지 않는다.",
+        "태그 필터는 보기 상태이고 저장하지 않는다. AND/OR·배치·계층 태그는 별도다.",
+        "관리 태그줄의 외부 수정은409 보존이며 자동역파싱·Obsidian 실제 인덱스/iPad UI 수용은 별도다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "implementationRefs": [
+          "cardTagsF09"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R171",
+          "R172",
+          "R173",
+          "R174",
+          "R162"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": false,
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM32.02"
       }
     },
     {
@@ -18103,21 +18275,37 @@
         ],
         "profile": "none"
       },
-      "status": "implementation_evidence_missing",
+      "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
-        "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
-        "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "MM32.04에서 확인된 해제는 보기/검색 필터 해제이며 저장 태그의 전역/개별 영구 삭제 완료로 세지 않는다.",
+        "태그 필터는 보기 상태이고 저장하지 않는다. AND/OR·배치·계층 태그는 별도다.",
+        "관리 태그줄의 외부 수정은409 보존이며 자동역파싱·Obsidian 실제 인덱스/iPad UI 수용은 별도다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "implementationRefs": [
+          "cardTagsF09"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R171",
+          "R172",
+          "R173",
+          "R174",
+          "R162"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": false,
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM32.03"
       }
     },
     {
@@ -18157,21 +18345,38 @@
         ],
         "profile": "none"
       },
-      "status": "implementation_evidence_missing",
+      "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
-        "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
-        "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "R093/R094에서의 해제는 필터를 지우고 저장 태그를 유지한 관측이다. 이 행을 영구 태그 삭제 완료로 해석하지 않는다.",
+        "MM32.04에서 확인된 해제는 보기/검색 필터 해제이며 저장 태그의 전역/개별 영구 삭제 완료로 세지 않는다.",
+        "태그 필터는 보기 상태이고 저장하지 않는다. AND/OR·배치·계층 태그는 별도다.",
+        "관리 태그줄의 외부 수정은409 보존이며 자동역파싱·Obsidian 실제 인덱스/iPad UI 수용은 별도다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
-        "implementationRefs": [],
-        "implementationStage": "not_evidenced",
-        "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
-        "integrationStage": "feature_not_revalidated_at_current_source",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "implementationRefs": [
+          "cardTagsF09"
+        ],
+        "implementationStage": "integrated_partial",
+        "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R171",
+          "R172",
+          "R173",
+          "R174",
+          "R162"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": false,
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM32.04"
       }
     },
     {
@@ -19664,20 +19869,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM41.01"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -19807,20 +20034,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM41.03"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -19903,23 +20152,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용.",
-        "exact 구현된 두 결정과 barrier/IO 복구만. 원앱 클라우드 동기화·자동 병합 전체 동등성은 미수용.",
-        "최종 signed 후보의 UI·실기기·media/relay 구간·Pencil은 대기."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files",
-          "conflict"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MM41.04"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -27032,20 +27300,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MI33.01"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -27175,20 +27465,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MI33.03"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -27271,23 +27583,42 @@
       "status": "parity_gap",
       "complete": false,
       "remaining": [
-        "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
-        "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
-        "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용.",
-        "exact 구현된 두 결정과 barrier/IO 복구만. 원앱 클라우드 동기화·자동 병합 전체 동등성은 미수용.",
-        "최종 signed 후보의 UI·실기기·media/relay 구간·Pencil은 대기."
+        "원앱 관측·미확인과 historical ccr/checks는 그대로 보존하며 제한 구현을 원앱 전체 동등성으로 올리지 않는다.",
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다.",
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다.",
+        "이미 있는 모듈/Store/Files 경로를 새로 만들지 말고 위의 남은 의미·권한·GUI 경계만 다음 정확 단위에서 확인한다."
       ],
       "currentProgress": {
-        "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "sourceBasis": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
         "implementationRefs": [
-          "files",
-          "conflict"
+          "filesDocumentF09",
+          "recoveryF09"
         ],
         "implementationStage": "integrated_partial",
-        "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
         "integrationStage": "source_integrated",
+        "automaticEvidence": "기존 독립 source/Files/native/HTTP 원본을 범위별로 재사용. 이번 재실행0. scoped 증거를 앱 runtime 수용으로 합산하지 않음.",
+        "evidenceRefs": [
+          "R162",
+          "R165",
+          "R167",
+          "R168",
+          "R175",
+          "R176",
+          "R166",
+          "R177",
+          "R178"
+        ],
         "installedStage": "normal68_historical_only",
-        "currentPhysicalAcceptance": false
+        "currentPhysicalAcceptance": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false,
+        "scopedHTTP79EvidenceAccepted": true,
+        "success200ACKIndependentReview": "pending_Nash_not_accepted_here",
+        "historyLocator": "/currentProgress/previousRowsAtF09/MI33.04"
       },
       "priorCoverageSnapshot": {
         "status": "parity_gap",
@@ -29830,6 +30161,159 @@
       "locator": "2026-10-29 보존 자료 후속 연결. 이번 작업의 원앱/GUI/기기/제품 검사 실행 없음.",
       "role": "scoped_pdf_independent_review",
       "reaEvidenceIds": []
+    },
+    "R162": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-f09daa1.json",
+      "exists": true,
+      "bytes": 1307,
+      "sha256": "ccd70f2c26347a437205ff22ee28a83ae88a51ff32be7bb2ed2e3d3964b9206b",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "official_f09_integration",
+      "reaEvidenceIds": []
+    },
+    "R163": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/sourceguard-integration-f09daa1.json",
+      "exists": true,
+      "bytes": 372,
+      "sha256": "4a0d3aaed56d0931451c13d07abb2a82adeb255e4f9db1f6dce6840c5faa3116",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "official_f09_sourceguard",
+      "reaEvidenceIds": []
+    },
+    "R164": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/coverage-progress-f09-evidence/units-f09-read-snapshot.tsv",
+      "exists": true,
+      "bytes": 5371,
+      "sha256": "6a9bf8d3930a4da3150f9e61be09aacd40bc559927efbd5a3511f95a51a44005",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "read_only_snapshot_of_existing_program_units",
+      "reaEvidenceIds": []
+    },
+    "R165": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/document-store-independent-review-d24c60f/followup-ohm/repair-0db80a9/result.json",
+      "exists": true,
+      "bytes": 2757,
+      "sha256": "768c9d8311ad69f6e3e9403dd43fcd06904c8196730754acb5c02a92492296ec",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "independent_store_data_R1",
+      "reaEvidenceIds": []
+    },
+    "R166": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/document-view-activation-independent-review-f09daa1/result.json",
+      "exists": true,
+      "bytes": 4654,
+      "sha256": "5bd9e1a567632fbe6eebd7c2a87a19e58e3c988d230546c5ac1ce8639b30d0f9",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "independent_f09_source_review",
+      "reaEvidenceIds": []
+    },
+    "R167": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/document-preservation-independent-review-10a1287/followup-ohm/result.json",
+      "exists": true,
+      "bytes": 2449,
+      "sha256": "4c54a5824e0da463fa024bd23d95f969da1f7c5939945eff70665aa19911a4cc",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "independent_normal_cache_preservation",
+      "reaEvidenceIds": []
+    },
+    "R168": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/document-storage-independent-review-ded8020/REVIEW.md",
+      "exists": true,
+      "bytes": 6720,
+      "sha256": "bb9b8bde299698f1b025580867472b27a23ba88e0cdcc770db861db0167f345b",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "independent_same_content_storage_reuse",
+      "reaEvidenceIds": []
+    },
+    "R169": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/card-merge-evidence/handoff.json",
+      "exists": true,
+      "bytes": 6107,
+      "sha256": "b57ecaac4d87902ea9596086cb57c31d755dd272f280e687d1957716af944863",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "scoped_card_merge_source_files_receipt",
+      "reaEvidenceIds": []
+    },
+    "R170": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/card-merge-independent-review-c723825/review.json",
+      "exists": true,
+      "bytes": 4844,
+      "sha256": "a27d6f3d9be7014d8e27b53f83a708e47fd223277601198820a8dee99dc03cd2",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "independent_card_merge_source_review",
+      "reaEvidenceIds": []
+    },
+    "R171": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/card-tags-evidence/handoff.json",
+      "exists": true,
+      "bytes": 10321,
+      "sha256": "b460494dcf511ab08730e15225829bc2c99c4dce6118f8af3fe30de266c4592e",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "scoped_card_tags_source_and_native_receipt",
+      "reaEvidenceIds": []
+    },
+    "R172": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/card-tags-independent-review-1d602d9/followup-16e20fe/review.json",
+      "exists": true,
+      "bytes": 9895,
+      "sha256": "97252f5b3947274c50e60b1ae38ff181e0cb0d836e3d81fc911cbea96bb0b4af",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "independent_card_tags_source_review",
+      "reaEvidenceIds": []
+    },
+    "R173": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/tags-pdf-combined-check-20261029/independent-4a132474/review.json",
+      "exists": true,
+      "bytes": 3809,
+      "sha256": "2b2fac3e68c62257fabfbddaf74ca5293b7d3fdea1ba448ba11447b44caa7967",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "independent_product_composition_review",
+      "reaEvidenceIds": []
+    },
+    "R174": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-0c230d2.json",
+      "exists": true,
+      "bytes": 538,
+      "sha256": "cca8874251e46fa4fc56ab2f0c92dd6fddcef733d07548b6d1271452c97d81b9",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "official_card_tags_composition_integration",
+      "reaEvidenceIds": []
+    },
+    "R175": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/document-store-http-evidence/FINAL-NATIVE-STORE-HTTP-f09.json",
+      "exists": true,
+      "bytes": 29218,
+      "sha256": "9bbfd2cad5fe9f27adff806443d8c65a50471ffd14f9a16552dccae241c1f655",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "scoped_actual_store_files_node_observations",
+      "reaEvidenceIds": []
+    },
+    "R176": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/document-store-http-review-helm-f09/result.json",
+      "exists": true,
+      "bytes": 27260,
+      "sha256": "2cae4ae56554d16aebb44eebccb7c3e61fc9f16f38879ea968412077286c90a3",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "independent_scoped_evidence_review_only",
+      "reaEvidenceIds": []
+    },
+    "R177": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/document-relay-http-evidence/pair-9795acff-2fba-44c3-ad03-a3caf5f802de/resume-9b0c5b450f02/HTTP-RESUME-9b-FINAL.json",
+      "exists": true,
+      "bytes": 13445,
+      "sha256": "629532d040702ffc72659987f0280693deb06381f0284ec0e291c4775764c84c",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "historical_exact_relay_http_component_evidence",
+      "reaEvidenceIds": []
+    },
+    "R178": {
+      "path": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/document-store-http-evidence/FINAL-SUCCESS200-ACK-f09.json",
+      "exists": true,
+      "bytes": 15851,
+      "sha256": "eca7f256ed68c49950ca98615ff2a34d5515e5b9c756885c5dbf605f4d5c1332",
+      "locator": "f09 문서 갱신의 기존 근거 읽기. 이번 제품/원앱/HTTP/GUI/기기 실행0.",
+      "role": "author_observation_pending_Nash_independent_review",
+      "reaEvidenceIds": []
     }
   },
   "limitations": [
@@ -30262,6 +30746,244 @@
         "testCountsAreFeatureCounts": false
       },
       "supersedesOnly": "9646469 당시의 후보 미통합·한 페이지/회전0 제한 설명에 대한 후속. 역사적 원문·sourceFileRegistry·상태는 수정하지 않음."
+    },
+    "pagesStoreF09": {
+      "label": "전체 문서 Store와 제한 페이지 동작",
+      "behavior": "전체 CanvasDocument 공개 import·Files 목록/열기·기존 페이지 선택·선택 페이지 복제·페이지별 원본/이력 소유권이 Store/UI에 접합됐다. f09에는 빈 페이지 추가·임의 순서 이동·삭제/복구 UI가 없다.",
+      "files": [
+        "iOSClient/CanvasBridge/CanvasStore.swift",
+        "iOSClient/CanvasBridge/CanvasWorkspace.swift",
+        "iOSClient/CanvasBridge/CanvasDocument.swift",
+        "iOSClient/CanvasBridge/CanvasDocumentFiles.swift",
+        "iOSClient/CanvasBridge/PencilCanvas.swift",
+        "iOSClient/Sill.xcodeproj/project.pbxproj"
+      ],
+      "symbols": [
+        "CanvasStore.importSourceBytes",
+        "CanvasStore.connectDocumentWorkspace",
+        "CanvasStore.documentWorkspaceDocuments",
+        "CanvasStore.selectDocumentPage",
+        "CanvasStore.duplicateDocumentPage"
+      ],
+      "checks": "R1 Store/Files·분리 프로세스 재열기와 f09 view-owner 검수; 기존 실제 Store→Files→Node 증거는 독립 scoped evidence 판정으로만 재사용.",
+      "limits": [
+        ".nebo/원앱 서재 전체 해독·제목 있는 서재·빈 페이지/페이지 순서 편집 전체 구현이 아니다.",
+        "다른 API 작성자의 순서 변경 역수신 검증은 f09에 순서 이동 UI가 있다는 뜻이 아니다.",
+        "7e53 페이지 추가/순서 후보는 공식 f09 밖이며 새 구현 지시 대신 원담당 후속 판정을 따른다."
+      ],
+      "evidenceRefs": [
+        "R162",
+        "R163",
+        "R165",
+        "R166",
+        "R167",
+        "R175",
+        "R176"
+      ],
+      "integration": {
+        "commit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "tree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sourcePresent": true,
+        "acceptance": "공식 f09 소스의 제한 구현 존재. scoped 실행 증거와 앱 runtime 수용은 별도."
+      },
+      "physical": {
+        "accepted": false,
+        "note": "실제 최신 iPad/GUI/Pencil/FileProvider·권한 수용 미완료"
+      },
+      "automaticScope": {
+        "testsRerunThisUpdate": false,
+        "testCountsAreFeatureCounts": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false
+      }
+    },
+    "cardMergeF09": {
+      "label": "원본을 보존하는 참조 병합·연결 해제",
+      "behavior": "확인된 일반 note 카드2~20개를 순서대로 선택해 표시용 병합 note와 번호 있는 출처 링크를 만든다. 원본 카드/잉크/참조/계층은 보존하며 해제도 합친 유일 본문을 삭제하지 않는다.",
+      "files": [
+        "iOSClient/CanvasBridge/CanvasStore.swift",
+        "iOSClient/CanvasBridge/CanvasWorkspace.swift",
+        "iOSClient/CanvasBridge/CanvasCardMerge.swift",
+        "iOSClient/CanvasBridge/CanvasModel.swift"
+      ],
+      "symbols": [
+        "CanvasCardMerge.Draft.applying",
+        "CanvasStore.beginCardMerge",
+        "CanvasStore.confirmCardMerge",
+        "CanvasStore.unmergeCard"
+      ],
+      "checks": "c723의 제한 SOURCE_CLEAR·실제 native/Files·별도 재열기 근거와 원장 integrated1c0c19를 재사용. f09의 CanvasCardMerge.swift는 검수된 모듈 바이트와 동일.",
+      "limits": [
+        "원앱의 원본 숨김/이동을 포함한 전체 한 카드 병합 동등성이 아니다.",
+        "중첩/그룹/하위 맵과 이력의 프로세스 재시작 지속성은 별도.",
+        "preview는 fixture이며 실제 터치·렌더·Pencil/FileProvider 수용은 없다."
+      ],
+      "evidenceRefs": [
+        "R169",
+        "R170",
+        "R162",
+        "R164"
+      ],
+      "integration": {
+        "commit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "tree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sourcePresent": true,
+        "acceptance": "공식 f09 소스의 제한 구현 존재. scoped 실행 증거와 앱 runtime 수용은 별도."
+      },
+      "physical": {
+        "accepted": false,
+        "note": "실제 최신 iPad/GUI/Pencil/FileProvider·권한 수용 미완료"
+      },
+      "automaticScope": {
+        "testsRerunThisUpdate": false,
+        "testCountsAreFeatureCounts": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false
+      }
+    },
+    "cardTagsF09": {
+      "label": "카드 태그 추가·Undo/Redo·보기 필터/해제",
+      "behavior": "예약 annotation author ccr.sill.card-tag/v1로 일반 댓글과 분리해 inline 태그를 저장하고 공통 graph Undo/Redo·note 필터·필터 해제를 제공한다. 태그/관리 Markdown과 전체 scene JSON 계약을 연결한다.",
+      "files": [
+        "iOSClient/CanvasBridge/CanvasStore.swift",
+        "iOSClient/CanvasBridge/CanvasWorkspace.swift",
+        "iOSClient/CanvasBridge/CanvasCardTags.swift",
+        "iOSClient/CanvasBridge/CanvasPeleView.swift",
+        "CanvasRelay/relay/canvas-card-tags.js",
+        "CanvasRelay/relay/obsidian-vault.js"
+      ],
+      "symbols": [
+        "CanvasCardTags.adding",
+        "CanvasCardTags.visibility",
+        "CanvasStore.beginCardTagInput",
+        "CanvasStore.finishCardTagInput",
+        "CanvasStore.setCardTagFilter"
+      ],
+      "checks": "16e namespace/입력 표시 소유권 수리의 독립 SOURCE_CLEAR와 4a 결합 검수·0c 공식 통합 재사용. f09의 CanvasCardTags.swift는 검수된 모듈과 동일.",
+      "limits": [
+        "MM32.04에서 확인된 해제는 보기/검색 필터 해제이며 저장 태그의 전역/개별 영구 삭제 완료로 세지 않는다.",
+        "태그 필터는 보기 상태이고 저장하지 않는다. AND/OR·배치·계층 태그는 별도다.",
+        "관리 태그줄의 외부 수정은409 보존이며 자동역파싱·Obsidian 실제 인덱스/iPad UI 수용은 별도다."
+      ],
+      "evidenceRefs": [
+        "R171",
+        "R172",
+        "R173",
+        "R174",
+        "R162"
+      ],
+      "integration": {
+        "commit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "tree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sourcePresent": true,
+        "acceptance": "공식 f09 소스의 제한 구현 존재. scoped 실행 증거와 앱 runtime 수용은 별도."
+      },
+      "physical": {
+        "accepted": false,
+        "note": "실제 최신 iPad/GUI/Pencil/FileProvider·권한 수용 미완료"
+      },
+      "automaticScope": {
+        "testsRerunThisUpdate": false,
+        "testCountsAreFeatureCounts": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false
+      }
+    },
+    "filesDocumentF09": {
+      "label": "단일 scene과 전체 문서 Files 원본·저장 재사용",
+      "behavior": "기존 단일 scene 경로를 보존하고 전체 문서의 모든 페이지 JSON/PKDrawing/PNG를 선택 Files의 한 세대로 저장·검증한다. 같은 내용은 새 바이트/경로를 만들지 않고 durable base를 재사용한다.",
+      "files": [
+        "iOSClient/CanvasBridge/CanvasStore.swift",
+        "iOSClient/CanvasBridge/CanvasWorkspace.swift",
+        "iOSClient/CanvasBridge/CanvasDocumentFiles.swift",
+        "iOSClient/CanvasBridge/CanvasDocument.swift",
+        "iOSClient/CanvasBridge/CanvasModel.swift"
+      ],
+      "symbols": [
+        "CanvasDocumentFiles.save",
+        "CanvasDocumentFiles.load",
+        "CanvasStore.saveDocumentWorkspace",
+        "CanvasStore.restoreDocumentSource"
+      ],
+      "checks": "독립 R1·경로/중첩필드/lock·같은내용 저장 재사용 검수와 f09 실제 Files/새 Store 재열기를 구분해 재사용.",
+      "limits": [
+        "Mac DEBUG requiresScope=false·fixture preview의 실제 IO이며 iPad Files picker/bookmark 권한·FileProvider 지속성 수용은 아니다.",
+        "GC/삭제/전체 저장량 상한 또는 원앱 라이브러리/백업/클라우드 전체 지원이 아니다."
+      ],
+      "evidenceRefs": [
+        "R162",
+        "R165",
+        "R167",
+        "R168",
+        "R175",
+        "R176"
+      ],
+      "integration": {
+        "commit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "tree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sourcePresent": true,
+        "acceptance": "공식 f09 소스의 제한 구현 존재. scoped 실행 증거와 앱 runtime 수용은 별도."
+      },
+      "physical": {
+        "accepted": false,
+        "note": "실제 최신 iPad/GUI/Pencil/FileProvider·권한 수용 미완료"
+      },
+      "automaticScope": {
+        "testsRerunThisUpdate": false,
+        "testCountsAreFeatureCounts": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false
+      }
+    },
+    "recoveryF09": {
+      "label": "전체 문서 보존 충돌·명시 비교/복구와 재열기",
+      "behavior": "공개 synchronize/refresh와 typed·unclassified409 barrier, 지속 sending/held, 네 후보 전체 검증과 명시 선택·전체GET·Files 재열기까지 구현돼 있다. 단일 scene/일반 Markdown의 기존 복구도 유지한다.",
+      "files": [
+        "iOSClient/CanvasBridge/CanvasStore.swift",
+        "iOSClient/CanvasBridge/CanvasWorkspace.swift",
+        "iOSClient/CanvasBridge/CanvasRelay.swift",
+        "iOSClient/CanvasBridge/CanvasDocumentRelay.swift",
+        "CanvasRelay/relay/obsidian-vault.js",
+        "CanvasRelay/relay/canvas-document.js"
+      ],
+      "symbols": [
+        "CanvasStore.synchronizeDocumentToVault",
+        "CanvasStore.refreshDocumentFromVault",
+        "CanvasStore.readDocumentConflict",
+        "CanvasStore.resolveDocumentConflict",
+        "CanvasStore.confirmDocumentAcknowledgement"
+      ],
+      "checks": "독립 소스 검수와 Helm EVIDENCE_CLEAR_SCOPED_NATIVE_STORE_HTTP_F09를 각각 기록한다. 실제409 응답 유실·새 프로세스 held·명시 복구가 scoped evidence로 확인됐으며 성공200 ACK 후속은 Nash 검수 대기다.",
+      "limits": [
+        "Node의 교환후409는 active가 이미 제안본일 수 있으며 절대CAS/자동rollback으로 설명하지 않는다.",
+        "명시 복구/전체GET 확인은 원앱 클라우드 자동 병합·다중 실기기 동등성과 다르다.",
+        "성공200 ACK writer 결과를 source/runtimeAccepted 또는 기존79 독립 판정에 합산하지 않는다."
+      ],
+      "evidenceRefs": [
+        "R162",
+        "R166",
+        "R165",
+        "R175",
+        "R176",
+        "R177",
+        "R178"
+      ],
+      "integration": {
+        "commit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "tree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sourcePresent": true,
+        "acceptance": "공식 f09 소스의 제한 구현 존재. scoped 실행 증거와 앱 runtime 수용은 별도."
+      },
+      "physical": {
+        "accepted": false,
+        "note": "실제 최신 iPad/GUI/Pencil/FileProvider·권한 수용 미완료"
+      },
+      "automaticScope": {
+        "testsRerunThisUpdate": false,
+        "testCountsAreFeatureCounts": false,
+        "appRuntimeAccepted": false,
+        "testAccepted": false
+      }
     }
   },
   "updateDelta": {
@@ -30447,55 +31169,224 @@
     "completeFlagsRaised": 0,
     "supportUnknownRaised": 0,
     "signed72EvidenceImmutable": true,
-    "additionalOriginalEvidenceScope": "새4개 보존 파일의 저장구조/CUA 메뉴 관측을 별도 필드로 연결. 기존 original.status/support/complete 변경0."
+    "additionalOriginalEvidenceScope": "새4개 보존 파일의 저장구조/CUA 메뉴 관측을 별도 필드로 연결. 기존 original.status/support/complete 변경0.",
+    "f09CurrentImplementationUpdate": {
+      "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+      "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+      "rowsUpdated": [
+        {
+          "id": "MS12.03",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "pagesStoreF09"
+          ]
+        },
+        {
+          "id": "MS14.03",
+          "before": "implementation_evidence_missing",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "pagesStoreF09",
+            "filesDocumentF09"
+          ]
+        },
+        {
+          "id": "MS32.01",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        },
+        {
+          "id": "MS32.03",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        },
+        {
+          "id": "MS32.04",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        },
+        {
+          "id": "MM22.06",
+          "before": "implementation_evidence_missing",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "cardMergeF09"
+          ]
+        },
+        {
+          "id": "MM22.07",
+          "before": "implementation_evidence_missing",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "cardMergeF09"
+          ]
+        },
+        {
+          "id": "MM32.01",
+          "before": "implementation_evidence_missing",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "cardTagsF09"
+          ]
+        },
+        {
+          "id": "MM32.02",
+          "before": "implementation_evidence_missing",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "cardTagsF09"
+          ]
+        },
+        {
+          "id": "MM32.03",
+          "before": "implementation_evidence_missing",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "cardTagsF09"
+          ]
+        },
+        {
+          "id": "MM32.04",
+          "before": "implementation_evidence_missing",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "cardTagsF09"
+          ]
+        },
+        {
+          "id": "MM41.01",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        },
+        {
+          "id": "MM41.03",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        },
+        {
+          "id": "MM41.04",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        },
+        {
+          "id": "MI33.01",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        },
+        {
+          "id": "MI33.03",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        },
+        {
+          "id": "MI33.04",
+          "before": "parity_gap",
+          "after": "parity_gap",
+          "implementationRefs": [
+            "filesDocumentF09",
+            "recoveryF09"
+          ]
+        }
+      ],
+      "previousCountsPreservedAt": "currentProgress.previousCounts",
+      "rowsAllIncomplete": true,
+      "denominatorUnchanged": true,
+      "newOriginalObservation": false,
+      "newProductExecution": false
+    }
   },
   "nextActions": [
     {
       "priority": 1,
-      "behavior": "PDF 발췌를 Obsidian 원문 링크로 저장하고 표시 순서 변경 뒤 동일 원문으로 복귀",
+      "behavior": "공식 전체문서/Files/복구를 유지하고 미통합 페이지/표시 수리만 원담당 경계로 대조",
       "rowIds": [
-        "MM15.04",
-        "MM15.05"
+        "MS14.03",
+        "MS32.04"
       ],
-      "evidenceRefs": [
-        "R049",
-        "R054",
-        "R058",
-        "R062",
-        "R125"
+      "implementationRefs": [
+        "pagesStoreF09",
+        "filesDocumentF09",
+        "recoveryF09"
       ],
-      "stage": "현재 제품 미접합. 검수된 단일페이지 후보를 재사용한 뒤 변형/다중페이지 경계를 확장",
-      "implemented": false
+      "stage": "선택·복제·전체 import/저장/역수신/명시복구는 f09에 존재. 7e53 빈 페이지/순서 후보는 별도 검수/통합 전이며 다시 구현하지 않는다.",
+      "implemented": true,
+      "parityComplete": false,
+      "nextAction": "원래 페이지/Store 모듈을 재작성하지 말고 후보의 검수 결과와 공식 반영 여부, 남은 iPad 권한/GUI 경계만 확인한다.",
+      "actionType": "followup_existing_implementation",
+      "implementedScope": "implementationRefs에 명시된 제한 소스만",
+      "wholeFeatureComplete": false
     },
     {
       "priority": 2,
-      "behavior": "복수 발췌 카드의 원본 참조/순서를 보존해 병합·해제",
+      "behavior": "기존 참조 병합/연결 해제의 의미 범위와 최종 UI/저장 수용",
       "rowIds": [
         "MM22.06",
         "MM22.07"
       ],
-      "evidenceRefs": [
-        "R081",
-        "R082"
+      "implementationRefs": [
+        "cardMergeF09"
       ],
-      "stage": "현재 소스에 대응 제품 동작 근거 없음",
-      "implemented": false
+      "stage": "2~20개 note 참조 병합과 명시 연결 해제가 공식 f09에 통합됨.",
+      "implemented": true,
+      "parityComplete": false,
+      "nextAction": "원본 보존형 참조 병합을 재작성하지 않는다. 원앱 원본 숨김/이동·중첩/그룹 전체 의미 차이를 구분하고 최종 UI/권한 수용만 원담당과 대조한다.",
+      "actionType": "followup_existing_implementation",
+      "implementedScope": "implementationRefs에 명시된 제한 소스만",
+      "wholeFeatureComplete": false
     },
     {
       "priority": 3,
-      "behavior": "카드 태그 추가·Undo/Redo·필터·해제를 Obsidian 데이터와 연결",
+      "behavior": "기존 태그/UndoRedo/보기 필터·해제를 유지하고 남은 범위만 확인",
       "rowIds": [
         "MM32.01",
         "MM32.02",
         "MM32.03",
         "MM32.04"
       ],
-      "evidenceRefs": [
-        "R093",
-        "R094"
+      "implementationRefs": [
+        "cardTagsF09"
       ],
-      "stage": "현재 소스에 대응 제품 동작 근거 없음",
-      "implemented": false
+      "stage": "예약 namespace와 태그 추가·공통 UndoRedo·필터/필터 해제가 공식 f09에 통합됨.",
+      "implemented": true,
+      "parityComplete": false,
+      "nextAction": "태그 모듈·새 검색 서버를 다시 만들지 않는다. 보기 필터 해제와 영구 태그 삭제를 구분하고 실제 Obsidian 인덱스·iPad UI/기기 경계는 별도 유지한다.",
+      "actionType": "followup_existing_implementation",
+      "implementedScope": "implementationRefs에 명시된 제한 소스만",
+      "wholeFeatureComplete": false
     }
   ],
   "additionalOriginalEvidence": {
@@ -30726,5 +31617,701 @@
         }
       ]
     }
-  ]
+  ],
+  "currentProgress": {
+    "schema": "ccr.rea-current-implementation/v1",
+    "recordedAt": "2026-10-29T12:39:03+09:00",
+    "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+    "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+    "officialEvidenceRefs": [
+      "R162",
+      "R163"
+    ],
+    "sourceFiles": {
+      "iOSClient/CanvasBridge/CanvasStore.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "c1a5839eec5e32d0fc59f4ee999bf7b55d1018355f73f07b7d58fcfa2b382fe1",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasWorkspace.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "c0fdab7609a1995cf242e001a0d631a750b64ff4c83d67062b57028d59c0f3bd",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasDocumentFiles.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "773fca39de1fd449933a28a8c52f5cc9901fcebd7cc3237f3631370d30144b70",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasDocument.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "88f9215bba57acd78e504a4a876db914b6b84e8dff7de8241cceb8eac001cc72",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasModel.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "e5441ac8435ba3244493c083d1c7c2336218c6d100a51d94dff35b7a1db752c4",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/PencilCanvas.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "d17a2f7a40d654a6b8c865fac724e54ecec53ec24916cfecb0d143a5270a508f",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/Sill.xcodeproj/project.pbxproj": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "554bd82664f504763ee9a6184e9beea405bb73288a86d3b3baea18878810bb21",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasRelay.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "9abe8d8bf84532b2128a405e9f4541e67b86abb9135cab83c9dd8932fc34fa42",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasDocumentRelay.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "9d06c3fbf2efc6e1fd8a73e7099767f1947ae251b14559b10c2609ba24e3cb2b",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "CanvasRelay/relay/obsidian-vault.js": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "381c6beab5ddb8f7a3a4e8d0f4f6997ac7ce319199d33e7797a190f8eba3d0c9",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "CanvasRelay/relay/canvas-document.js": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "def2e11dddcd3742d6d98459b32e1b36fc8dccb5c6466e2044ce9553e029634b",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasCardMerge.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "e7f897f554be9eb94a3325640e3746ffc7cfb2718884b8bbdc8458cd4136bcf8",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasCardTags.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "668986ac8b56abf0c175b6b1754ab8c6a141345000086717960b84121ec30097",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "iOSClient/CanvasBridge/CanvasPeleView.swift": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "260acfbc924ae2f4d8f61a35dc9b46424fd2bbcc4ad0ab3bd44be3527d2a8ed9",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      },
+      "CanvasRelay/relay/canvas-card-tags.js": {
+        "sourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "sourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "5057b32868e11e9c5a23f7220337fc2a89964fcb7c35846773584ae19cb5b236",
+        "inspection": "공식 f09의 실제 진입점·등록 존재 확인. 파일 전체 신규 검수/기기 수용 아님."
+      }
+    },
+    "moduleReviewBindings": [
+      {
+        "file": "iOSClient/CanvasBridge/CanvasCardMerge.swift",
+        "reviewedSourceCommit": "c723825621b0c4dfb52cba6cf81ccade0f93dae2",
+        "reviewedSourceTree": "58d657547e09fa25ee3b757521b6e18c0de9a99b",
+        "officialSourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "officialSourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "e7f897f554be9eb94a3325640e3746ffc7cfb2718884b8bbdc8458cd4136bcf8",
+        "sameReviewedModuleBytes": true
+      },
+      {
+        "file": "iOSClient/CanvasBridge/CanvasCardTags.swift",
+        "reviewedSourceCommit": "16e20fecac47994422a6b513dc5828c83e706b3d",
+        "reviewedSourceTree": "351f260d12de6d62487f7c7c45e149e8ece77055",
+        "officialSourceCommit": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+        "officialSourceTree": "bd2347c35def444ca01dea8ec328c19e0ecffff0",
+        "sha256": "668986ac8b56abf0c175b6b1754ab8c6a141345000086717960b84121ec30097",
+        "sameReviewedModuleBytes": true
+      }
+    ],
+    "programUnits": {
+      "originalPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/program/units.tsv",
+      "snapshotPath": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/coverage-progress-f09-evidence/units-f09-read-snapshot.tsv",
+      "sha256": "6a9bf8d3930a4da3150f9e61be09aacd40bc559927efbd5a3511f95a51a44005",
+      "evidenceRef": "R164",
+      "rows": [
+        {
+          "id": "card-merge",
+          "track": "engineering",
+          "state": "integrated",
+          "branch": "codex/ipad-card-merge-20261029",
+          "pr": "",
+          "sha": "1c0c19d2fbec84080a6ab2b9cb0a6573303c1e3a",
+          "brief": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/coverage-source-20261029/docs/rea-completion/NEXT.md"
+        },
+        {
+          "id": "card-tags",
+          "track": "engineering",
+          "state": "integrated",
+          "branch": "integration/ccr-ipad",
+          "pr": "",
+          "sha": "0c230d2ad0e360dcf7ee0ef31a849fc3832ef1a5",
+          "brief": "/Users/ambrion/.codex/worktrees/ccr-ipad-integration-20261020/docs/rea-completion/NEXT.md"
+        },
+        {
+          "id": "document-pages",
+          "track": "engineering",
+          "state": "integrated",
+          "branch": "integration/ccr-ipad",
+          "pr": "",
+          "sha": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+          "brief": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-f09daa1.json"
+        },
+        {
+          "id": "document-storage-reuse",
+          "track": "engineering",
+          "state": "integrated",
+          "branch": "integration/ccr-ipad",
+          "pr": "",
+          "sha": "486b2e02ad9178a37617a2e1cae6e660c7d97303",
+          "brief": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/canvas-document-storage-evidence/HANDOFF-ded8020.json"
+        },
+        {
+          "id": "document-server",
+          "track": "engineering",
+          "state": "integrated",
+          "branch": "integration/ccr-ipad",
+          "pr": "",
+          "sha": "9b0c5b450f0228e401ed3ce4fce67e15a028ddca",
+          "brief": "/Users/ambrion/.codex/worktrees/ccr-ipad-integration-20261020/CanvasRelay/DOCUMENT-RELAY-CONTRACT.md"
+        },
+        {
+          "id": "document-relay-client",
+          "track": "engineering",
+          "state": "integrated",
+          "branch": "integration/ccr-ipad",
+          "pr": "",
+          "sha": "81828c6e9e91b9d20f040abac2933a842a0fa25e",
+          "brief": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-81828c6.json"
+        },
+        {
+          "id": "document-store-ui",
+          "track": "engineering",
+          "state": "integrated",
+          "branch": "integration/ccr-ipad",
+          "pr": "",
+          "sha": "f09daa176fb9ff8ff45dcb30389eb06f33ea2b40",
+          "brief": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/product-integration-f09daa1.json"
+        }
+      ],
+      "policy": "원장의 integrated 표시는 sourceguard/실제 f09 파일로 대조하며 runtime/기기 완료가 아니다."
+    },
+    "previousRowsAtF09": {
+      "MS12.03": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MS14.03": {
+        "status": "implementation_evidence_missing",
+        "remaining": [
+          "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
+          "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
+          "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [],
+          "implementationStage": "not_evidenced",
+          "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+          "integrationStage": "feature_not_revalidated_at_current_source",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MS32.01": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MS32.03": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MS32.04": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용.",
+          "exact 구현된 두 결정과 barrier/IO 복구만. 원앱 클라우드 동기화·자동 병합 전체 동등성은 미수용.",
+          "최종 signed 후보의 UI·실기기·media/relay 구간·Pencil은 대기."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files",
+            "conflict"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM22.06": {
+        "status": "implementation_evidence_missing",
+        "remaining": [
+          "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
+          "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
+          "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [],
+          "implementationStage": "not_evidenced",
+          "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+          "integrationStage": "feature_not_revalidated_at_current_source",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM22.07": {
+        "status": "implementation_evidence_missing",
+        "remaining": [
+          "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
+          "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
+          "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [],
+          "implementationStage": "not_evidenced",
+          "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+          "integrationStage": "feature_not_revalidated_at_current_source",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM32.01": {
+        "status": "implementation_evidence_missing",
+        "remaining": [
+          "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
+          "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
+          "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [],
+          "implementationStage": "not_evidenced",
+          "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+          "integrationStage": "feature_not_revalidated_at_current_source",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM32.02": {
+        "status": "implementation_evidence_missing",
+        "remaining": [
+          "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
+          "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
+          "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [],
+          "implementationStage": "not_evidenced",
+          "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+          "integrationStage": "feature_not_revalidated_at_current_source",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM32.03": {
+        "status": "implementation_evidence_missing",
+        "remaining": [
+          "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
+          "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
+          "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [],
+          "implementationStage": "not_evidenced",
+          "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+          "integrationStage": "feature_not_revalidated_at_current_source",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM32.04": {
+        "status": "implementation_evidence_missing",
+        "remaining": [
+          "기존 누적 관측에서 이 행동의 입력/결과와 저장·재열기·실패 경계를 보완.",
+          "확인된 원앱 행동에 대응하는 CCR 실제 업무 구현과 파일 저장 계약을 추가하고 검수.",
+          "부모가 고정한 최종 설치본에서 해당 행동의 저장·재열기·역수신·취소를 확인. 원앱 조사 완료를 CCR 완료로 세지 않음."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [],
+          "implementationStage": "not_evidenced",
+          "automaticEvidence": "기존 ccr.checks/evidenceRefs의 역사적 근거만. 이번에 기능 검사를 추가 수용하지 않음.",
+          "integrationStage": "feature_not_revalidated_at_current_source",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM41.01": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM41.03": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MM41.04": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용.",
+          "exact 구현된 두 결정과 barrier/IO 복구만. 원앱 클라우드 동기화·자동 병합 전체 동등성은 미수용.",
+          "최종 signed 후보의 UI·실기기·media/relay 구간·Pencil은 대기."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files",
+            "conflict"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MI33.01": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MI33.03": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      },
+      "MI33.04": {
+        "status": "parity_gap",
+        "remaining": [
+          "원앱의 기존 행동별 미확인/실패 근거를 유지한다. 새 CCR source 검사를 원앱 입력·저장·재열기 성공으로 올리지 않는다.",
+          "기존 .sill scene identity 열기만. 제목 있는 서재/새 노트북/페이지 관리 전체는 없다.",
+          "앱 자체 Documents/ApplicationSupport는 공용 원본으로 성공 처리하지 않는다. 실제 iPad 폴더 선택/bookmark·삭제분리 지속성 미수용.",
+          "exact 구현된 두 결정과 barrier/IO 복구만. 원앱 클라우드 동기화·자동 병합 전체 동등성은 미수용.",
+          "최종 signed 후보의 UI·실기기·media/relay 구간·Pencil은 대기."
+        ],
+        "currentProgress": {
+          "sourceBasis": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+          "implementationRefs": [
+            "files",
+            "conflict"
+          ],
+          "implementationStage": "integrated_partial",
+          "automaticEvidence": "implementationUpdates 각 refs의 좁은 검사 범위; 재실행0",
+          "integrationStage": "source_integrated",
+          "installedStage": "normal68_historical_only",
+          "currentPhysicalAcceptance": false
+        }
+      }
+    },
+    "previousCounts": {
+      "leafTotal": 385,
+      "legacyGroups": 114,
+      "byTarget": {
+        "MS-IPAD-7.5.2": 110,
+        "MN-MAC-4.4.6": 146,
+        "MN-IPAD-4.4.6": 129
+      },
+      "byStatus": {
+        "parity_gap": 120,
+        "implementation_evidence_missing": 227,
+        "support_unverified": 32,
+        "integration_pending": 6
+      },
+      "byOriginalStatus": {
+        "behavior_observed": 108,
+        "evidence_incomplete": 225,
+        "legacy_narrow_complete": 18,
+        "attempt_observed": 2,
+        "support_unverified": 32
+      },
+      "complete": 0,
+      "incomplete": 385,
+      "notApplicable": 0,
+      "overlapReferenceRows": 6,
+      "distinctBehaviorRows": 379
+    },
+    "previousCurrentVersions": {
+      "officialIntegration": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+      "normalInstalled": {
+        "build": 68,
+        "source": "14e941099ca5d27bb4c1df171849d601a14a1455",
+        "tree": "4c1081a9a0e154e4ce2980d80d6d29e69edf1499",
+        "evidenceRef": "R005",
+        "metadataEvidenceRef": "R146",
+        "currentMetadataOnly": true
+      },
+      "frozenSigned69": {
+        "source": "2301fbcac31a7be27f1a088b9b0e1203c6085c42",
+        "installed": false
+      },
+      "unsigned70": {
+        "source": "c03d9c2de9eb39cfd50501a73a060a0a34375c8c",
+        "signed": false,
+        "installed": false
+      },
+      "pdfCandidate": {
+        "source": "6e796850c518d671a59014f33ffb54cdc7519c2f",
+        "tree": "7af7eecdb1f5a8cfe439c23caca02fc8abc66764",
+        "relay": "2250dfada987013e6fc09e40e8bf2a58db134245",
+        "integrated": false,
+        "installed": false
+      },
+      "btCandidate": {
+        "source": "163aa1f0b3a6a95cc1aa289da0f925d8b7851242",
+        "tree": "a23f10f06a3988436e1ff99b8a79aa901ea9eaf3",
+        "relay": "4cac1b8",
+        "integrated": false,
+        "installed": false
+      },
+      "testAcceptance": "9646469는 exact 격리 native/SDK와 signed72 로컬 검증까지. exact 새 iPad runtime testDeployed/testAccepted false. 과거 db6e 수용 보존.",
+      "officialIntegrationTree": "4e8b7abf92485050610da334d6ec0166094adacb",
+      "signedCandidate72": {
+        "source": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+        "tree": "4e8b7abf92485050610da334d6ec0166094adacb",
+        "build": 72,
+        "signed": true,
+        "localArtifactValidated": true,
+        "installed": false,
+        "actualRuntimeAccepted": false,
+        "evidenceRefs": [
+          "R144",
+          "R145"
+        ]
+      }
+    },
+    "historicalRegistryPolicy": "기존 sourceFileRegistry/ccr/checks/coverage snapshot은 당시 기록으로 그대로 보존. 현재 source 해시는 이 객체의 sourceFiles를 따른다.",
+    "independentScopes": {
+      "source": "기존 R1/f09/모듈/결합의 제한 SOURCE_CLEAR를 해당 소스 범위로 재사용",
+      "storeHTTP79": {
+        "state": "independent_scoped_evidence_accepted",
+        "verdict": "EVIDENCE_CLEAR_SCOPED_NATIVE_STORE_HTTP_F09",
+        "evidenceRefs": [
+          "R175",
+          "R176"
+        ],
+        "scope": "macOS DEBUG Store/Files/실제 Node/별도 CLI Store와409 보존 복구만",
+        "sourceAcceptanceGrantedByThisEvidence": false,
+        "runtimeAccepted": false,
+        "testAccepted": false
+      },
+      "success200ACK": {
+        "state": "pending_independent_review_as_user_requested",
+        "reviewer": "Nash",
+        "authorEvidenceRef": "R178",
+        "reviewPath": null,
+        "accepted": false,
+        "sourceAcceptanceGrantedByThisEvidence": false,
+        "runtimeAccepted": false
+      }
+    },
+    "notOfficial": {
+      "pageActions7e53": {
+        "sourceCommit": "7e53a675b094dc70eaad92e1531114eccd29e3ec",
+        "sourceTree": "28aa06161c19c413baae7b4a2a852bdf4bcfb7a4",
+        "scope": "빈 페이지/순서 편집",
+        "integratedInF09": false
+      },
+      "pdfProduct013": {
+        "sourceCommit": "013ec4d61212c1c82c7a6cd344291d1fa60e80d9",
+        "sourceTree": "426645c48adcb37d457d1b76ca68726cfe6e3538",
+        "scope": "PDF 보기/Store 접합; 검수·수리 후속 대기",
+        "integratedInF09": false
+      },
+      "groupAndEPUB": {
+        "scope": "원담당 별도 WT 진행 중; 정확 후속 판정/통합을 따름",
+        "integratedInF09": false
+      }
+    },
+    "allAppsComplete": false,
+    "physicalAccepted": false,
+    "runtimeAccepted": false,
+    "testAccepted": false,
+    "testsRerunThisUpdate": false,
+    "previousDocumentMetadata": {
+      "recordedAt": "2026-10-29T05:44:38+09:00",
+      "taskKey": "ipad-rea-coverage-20261029",
+      "baseCommit": "9646469ba63b2ed6a65c61a6384f541222dd5dee",
+      "baseTree": "4e8b7abf92485050610da334d6ec0166094adacb",
+      "owner": "01a13ace-e372-7ed1-9946-149df37ee1c3"
+    },
+    "documentUpdateOwner": "01a18303-cc5d-7932-bb37-6cd560ca44fb",
+    "documentBranch": "codex/ipad-coverage-progress-f09-20261029",
+    "previousNextActions": [
+      {
+        "priority": 1,
+        "behavior": "PDF 발췌를 Obsidian 원문 링크로 저장하고 표시 순서 변경 뒤 동일 원문으로 복귀",
+        "rowIds": [
+          "MM15.04",
+          "MM15.05"
+        ],
+        "evidenceRefs": [
+          "R049",
+          "R054",
+          "R058",
+          "R062",
+          "R125"
+        ],
+        "stage": "현재 제품 미접합. 검수된 단일페이지 후보를 재사용한 뒤 변형/다중페이지 경계를 확장",
+        "implemented": false
+      },
+      {
+        "priority": 2,
+        "behavior": "복수 발췌 카드의 원본 참조/순서를 보존해 병합·해제",
+        "rowIds": [
+          "MM22.06",
+          "MM22.07"
+        ],
+        "evidenceRefs": [
+          "R081",
+          "R082"
+        ],
+        "stage": "현재 소스에 대응 제품 동작 근거 없음",
+        "implemented": false
+      },
+      {
+        "priority": 3,
+        "behavior": "카드 태그 추가·Undo/Redo·필터·해제를 Obsidian 데이터와 연결",
+        "rowIds": [
+          "MM32.01",
+          "MM32.02",
+          "MM32.03",
+          "MM32.04"
+        ],
+        "evidenceRefs": [
+          "R093",
+          "R094"
+        ],
+        "stage": "현재 소스에 대응 제품 동작 근거 없음",
+        "implemented": false
+      }
+    ]
+  }
 }
