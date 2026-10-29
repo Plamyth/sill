@@ -10,7 +10,7 @@ args.output.mkdir(parents=True,exist_ok=True)
 out=Path(subprocess.check_output(['/bin/pwd','-P'],cwd=args.output,text=True).strip())/('note-conflict-'+str(uuid.uuid4()));out.mkdir()
 for n in ['home','tmp']:(out/n).mkdir()
 env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',HOME=str(out/'home'),CFFIXED_USER_HOME=str(out/'home'),TMPDIR=str(out/'tmp')+'/')
-sources=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','VaultPDFExcerpt.swift','CanvasCardMerge.swift','CanvasCardTags.swift','CanvasStore.swift','CanvasInkTextEditing.swift','CanvasInkShapeProposal.swift','CanvasInkMathProposal.swift','CanvasInkSpacingProposal.swift','CanvasRelay.swift','ControlRoomProjection.swift']]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'main.swift']
+sources=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','VaultPDFExcerpt.swift','CanvasCardMerge.swift','CanvasCardTags.swift','CanvasStore.swift','CanvasInkTextEditing.swift','CanvasInkShapeProposal.swift','CanvasInkMathProposal.swift','CanvasInkSpacingProposal.swift','CanvasDocument.swift','CanvasDocumentRelay.swift','CanvasRelay.swift','ControlRoomProjection.swift']]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'main.swift']
 
 inputs=sources+[root/'Sources/StreamProtocol/TestDestinations.swift',root/'iOSClient/CanvasBridge/CanvasWorkspace.swift',here/'WorkspaceHarness.swift',here/'wire-example.json',here/'provenance.json',Path(__file__).resolve()]
 iosSources=sorted((root/'iOSClient/CanvasBridge').glob('*.swift'))+[root/'iOSClient'/n for n in ['IPadAudioSession.swift','IPadAudioLeaseState.swift','IPadAudioLeaseCoordinator.swift']]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift']

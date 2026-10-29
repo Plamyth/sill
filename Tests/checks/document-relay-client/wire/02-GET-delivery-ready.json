@@ -1,0 +1,11 @@
+{
+  "method": "GET",
+  "path": "/delivery/ready",
+  "status": 200,
+  "request": null,
+  "response": {
+    "available": false
+  },
+  "responseJSONBase64": "eyJhdmFpbGFibGUiOmZhbHNlfQ==",
+  "responseSha256": "9c9729d235cfd4897778afaf5651db6b7e91ca68f8c5d052d66de5e09734d668"
+}

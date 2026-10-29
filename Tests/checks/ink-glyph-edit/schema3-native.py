@@ -9,7 +9,7 @@ route=json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-rou
 assert any(p.exists() and os.path.samefile(p,route['path']) for p in output.parents)
 home=output/'native-home';home.mkdir(exist_ok=True);tmp=output/'native-tmp';tmp.mkdir(exist_ok=True)
 env.update(HOME=str(home),CFFIXED_USER_HOME=str(home),TMPDIR=str(tmp)+'/')
-inputs=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','CanvasRelay.swift','CanvasPeleView.swift','Pele/bridge.js','Pele/diagram.html','Pele/pele.global.js']]+[here/'WebKitShapeCheck.swift',here/'RelayScene3Check.swift',Path(__file__).resolve()]
+inputs=[root/'iOSClient/CanvasBridge'/n for n in ['CanvasModel.swift','CanvasDocument.swift','CanvasDocumentRelay.swift','CanvasRelay.swift','CanvasPeleView.swift','Pele/bridge.js','Pele/diagram.html','Pele/pele.global.js']]+[here/'WebKitShapeCheck.swift',here/'RelayScene3Check.swift',Path(__file__).resolve()]
 hashes=lambda:{str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs};before=hashes()
 sdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],env=env,text=True).strip()
 base=['xcrun','swiftc','-sdk',sdk,'-target','arm64e-apple-macos27.0','-parse-as-library','-swift-version','5','-module-cache-path',str(output/'schema3-modules')]
@@ -23,7 +23,7 @@ def web():
 def relay():
  c=run('mac-protocol',base+['-emit-module','-emit-object','-module-name','StreamProtocol',root/'Sources/StreamProtocol/TestDestinations.swift','-emit-module-path',output/'StreamProtocol.swiftmodule','-o',output/'StreamProtocol.o'])
  if c['exitCode']:return [c]
- d=run('relay-compile',base+['-I',output,root/'iOSClient/CanvasBridge/CanvasModel.swift',root/'iOSClient/CanvasBridge/CanvasRelay.swift',root/'iOSClient/CanvasBridge/ControlRoomProjection.swift',root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'RelayScene3Check.swift',output/'StreamProtocol.o','-o',output/'relay-check'])
+ d=run('relay-compile',base+['-I',output,root/'iOSClient/CanvasBridge/CanvasModel.swift',root/'iOSClient/CanvasBridge/CanvasDocument.swift',root/'iOSClient/CanvasBridge/CanvasDocumentRelay.swift',root/'iOSClient/CanvasBridge/CanvasRelay.swift',root/'iOSClient/CanvasBridge/ControlRoomProjection.swift',root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',here/'RelayScene3Check.swift',output/'StreamProtocol.o','-o',output/'relay-check'])
  return [c,d]+([run('relay',[output/'relay-check'])] if d['exitCode']==0 else [])
 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
  results=[r for group in pool.map(lambda f:f(),[web,relay]) for r in group]

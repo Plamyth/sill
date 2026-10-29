@@ -1,0 +1,11 @@
+{
+  "method": "GET",
+  "path": "/vault/entries",
+  "status": 401,
+  "request": null,
+  "response": {
+    "error": "Unauthorized"
+  },
+  "responseJSONBase64": "eyJlcnJvciI6IlVuYXV0aG9yaXplZCJ9",
+  "responseSha256": "3be5b8e53fdc8b0a2996590589456db33504977f3d1ce9bb75016c8a707e1a71"
+}

@@ -1,0 +1,198 @@
+{
+  "schema": "ccr.document-wire-fixtures/v1",
+  "sourceCommit": "9431c0ddb2a21d87b0b0b26baa5cb5fd3a60faad",
+  "sourceTree": "c68ee39efa92c9aefc2c1a19ca5b0fe84bca8656",
+  "productSourceCommit": "a2cdacb5084e9439091023d5ee9b8e5b8fbb02ed",
+  "productBlobsUnchanged": true,
+  "contractPath": "CanvasRelay/DOCUMENT-RELAY-CONTRACT.md",
+  "initialContractCommit": "31596e60238c9d2d55db7b33aff6fc9c6f6edd41",
+  "contractSha256": "bf7897d3f646b38089edbdb37e04d35f1aaacd86df122272110dcf4988456e14",
+  "contractChangesSince31596": "타입과 wire 필드는 불변이며 최신 공식 모델의 수용 출처만 갱신했다.",
+  "actualHTTP": true,
+  "actualURLSession": false,
+  "nativePKDrawingDecode": false,
+  "syntheticOwnVaultOnly": true,
+  "authHeadersOmitted": true,
+  "requestsIncludingLostACK": 21,
+  "receivedResponses": 19,
+  "lostACKResponsesAreNotFixtures": true,
+  "responsesStoredAsOriginalJSONBase64": true,
+  "requestObjectsAreSemanticJSON": true,
+  "responseFixtures": [
+    {
+      "path": "00-GET-vault-entries.json",
+      "sha256": "36922c1d1673fbe36d8846b3e47a53b566b931d97d2c8fd2965115ef726f15b7",
+      "method": "GET",
+      "route": "/vault/entries",
+      "status": 401,
+      "responseSha256": "3be5b8e53fdc8b0a2996590589456db33504977f3d1ce9bb75016c8a707e1a71"
+    },
+    {
+      "path": "01-GET-vault-canvas-capabilities.json",
+      "sha256": "4e9b6eba3da3a6b5debd406ea586465081be2907d8e934c7b9755a56fc96a8a7",
+      "method": "GET",
+      "route": "/vault/canvas/capabilities",
+      "status": 200,
+      "responseSha256": "02ae24c4d79c5c6f92a056a1d107b7e6effc325f4069a815df6413d66c5bb97b"
+    },
+    {
+      "path": "02-GET-delivery-ready.json",
+      "sha256": "6932fad9d14fccade45d3c84330115e838d69ac40dc0b0f3af3a0199ca611668",
+      "method": "GET",
+      "route": "/delivery/ready",
+      "status": 200,
+      "responseSha256": "9c9729d235cfd4897778afaf5651db6b7e91ca68f8c5d052d66de5e09734d668"
+    },
+    {
+      "path": "03-PUT-vault-document.json",
+      "sha256": "45638ef54f2d5935ba99c8ac7f1b71b1269d8afa016a63921617de4c706f2785",
+      "method": "PUT",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "7863f5bb8003bbffdf8db48a2849d0ead8f3cdacaaec999dab3dc2ab820cb8ef"
+    },
+    {
+      "path": "04-GET-vault-document.json",
+      "sha256": "b0c426f184125dc350651657c1d70f80687b1b74bf6703951667d9f86bfe3840",
+      "method": "GET",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "346265a9405c2fdf03dc478f515671ce4ab4f391ca80e173c05d7ad6fd531a81"
+    },
+    {
+      "path": "05-PUT-vault-document.json",
+      "sha256": "9ae45390039f458bc789ef398cd8fc1416a78dc86269f2bd8d85cacaea7e0edc",
+      "method": "PUT",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "51101f4af81b18b1e0057179297ea530e82daa7acc9790f72f726e55df2b7f4c"
+    },
+    {
+      "path": "06-GET-vault-document.json",
+      "sha256": "468a49ef3ebc3a4d9ec9ea599845e03cd56647faa2b40e71cfdc40b2eb9df314",
+      "method": "GET",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "41c01db5172afb83bc2b2f4de3b544c4cd2d1633b18c01ad72b5786b2383bc17"
+    },
+    {
+      "path": "07-PUT-vault-document.json",
+      "sha256": "073cf4684cb5112b55bdb3065b2a8a2d751e859ca61c6ea21796db8bd05cbaee",
+      "method": "PUT",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 409,
+      "responseSha256": "da52a6eb028cfd3e00fe74c13a44465cce90d429ca33b617a8988bb31f63e1af"
+    },
+    {
+      "path": "08-PUT-vault-canvas.json",
+      "sha256": "a6a2ce19983d140dc184ea289caa724e52507106aa41c07b1ed1fb3e2b9f8090",
+      "method": "PUT",
+      "route": "/vault/canvas?id=2444ff0a-e323-494e-a9f5-82530953986a",
+      "status": 409,
+      "responseSha256": "fdb4511142af48eaeb584324d0ecd9eecf5b42d27860b970b4cdfd0fd41cd49e"
+    },
+    {
+      "path": "09-PUT-vault-canvas.json",
+      "sha256": "4d7842c33b8dd3450a720c73fc0dc77727780fcc019e841899baa68d24edd76f",
+      "method": "PUT",
+      "route": "/vault/canvas?id=796e64f6-3a82-4554-987c-bc93e3d17b1a",
+      "status": 409,
+      "responseSha256": "fdb4511142af48eaeb584324d0ecd9eecf5b42d27860b970b4cdfd0fd41cd49e"
+    },
+    {
+      "path": "10-PUT-vault-note.json",
+      "sha256": "2d567775baa602fc2bb129ac5beb5dc55f5cada63210e449fd52a137e0966233",
+      "method": "PUT",
+      "route": "/vault/note?path=CCR%20Documents%2F92272901-f979-46a8-85f1-dfd72c075f20.md",
+      "status": 409,
+      "responseSha256": "e8341e426f79b027f70c899c804e08a5dd7f81f7efa19cc25a9d1161f41be344"
+    },
+    {
+      "path": "11-GET-vault-document.json",
+      "sha256": "ac03ee0c4fbaeebce38e810d72931d9bd9a181220eebaaa31730d8f59271b3ae",
+      "method": "GET",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "14e9097a7b67a71cc00e7601a9f989a005f418e152478de879cf684a55b5d42d"
+    },
+    {
+      "path": "12-GET-vault-document.json",
+      "sha256": "70fe24973f9aeb2235dc4751250f0f7b49a30c51671ce733e89a70ba1704aa88",
+      "method": "GET",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 409,
+      "responseSha256": "6035950a63a7b5926ba27c537b46f40a25135880e9aa81f91c842f92173b7e3f"
+    },
+    {
+      "path": "13-GET-vault-document-conflict.json",
+      "sha256": "f9d9ae23d6c8ac335bef996029618363778d592c2d25137b41e0fe9fca0788be",
+      "method": "GET",
+      "route": "/vault/document/conflict?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "5dff9995a5052861f5b2242e7e8d868eace2d2ba6591f34b5b1ba205ccb5ff06"
+    },
+    {
+      "path": "14-GET-vault-document-conflict.json",
+      "sha256": "6bbb86d036db05d0f8bc1aa54e37970df2976b56a0ac6eb7cf2c0c0ad1dc115b",
+      "method": "GET",
+      "route": "/vault/document/conflict?id=92272901-f979-46a8-85f1-dfd72c075f20&recoveryID=db061f5a-b7f0-434e-a781-10166c67d80b&material=displaced&sha256=e373da279d2e1b0a4bbe091e37a16c2ba9489d26920fe07fefb49d969eb0cde8",
+      "status": 200,
+      "responseSha256": "6e2aacc8f6630cd9e1aa37e96e34294091e0c529d3bcae5eecb57b81e23a09c7"
+    },
+    {
+      "path": "15-PUT-vault-document-conflict.json",
+      "sha256": "bb01737f525eb2872ae91ef38854bfaadb7863a920ee0950da0e289eb46a704a",
+      "method": "PUT",
+      "route": "/vault/document/conflict?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "3cfd1a0c8bd0c2806e04ef074d131cdfe3603120f8a8dcbcbd11882cf6050678"
+    },
+    {
+      "path": "16-PUT-vault-document-conflict.json",
+      "sha256": "bb01737f525eb2872ae91ef38854bfaadb7863a920ee0950da0e289eb46a704a",
+      "method": "PUT",
+      "route": "/vault/document/conflict?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "3cfd1a0c8bd0c2806e04ef074d131cdfe3603120f8a8dcbcbd11882cf6050678"
+    },
+    {
+      "path": "17-GET-vault-document.json",
+      "sha256": "fc41be16dc10177cfa8b216346fdced10cb5b553b31f87301ae0a3927b324988",
+      "method": "GET",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "6e2aacc8f6630cd9e1aa37e96e34294091e0c529d3bcae5eecb57b81e23a09c7"
+    },
+    {
+      "path": "18-PUT-vault-document.json",
+      "sha256": "af6ee25a0906974f6c864d3817104cc00afaf9b0f84e5e29c130d285a4ae7dd7",
+      "method": "PUT",
+      "route": "/vault/document?id=92272901-f979-46a8-85f1-dfd72c075f20",
+      "status": 200,
+      "responseSha256": "1b7413d1ccada8fa4c0b671508cb21b69ca0bbd7f6c0795f7ad391bc075cebe3"
+    }
+  ],
+  "executionReceipt": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/relay-document-source-20261029/evidence/mini-result-9431c0ddb2a2.json",
+  "orchestrationReceipt": "/Volumes/BT-Workspace/Development-Archives/BT_CCR-iPad/rea-completion-20261028/relay-document-source-20261029/evidence/orchestration-9431c0ddb2a2.json",
+  "maximumBoundaryNotRepeated": true,
+  "cleanup": {
+    "leaseId": "3398ea8c-2fb8-419d-871f-3bab5055d9e8",
+    "listenerPID": 7160,
+    "port": 56732,
+    "leaseReleasedAndPIDAbsent": true,
+    "childrenAllGone": true,
+    "ephemeralInputAbsent": true,
+    "sourceBeforeAfterEqual": true
+  },
+  "effects": {
+    "actual8791": 0,
+    "actual8793": 0,
+    "userVault": 0,
+    "HostCoreDeviceUI": 0,
+    "externalDelivery": 0,
+    "keys": 0
+  },
+  "clientOwner": "01a18303-cc5d-7932-bb37-6cd560ca44fb",
+  "independentReviewOwner": "01a182ef-bc42-7512-bef0-fca8edc3f5d1",
+  "independentSourceAccepted": false
+}
