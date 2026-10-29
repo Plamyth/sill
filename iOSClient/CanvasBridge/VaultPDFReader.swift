@@ -185,6 +185,7 @@ private final class VaultReadOnlyPDFView: PDFView {
     }
 
     func applyViewState(_ state: VaultPDFViewState) throws {
+        _ = try state.validated(snapshot:snapshot,pageCount:pageCount)
         guard state != viewState else { return }
         let old = viewState, selection = try originalSelection()
         try install(state,physicalPage:pageIndex,selection:selection)

@@ -14,6 +14,38 @@ private func viewNote(_ state: VaultPDFViewState) throws -> VaultNoteSnapshot {
     return .init(path:state.notePath,text:text,sha256:CanvasPacket.sha(Data(text.utf8)),modifiedAt:"")
 }
 
+@MainActor func checkPDFViewStateIdentity(_ check:(Bool,String)->Void) throws {
+    let windows = NSApplication.shared.windows.count
+    let bytes = pagesPDF([("ONE","/Rotate 90"),("TWO","")])
+    let snapshot = viewSnapshot(bytes,"문서/é.pdf"), other = viewSnapshot(bytes,"문서/e\u{301}.pdf")
+    let reader = try VaultPDFReader(snapshot:snapshot), foreign = VaultPDFViewState(snapshot:other,pageCount:2)
+    reader.view.frame = CGRect(x:0,y:0,width:640,height:900)
+    let document = reader.view.document!, page = document.page(at:0)!, box = page.bounds(for:.cropBox)
+    reader.view.setCurrentSelection(page.selection(for:(page.string! as NSString).range(of:"Core",options:.backwards)),animate:false)
+    let source = try reader.excerpt(), before = reader.viewState
+    check(snapshot.path == other.path && !snapshot.path.utf8.elementsEqual(other.path.utf8) && before == foreign,
+          "NFC/NFD paths reproduce canonical equality with different UTF8 identity")
+    check(before.notePath != foreign.notePath,"sidecar identity remains bound to the original path UTF8 SHA")
+    try reader.applyViewState(before)
+    check(reader.view.document === document && reader.view.currentSelection?.string == source.quote && !reader.hasViewEdits && !reader.canUndoViewState,
+          "exact same state is a valid no-op without changing selection saved baseline or Undo")
+    do { try reader.applyViewState(foreign); check(false,"canonically equal foreign UTF8 path must be rejected before no-op") }
+    catch { check(true,"canonically equal foreign UTF8 path is rejected before no-op") }
+    check(reader.viewState.pdfPath.utf8.elementsEqual(snapshot.path.utf8) && reader.view.document === document &&
+          reader.view.currentSelection?.string == source.quote && reader.pageNumber == 1 && !reader.hasViewEdits && !reader.canUndoViewState,
+          "rejected no-op preserves exact original identity document selection saved baseline and Undo")
+    try reader.moveDisplayPage(from:1,to:2)
+    let captured = try reader.excerpt()
+    check(reader.displayPageNumber == 2 && reader.pageNumber == 1 && reader.hasViewEdits && reader.canUndoViewState &&
+          captured.textRanges == source.textRanges && page.bounds(for:.cropBox) == box && page.rotation == 90,
+          "valid same-path edit still reaches install and preserves rotated physical source ranges")
+    try reader.undoViewState()
+    let verifiedBytes = try snapshot.bytes(at:snapshot.path)
+    check(reader.view.document === document && !reader.hasViewEdits && reader.view.currentSelection?.string == source.quote &&
+          verifiedBytes == bytes && NSApplication.shared.windows.count == windows,
+          "Undo restores the same source document PDF bytes and selection without opening a window")
+}
+
 @MainActor func checkPDFViewState(_ check:(Bool,String)->Void) async throws {
     let root = viewStateHome(); try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
     let windows = NSApplication.shared.windows.count
