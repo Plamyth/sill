@@ -125,8 +125,16 @@ import AppKit
         } else if scenario == "raw-import" {
             do { try store.importSourceBytes(other.bytes()); fatalError("dirty import accepted") } catch { check(true,"raw import cannot bypass actual source preservation") }
             try unchanged(); try reopen(dirty)
-            do { try store.returnToLegacySource(); fatalError("dirty legacy return accepted") } catch { check(true,"legacy return cannot bypass actual source preservation") }
-            try unchanged()
+            do {
+                try store.returnToLegacySource()
+                check(try files.load(originID).document == dirty,"legacy return is allowed only after actual autosave preserved entire original")
+                let fresh = CanvasStore(); fresh.enableDocumentChecks(); fresh.filePreview = { _ in png }
+                await fresh.connectDocumentWorkspace(folder,opening:originID)
+                check(fresh.document == dirty,"allowed legacy return leaves original reopenable through Files")
+            } catch {
+                check(true,"unsaved legacy return is held")
+                try unchanged()
+            }
         } else { fatalError("unknown scenario") }
         let fields: [String:Any] = ["case":scenario,"assertions":checks,"count":checks.count,"actualStore":true,"nativePKDrawing":true,"nativeFiles":true,"nativeUndoManager":true,"HTTP":false,"GUI":false,"device":false,"wholeProductAccepted":false]
         try JSONSerialization.data(withJSONObject:fields,options:.sortedKeys).write(to:out.appendingPathComponent("transition-observations.json"))
