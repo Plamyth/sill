@@ -2009,7 +2009,7 @@ struct CanvasWorkspace: View {
         .onTapGesture { store.selectLink(link.id) }
         .allowsHitTesting(store.mode == .select)
         .accessibilityElement(children:.ignore)
-        .accessibilityLabel(link.label.isEmpty ? "연결선" : "연결선 \(link.label)")
+        .accessibilityLabel(CanvasGroup.accessibilityLabel(link,in:store.scene))
         .accessibilityValue(store.selectedLink == link.id ? "선택됨. 시작점과 끝점을 끌어 연결 위치 변경" : "선택 안 됨")
         .accessibilityIdentifier("canvasLink-\(link.id.uuidString)")
         .accessibilityAddTraits(.isButton)
@@ -2092,7 +2092,7 @@ struct CanvasWorkspace: View {
             ForEach(store.scene.annotations.filter {
                 $0.nodeId == nil || store.scene.visibility.annotationIDs.contains($0.id)
             }) { note in
-                let author = note.author.utf8.elementsEqual(CanvasCardTags.author.utf8) ? "카드 태그" : note.author
+                let author = note.author.utf8.elementsEqual(CanvasCardTags.author.utf8) ? "카드 태그" : CanvasGroup.displayAuthor(note)
                 Text("\(author): \(note.text)").font(.body).textSelection(.enabled)
             }
             if let voice = store.displayedVoice {

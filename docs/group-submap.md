@@ -42,3 +42,9 @@ Store의 그룹 명령 블록과 `sceneDidChange`/선택·입력 guard에만 접
 ## 공식 후속 결합
 
 독립 구현은 f09 기준78344fffa79d5c55593233de603fa1c987568523으로 먼저 확정했다. 이후 사용자 지정 공식5fcb42cc1a1430a64210dd5d89c930a61fd8a0da/tree5c63f332fd6786adbd4291461c9f5b83e83f34c5를 같은 소유 브랜치에 의미 병합한다. Store/Workspace는 텍스트 충돌 없이 합쳐졌고, PDF 보기 저장 수리와 빈 페이지·순서 연산 본문은 공식과 바이트 대조한다. 기존 card-merge native 검사기는 새 Store의 PDF 타입 의존성 때문에 정식 codec과 Reader의 기존 native 부분을 포함하도록만 조정한다. PDF 제품 코드는 별도로 바꾸지 않는다. 그룹/문서/PDF 복구 barrier를 합집합으로 유지하고 새 결합부만 검사한다. 설치/실기기 수용으로 표시하지 않는다.
+
+## 전면 한글 표시 후속
+
+독립 수용된 e282eba8의 소속·저장·가시성 계약은 유지한다. inspector의 예약 author v1은 ‘그룹 정보’, 검증된 소속 연결은 ‘그룹 소속 1’처럼 표시하는 순수 formatter를 기존 Model에 둔다. Workspace의 주석 이름·링크 접근성 이름과 CanvasDiagramSnapshot의 기존 관계 이름 경로가 같은 formatter를 쓴다. 일반 링크의 화면 text 렌더는 원래 없으므로 추가하지 않는다. 소속 링크가 기존 투영에서 숨겨지는 조건도 바꾸지 않는다.
+
+원본 author/linkPrefix·번호·ID·JSON·native ink는 수정하지 않는다. 일반 사용자 author/link/comment와 NFD·CRLF는 그대로 표시하고, 미지원 버전·잘못된 번호·표식 없는 관계를 정상 그룹처럼 다시 이름 붙이거나 자동 정규화하지 않는다. 기존 카드 태그의 한국어 표시도 그대로다. 독립 60조건·전체 SDK는 반복하지 않고 실제 e282 격리 JSON으로 표시/A11y·일반 문구·손상 자료·바이트 불변의 작은 native 확인과 Workspace 구문 확인만 한다. GUI·기기·설치·질문·알림은 실행하지 않는다.

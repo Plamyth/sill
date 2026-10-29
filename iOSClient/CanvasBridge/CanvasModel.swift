@@ -1445,6 +1445,23 @@ enum CanvasGroup {
         let memberIDs: [UUID]
     }
 
+    static func displayAuthor(_ annotation: CanvasAnnotation) -> String {
+        annotation.author.utf8.elementsEqual(author.utf8) ? "그룹 정보" : annotation.author
+    }
+
+    static func displayLabel(_ link: CanvasLink, in scene: CanvasScene) -> String {
+        guard link.label.hasPrefix(linkPrefix), scene.links.contains(where:{ CanvasScene.sameLink($0,link) }),
+              let group = try? entries(in:scene).first(where:{ $0.node.id == link.from }),
+              let index = group.memberIDs.firstIndex(of:link.to),
+              link.label.utf8.elementsEqual((linkPrefix + String(index + 1)).utf8) else { return link.label }
+        return "그룹 소속 \(index + 1)"
+    }
+
+    static func accessibilityLabel(_ link: CanvasLink, in scene: CanvasScene) -> String {
+        let label = displayLabel(link,in:scene)
+        return label.isEmpty ? "연결선" : "연결선 \(label)"
+    }
+
     static func orderedMembers(of id: UUID, in scene: CanvasScene, prefix: String,
                                count: ClosedRange<Int>) -> [CanvasNode]? {
         let links = scene.links.filter { $0.from == id && $0.label.hasPrefix(prefix) }
@@ -2204,7 +2221,8 @@ struct CanvasDiagramSnapshot: Codable, Equatable {
         if nodes.contains(where: { $0.kind == .ellipse }) { lines.append("classDef ccrEllipse rx:50%,ry:50%") }
         if nodes.contains(where: { $0.kind == .line }) { lines.append("classDef ccrLineEndpoint fill:none,stroke:none") }
         lines += scene.links.filter { visible.linkIDs.contains($0.id) }.map {
-            let relation = $0.label.isEmpty ? ($0.kind == .parentChild ? "하위 요소" : "연결") : $0.label
+            let displayed = CanvasGroup.displayLabel($0,in:scene)
+            let relation = displayed.isEmpty ? ($0.kind == .parentChild ? "하위 요소" : "연결") : displayed
             return "\(diagramID($0.from)) -->|\"\(label(relation))\"| \(diagramID($0.to))"
         }
         source = lines.joined(separator:"\n")
