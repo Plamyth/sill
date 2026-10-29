@@ -33,7 +33,7 @@ typealias VaultEPUBTextView = NSTextView
         switch searchState {
         case .idle: return "현재 열린 EPUB 한 권의 본문에서 검색하세요."
         case .searching: return "본문 검색 중…"
-        case .invalid: return "검색어는 UTF16 \(Self.searchQueryLimit)칸 이하로 입력하세요."
+        case .invalid: return "검색어가 너무 깁니다. 짧은 단어나 구절로 다시 입력해 주세요."
         case .complete(let more): return more ? "결과가 더 있습니다. 앞 \(Self.searchResultLimit)개를 표시합니다. 검색어를 좁혀 주세요." : "검색 완료 · \(searchResults.count)개 결과"
         }
     }
@@ -280,7 +280,7 @@ struct VaultEPUBSearchControls: View {
                     }
                 }.frame(maxHeight:220)
             }
-            Text("현재 책의 문단 안 문자열 검색 · 대소문자 구분 없음 · 문서 간·OCR 검색은 지원하지 않습니다.").font(.caption)
+            Text("현재 책의 본문에서 찾습니다. 대소문자는 구분하지 않으며, 다른 책과 이미지 속 글자는 검색하지 않습니다.").font(.caption)
         }
         .onDisappear { task?.cancel(); reader.cancelSearch() }
     }
