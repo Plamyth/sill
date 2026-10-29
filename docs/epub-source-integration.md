@@ -31,6 +31,8 @@ ZIP은 원본을 풀어 파일시스템에 설치하지 않는다. 한도 있는
 
 원본32MiB/entry4MiB/전개합64MiB/entry512개/압축비128/DOM깊이64/노드20000/요소별속성64/spine128/NCX깊이8·256항목의 고정 읽기 한도다. ZIP extra field는 현재 전부 미지원이다. archive 경로는 NFC·상대 경로만 허용하며 percent-escaped 이름을 추정 복원하지 않는다. XML은 UTF8만 지원하고 `p/heading/li/blockquote/pre`의 leaf 텍스트를 native paragraph로 표시한다. 이미지·SVG·수식·비어 있지 않은 CSS/inline style·hidden 속성이나 원문 텍스트를 누락시킬 복합 body는 성공으로 축약하지 않고 거부한다. NCX fragment는 직접 원문 문단 ID만 지원한다. NCX가 없는 책은 spine 장 목록으로 읽으며 EPUB3 nav 전체 지원을 주장하지 않는다.
 
+c4a74190 독립 검수 P2 후속: 실제 XML 소비 함수가 보안 검사를 함께 수행하므로 MIME으로 선택한 spine/NCX도 파일 확장자와 무관하게 같은 hidden/style/active/remote 거부를 받는다. NCX fragment는 책 수용 단계와 Reader 열기 모두 원문 UTF8 bytes 일치만 허용한다. NFC/NFD가 다르면 입구에서 명시 거부하고 alias 탐색·정규화·원문 재작성으로 맞추지 않는다. 공개 API/모델/Markdown/오류 종류는 같으며 Helm의 Store/Workspace/Relay 접합은 이 모듈 수리와 별도다. 이 변경으로 미사용 임의 바이너리 자원의 포괄적 해석·정화를 지원한다고 주장하지 않는다.
+
 `VaultEPUBSnapshot.writeVerifiedCopy`는 새 목적지에 exclusive create 후 원문 SHA를 재열어 확인한다. 기존 파일을 덮지 않으며 실패한 복사 후보도 자동 삭제하지 않는다. 원본 편집/자동저장/GC·FileProvider crash durability 수용을 제공하는 API가 아니다. 실제 노트 Markdown은 기존 note CAS가 단일 정본이고 native attributed text는 파생 표시일 뿐이다.
 
 Mac MarginNote 4.4.6의 REA 동작이 근거다. 원앱 iPad/실제 GUI/Pencil 지원은 미검증이고 CCR native/소스/SDK·실제 기기 수용을 구분한다.

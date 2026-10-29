@@ -217,7 +217,23 @@ struct VaultEPUBBook {
     let chapters: [Chapter], toc: [TOCEntry]
     init(snapshot: VaultEPUBSnapshot) throws {
         let archive = try EPUBArchive(snapshot.bytes(at:snapshot.path))
-        func xml(_ path: String) throws -> EPUBXML.Element { guard let data = archive.files[path] else { throw VaultEPUBError.invalid }; return try EPUBXML.read(data) }
+        // MIME-selected spine/NCX and container/OPF reads share the extension-independent checks.
+        func xml(_ path: String) throws -> EPUBXML.Element {
+            guard let data = archive.files[path] else { throw VaultEPUBError.invalid }
+            let root = try EPUBXML.read(data)
+            func safe(_ node: EPUBXML.Element) throws {
+                guard !["script","iframe","object","embed","form","input","audio","video"].contains(node.name.lowercased()) else { throw VaultEPUBError.unsupported }
+                if node.name.lowercased() == "style", !node.text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty { throw VaultEPUBError.unsupported }
+                for (name,value) in node.attributes {
+                    guard !name.lowercased().hasPrefix("on"), name.lowercased() != "hidden",
+                          name.lowercased() != "style" || value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { throw VaultEPUBError.unsupported }
+                    if ["href","src","action"].contains(String(name.lowercased().split(separator:":").last ?? "")) { _ = try EPUBArchive.resolve(value,from:path) }
+                }
+                for child in node.children { try safe(child) }
+            }
+            try safe(root)
+            return root
+        }
         // Even unused XML resources must not smuggle active or externally resolved content into a later caller.
         for (path,bytes) in archive.files {
             let ext = (path as NSString).pathExtension.lowercased()
@@ -226,17 +242,7 @@ struct VaultEPUBBook {
                 guard let css = String(data:bytes,encoding:.utf8), css.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { throw VaultEPUBError.unsupported }
             }
             if ["xml","xhtml","html","opf","ncx"].contains(ext) {
-                func safe(_ node: EPUBXML.Element) throws {
-                    guard !["script","iframe","object","embed","form","input","audio","video"].contains(node.name.lowercased()) else { throw VaultEPUBError.unsupported }
-                    if node.name.lowercased() == "style", !node.text.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty { throw VaultEPUBError.unsupported }
-                    for (name,value) in node.attributes {
-                        guard !name.lowercased().hasPrefix("on"), name.lowercased() != "hidden",
-                              name.lowercased() != "style" || value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else { throw VaultEPUBError.unsupported }
-                        if ["href","src","action"].contains(String(name.lowercased().split(separator:":").last ?? "")) { _ = try EPUBArchive.resolve(value,from:path) }
-                    }
-                    for child in node.children { try safe(child) }
-                }
-                try safe(EPUBXML.read(bytes))
+                _ = try xml(path)
             }
         }
         let container = try xml("META-INF/container.xml"), roots = container.all("rootfile")
@@ -296,7 +302,10 @@ struct VaultEPUBBook {
                       let content = node.children.first(where:{$0.name == "content"}), let src = content.attributes["src"],
                       let label = node.children.first(where:{$0.name == "navLabel"})?.text, !label.isEmpty, label.utf8.count <= 1024 else { throw VaultEPUBError.unsupported }
                 let (path,fragment) = try EPUBArchive.resolve(src,from:ncx)
-                guard let chapter = chapters.firstIndex(where:{$0.path == path}), fragment == nil || chapters[chapter].paragraphs.contains(where:{$0.fragment == fragment}) else { throw VaultEPUBError.unsupported }
+                guard let chapter = chapters.firstIndex(where:{$0.path == path}) else { throw VaultEPUBError.unsupported }
+                if let fragment {
+                    guard chapters[chapter].paragraphs.contains(where:{$0.fragment?.utf8.elementsEqual(fragment.utf8) == true}) else { throw VaultEPUBError.unsupported }
+                }
                 toc.append(.init(id:toc.count,title:label,chapter:chapter,fragment:fragment,depth:depth))
                 for child in node.children where child.name == "navPoint" { try visit(child,depth+1) }
             }
