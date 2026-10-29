@@ -1,0 +1,123 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path'),crypto=require('node:crypto'),child=require('node:child_process');
+const {ObsidianVault}=require('./obsidian-vault'),wire=require('./canvas-document');
+const {page,document,body,png,base}=require('./test-input/document-fixture.cjs');
+const uuid=()=>crypto.randomUUID(),sha=wire.sha;
+function fixture(t){const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'vault-save-boundary-document-')));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const d=document();return {root,d,vault:new ObsidianVault(root)};}
+function atExchange(file,callback,run){const exec=child.execFileSync;let fired=false;child.execFileSync=function(program,args,...rest){if(!fired&&args?.[0]?.endsWith('vault-note-exchange.py')&&args[2]===file){fired=true;callback(program,args);}return exec.call(this,program,args,...rest);};try{const result=run();assert(fired);return result;}finally{child.execFileSync=exec;}}
+function fault(f,decision='keepCurrent'){
+ const first=f.vault.saveDocument(f.d.id,body(f.d)),file=path.join(f.root,first.path),original=fs.readFileSync(file);f.d.revision++;
+ atExchange(file,()=>child.execFileSync(process.execPath,[path.join(__dirname,'test-input/vault-external-writer.cjs'),file,Buffer.from(original+'\r\n외부 메모\r\n').toString('base64'),'in-place']),()=>assert.throws(()=>f.vault.saveDocument(f.d.id,body(f.d,base(first))),{status:409,code:'note_reconciliation_required'}));
+ const state=new ObsidianVault(f.root).documentConflict(f.d.id);return {first,state,file,original};
+}
+
+test('전체 문서·비선택 페이지·순서·자산과 메모를 정확 재열고 전체 CAS를 적용한다',t=>{
+ const f=fixture(t),input=body(f.d),saved=f.vault.saveDocument(f.d.id,input),file=path.join(f.root,saved.path);
+ assert.equal(new ObsidianVault(f.root).document(f.d.id).documentJSONBase64,input.documentJSONBase64);
+ const old=fs.readFileSync(file),suffix='\ufeff\r\n원문 e\u0301 [[other.md]]\r\n';fs.writeFileSync(file,Buffer.concat([old,Buffer.from(suffix)]));const read=f.vault.document(f.d.id);
+ f.d.pages[1].nodes[0].text+=' 비선택 변경';f.d.pages.reverse();f.d.revision++;
+ const next=f.vault.saveDocument(f.d.id,body(f.d,base(read))),fresh=new ObsidianVault(f.root).document(f.d.id);
+ assert.equal(fresh.documentJSONBase64,body(f.d).documentJSONBase64);assert.deepEqual(fresh.pages.map(p=>p.id),f.d.pages.map(p=>p.id));assert(fs.readFileSync(file).subarray(-Buffer.byteLength(suffix)).equals(Buffer.from(suffix)));
+ assert.throws(()=>f.vault.saveDocument(f.d.id,body(f.d,base(saved))),{status:409,code:'document_stale'});
+ assert.equal(new ObsidianVault(f.root).document(f.d.id).noteSha256,next.noteSha256);
+ assert(fs.existsSync(path.join(f.root,'CCR Documents/Assets',f.d.id,saved.generation,'document.json')));
+});
+
+test('nested 미래 필드와 미지원 버전/종류/참조는 비선택 페이지에서도 전체 거부하며 파일 쓰기0이다',t=>{
+ const f=fixture(t),targets=[d=>d.future=1,d=>d.pages[1].future=1,d=>d.pages[1].nodes[0].futureRequiredPayload={raw:1},d=>d.pages[1].links[0].futureRequiredPayload={raw:1},d=>d.pages[1].annotations[0].futureRequiredPayload={raw:1},d=>d.pages[1].nodes[0].frame.future=1,d=>d.pages[1].links[0].fromAnchor.future=1,d=>d.version=2,d=>d.pages[1].schemaVersion=4,d=>d.pages[1].nodes[0].kind='future',d=>d.pages[1].links[0].from=uuid(),d=>d.pages[1].annotations[0].nodeId=uuid(),d=>d.pages[1].id=d.pages[0].id,d=>d.activePageID=uuid()];
+ for(const mutate of targets){const copy=structuredClone(f.d);mutate(copy);assert.throws(()=>f.vault.saveDocument(copy.id,body(copy)),{status:400,code:'invalid_document'});assert.deepEqual(fs.readdirSync(f.root),[]);}
+});
+
+test('미리보기만 바뀌어도 manifest/note CAS가 바뀌고 원본 JSON SHA는 유지된다',t=>{
+ const f=fixture(t),first=f.vault.saveDocument(f.d.id,body(f.d));
+ const zlib=require('node:zlib'),crc=b=>{let c=-1;for(const v of b){c^=v;for(let i=0;i<8;i++)c=(c>>>1)^((c&1)?0xedb88320:0);}return(c^-1)>>>0;};
+ const type=Buffer.from('tEXt'),payload=Buffer.from('자체 preview 메타데이터'),chunk=Buffer.alloc(12+payload.length);chunk.writeUInt32BE(payload.length);type.copy(chunk,4);payload.copy(chunk,8);chunk.writeUInt32BE(crc(Buffer.concat([type,payload])),8+payload.length);const changed=Buffer.concat([png.subarray(0,-12),chunk,png.subarray(-12)]);
+ const second=f.vault.saveDocument(f.d.id,body(f.d,base(first),[png,changed]));assert.equal(first.documentSha256,second.documentSha256);assert.notEqual(first.manifestSha256,second.manifestSha256);assert.notEqual(first.noteSha256,second.noteSha256);assert.throws(()=>f.vault.saveDocument(f.d.id,body(f.d,base(first))),{status:409});
+});
+
+for(const decision of ['keepCurrent','useDisplaced'])test(`typed409 뒤 명시 ${decision}와 전체 재열기·멱등성·정상쓰기`,t=>{
+ const f=fixture(t),{state,file}=fault(f);
+ for(const run of [()=>new ObsidianVault(f.root).document(f.d.id),()=>f.vault.saveDocument(f.d.id,body(f.d)),()=>f.vault.note('CCR Documents/'+f.d.id+'.md')])assert.throws(run,{status:409,code:'note_reconciliation_required'});
+ assert.equal(state.materials.active.sha256,state.materials.proposal.sha256);assert(state.materials.base.validDocument&&state.materials.displaced.validDocument&&state.materials.proposal.validDocument);
+ const selected=state.materials[decision==='keepCurrent'?'active':'displaced'];const proposal=f.vault.documentConflict(f.d.id,{recoveryID:state.recoveryID,material:'proposal',sha256:state.materials.proposal.sha256});assert.equal(proposal.documentSha256,state.materials.proposal.document.documentSha256);
+ const request={recoveryID:state.recoveryID,expected:state.expected,decision},resolved=new ObsidianVault(f.root).resolveDocumentConflict(f.d.id,request);assert(resolved.resolved);assert.equal(sha(fs.readFileSync(file)),selected.sha256);assert.deepEqual(f.vault.resolveDocumentConflict(f.d.id,request),resolved);
+ assert.throws(()=>f.vault.resolveDocumentConflict(f.d.id,{...request,decision:decision==='keepCurrent'?'useDisplaced':'keepCurrent'}),{status:409});
+ const current=f.vault.document(f.d.id);f.d.revision++;f.vault.saveDocument(f.d.id,body(f.d,base(current)));
+ assert(fs.existsSync(path.join(f.root,'.ccr-save-'+state.recoveryID,'base.md')));
+});
+
+for(const decision of ['keepCurrent','useDisplaced'])test(`명시 ${decision} 교환 중 비선택 보존 페이지의 자산 변경은 held를 유지한다`,t=>{
+ const f=fixture(t),{state,file}=fault(f),kind=decision==='keepCurrent'?'base':'proposal';
+ const preserved=state.materials[kind].document;
+ const asset=path.join(f.root,'CCR Documents/Assets',f.d.id,preserved.generation,'pages',f.d.pages[1].id,'preview.png');
+ const before=fs.readFileSync(asset),request={recoveryID:state.recoveryID,expected:state.expected,decision};
+ const journal=path.join(f.root,'.ccr-save-'+state.recoveryID);
+ const markdown=Object.fromEntries(['base','displaced','proposal'].map(k=>[k,fs.readFileSync(path.join(journal,k+'.md'))]));
+ atExchange(file,()=>fs.writeFileSync(asset,Buffer.from('외부에서 바뀐 비선택 페이지 미리보기')),()=>
+  assert.throws(()=>f.vault.resolveDocumentConflict(f.d.id,request),{status:409,code:'note_reconciliation_required'}));
+ const reopened=new ObsidianVault(f.root),held=reopened.documentConflict(f.d.id);
+ assert(held.reconciliationRequired);
+ assert.throws(()=>reopened.document(f.d.id),{code:'note_reconciliation_required'});
+ assert.throws(()=>reopened.resolveDocumentConflict(f.d.id,request),{status:409,code:'note_reconciliation_required'});
+ assert.equal(fs.existsSync(path.join(journal,'resolution.json')),false);
+ assert(!fs.readFileSync(asset).equals(before));
+ for(const [k,bytes] of Object.entries(markdown))assert(fs.readFileSync(path.join(journal,k+'.md')).equals(bytes));
+});
+
+test('같은 UUID와 페이지의 단일scene/일반MD/hardlink 우회는 쓰기 전에 거부한다',t=>{
+ const f=fixture(t),first=f.vault.saveDocument(f.d.id,body(f.d)),file=path.join(f.root,first.path),bytes=fs.readFileSync(file);
+ for(const p of f.d.pages)assert.throws(()=>f.vault.saveCanvas(p.id,p.revision,Buffer.from(JSON.stringify(p)),png,null),{code:'document_api_required'});
+ assert.throws(()=>f.vault.saveCanvas(f.d.id,1,Buffer.from(JSON.stringify(f.d)),png,null),{code:'document_api_required'});
+ assert.throws(()=>f.vault.save(first.path,first.noteSha256,'selected page'),{code:'document_api_required'});
+ fs.linkSync(file,path.join(f.root,'alias.md'));assert.throws(()=>f.vault.save('alias.md',first.noteSha256,'selected page'),{code:'document_api_required'});assert.throws(()=>f.vault.noteConflict('alias.md'),{status:409});assert(fs.readFileSync(file).equals(bytes));
+ const unrelated=page();f.vault.saveCanvas(unrelated.id,1,Buffer.from(JSON.stringify(unrelated)),png,null);assert.equal(f.vault.canvas(unrelated.id).revision,1);
+ assert.equal(f.vault.save('ordinary.md',null,'---\nx: y\n---\n설명 ccr_document_id: 는 일반 원문이다').text.includes('설명'),true);
+});
+
+test('발행 뒤 정본 디렉터리 교체는 false success 대신 vaultroot의 지속 barrier로 남는다',t=>{
+ const f=fixture(t),first=f.vault.saveDocument(f.d.id,body(f.d)),file=path.join(f.root,first.path);f.d.revision++;
+ const exec=child.execFileSync;let fired=false;
+ child.execFileSync=function(program,args,...rest){const result=exec.call(this,program,args,...rest);if(!fired&&args?.[0]?.endsWith('vault-note-exchange.py')&&args[2]===file){fired=true;const canonical=path.join(f.root,'CCR Documents');fs.renameSync(canonical,path.join(f.root,'preserved-directory'));fs.mkdirSync(canonical);fs.writeFileSync(file,'외부 정본');}return result;};
+ try{assert.throws(()=>f.vault.saveDocument(f.d.id,body(f.d,base(first))),{code:'note_reconciliation_required'});}finally{child.execFileSync=exec;}
+ assert(fired);assert.throws(()=>new ObsidianVault(f.root).document(f.d.id),{code:'note_reconciliation_required'});
+ const state=new ObsidianVault(f.root).documentConflict(f.d.id);assert.equal(state.materials.active.validDocument,false);assert.equal(state.materials.proposal.validDocument,false);assert.throws(()=>f.vault.resolveDocumentConflict(f.d.id,{recoveryID:state.recoveryID,expected:state.expected,decision:'keepCurrent'}),{status:409});
+ assert(fs.existsSync(path.join(f.root,'preserved-directory','Assets',f.d.id,first.generation,'document.json')));assert.equal(fs.readFileSync(file,'utf8'),'외부 정본');
+});
+
+test('missing/symlink/변경된 자산은 전체 읽기를 거부하고 세대 원본을 덮지 않는다',t=>{
+ const f=fixture(t),first=f.vault.saveDocument(f.d.id,body(f.d)),asset=path.join(f.root,'CCR Documents/Assets',f.d.id,first.generation,'pages',f.d.pages[1].id,'preview.png'),raw=fs.readFileSync(asset);
+ fs.renameSync(asset,asset+'.original');assert.throws(()=>f.vault.document(f.d.id));fs.symlinkSync(asset+'.original',asset);assert.throws(()=>f.vault.document(f.d.id));fs.unlinkSync(asset);fs.writeFileSync(asset,Buffer.from('not png'));assert.throws(()=>f.vault.document(f.d.id));assert(fs.readFileSync(asset+'.original').equals(raw));
+});
+
+test('바뀐 expected와 다른 문서의 recovery ID를 거부하고 과거 resolved ID보다 새 held를 우선한다',t=>{
+ const f=fixture(t),{state,file}=fault(f),request={recoveryID:state.recoveryID,expected:state.expected,decision:'keepCurrent'};
+ assert.throws(()=>f.vault.resolveDocumentConflict(f.d.id,{...request,expected:{...state.expected,bundlesSha256:'0'.repeat(64)}}),{code:'note_reconciliation_required'});
+ assert.throws(()=>f.vault.documentConflict(f.d.id,{recoveryID:uuid(),material:'active',sha256:state.expected.activeSha256}),{code:'note_reconciliation_required'});
+ const other=document();f.vault.saveDocument(other.id,body(other));assert.throws(()=>f.vault.resolveDocumentConflict(other.id,request),{status:409});
+ const resolved=f.vault.resolveDocumentConflict(f.d.id,request),current=f.vault.document(f.d.id),original=fs.readFileSync(file);f.d.revision++;
+ atExchange(file,()=>child.execFileSync(process.execPath,[path.join(__dirname,'test-input/vault-external-writer.cjs'),file,Buffer.from(original+'\r\n새 독립 외부 메모\r\n').toString('base64'),'in-place']),()=>assert.throws(()=>f.vault.saveDocument(f.d.id,body(f.d,base(current))),{code:'note_reconciliation_required'}));
+ const next=f.vault.documentConflict(f.d.id);assert.notEqual(next.recoveryID,resolved.recoveryID);
+ assert.throws(()=>new ObsidianVault(f.root).resolveDocumentConflict(f.d.id,request),error=>error.code==='note_reconciliation_required'&&error.recoveryID===next.recoveryID);
+ for(const id of [state.recoveryID,next.recoveryID])for(const name of ['base.md','displaced.md','proposal.md'])assert(fs.existsSync(path.join(f.root,'.ccr-save-'+id,name)));
+});
+
+test('태그 예약 namespace와 자유 주석 원문을 문서 전체에 보존하며 관리 MD의 임의 편집은 거부한다',t=>{
+ const f=fixture(t);f.d.pages[1].nodes[0].kind='note';
+ f.d.pages[1].annotations.push({id:uuid(),nodeId:f.d.pages[1].nodes[0].id,author:'ccr.sill.card-tag/v1',text:'#업무'});
+ f.d.pages[1].annotations.push({id:uuid(),nodeId:f.d.pages[1].nodes[0].id,author:'카드 태그',text:'#사람주석 e\u0301\r\n원문'});
+ const input=body(f.d),saved=f.vault.saveDocument(f.d.id,input);assert.equal(new ObsidianVault(f.root).document(f.d.id).documentJSONBase64,input.documentJSONBase64);
+ const file=path.join(f.root,saved.path);fs.writeFileSync(file,fs.readFileSync(file,'utf8').replace('원본 획:','임의 변경:'));assert.throws(()=>f.vault.document(f.d.id),{status:409});
+});
+module.exports={page,document,body,png,base};
+
+test('수리 모델의 nested support 표와 회전 overflow를 보존 거부한다',t=>{
+ const f=fixture(t),shapes=[d=>d.pages[1].nodes[0].vaultNote={path:'x.md',sha256:'x',relayAddress:'http://example.invalid',future:1},d=>d.pages[1].penSettings={version:1,color:'white',width:2,future:1},d=>{d.pages[1].strokes=[{id:uuid(),createdAt:0,points:[{x:0,y:0,pressure:1,future:1}]}];},d=>{d.pages[1].nodes[0].frame={x:1.25e308,y:1.25e308,width:5e307,height:5e307};d.pages[1].nodes[0].rotationDegrees=45;}];
+ for(const mutate of shapes){const d=structuredClone(f.d);mutate(d);assert.throws(()=>f.vault.saveDocument(d.id,body(d)),{status:400});assert.deepEqual(fs.readdirSync(f.root),[]);}
+});
+
+test('동일문서ID의 선택페이지만 남긴 유효 문서와 schema3 downgrade는 정본을 덮지 않는다',t=>{
+ const f=fixture(t),first=f.vault.saveDocument(f.d.id,body(f.d)),file=path.join(f.root,first.path),raw=fs.readFileSync(file);
+ const selected=structuredClone(f.d);selected.pages=[selected.pages[0]];selected.revision++;assert.throws(()=>f.vault.saveDocument(f.d.id,body(selected,base(first))),{code:'document_page_loss'});
+ const downgraded=structuredClone(f.d);downgraded.revision++;downgraded.pages[1].schemaVersion=2;downgraded.pages[1].nodes.forEach(n=>n.kind='box');assert.throws(()=>f.vault.saveDocument(f.d.id,body(downgraded,base(first))),{code:'document_schema_downgrade'});
+ const sameRevision=structuredClone(f.d);sameRevision.pages[1].nodes[0].text='revision 없이 바뀜';assert.throws(()=>f.vault.saveDocument(f.d.id,body(sameRevision,base(first))),{code:'document_stale'});assert(fs.readFileSync(file).equals(raw));
+});
