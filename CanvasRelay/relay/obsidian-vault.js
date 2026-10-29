@@ -13,6 +13,7 @@ const {assertInkScene,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
 const MAX_NOTE_BYTES = 1024 * 1024;
 const MAX_ENTRIES = 500;
 const MAX_PDF_BYTES = 20 * 1024 * 1024;
+const MAX_EPUB_BYTES = 32 * 1024 * 1024;
 const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 const MEMO_MARKER = '<!-- ccr:markdown-memo';
 const MEMO_BOUNDARY = '\n<!-- ccr:markdown-memo:v1 -->\n';
@@ -139,12 +140,13 @@ class ObsidianVault {
     }
   }
 
-  resolve(relative, {directory = false, allowMissing = false, pdf = false} = {}) {
+  resolve(relative, {directory = false, allowMissing = false, pdf = false, epub = false} = {}) {
     if (typeof relative !== 'string' || relative.length > 1024 || relative.includes('\\') ||
         relative.includes('\0') || relative.startsWith('/') ||
         (relative && relative.split('/').some(part => !part || part === '.' || part === '..' || part.startsWith('.'))))
       throw new VaultError('Invalid vault path');
-    if (!directory && (!(pdf ? relative.endsWith('.pdf') : relative.endsWith('.md')) || !relative))
+    if (pdf && epub) throw new VaultError('Ambiguous source format');
+    if (!directory && (!(epub ? relative.endsWith('.epub') : pdf ? relative.endsWith('.pdf') : relative.endsWith('.md')) || !relative))
       throw new VaultError('Only Markdown notes can be edited');
     let current = this.root;
     const parts = relative ? relative.split('/') : [];
@@ -169,10 +171,22 @@ class ObsidianVault {
     const directory = this.resolve(relative,{directory:true});
     return fs.readdirSync(directory,{withFileTypes:true})
       .filter(item => !item.name.startsWith('.') &&
-        (item.isDirectory() || item.isFile() && /\.(md|pdf)$/.test(item.name)))
+        (item.isDirectory() || item.isFile() && /\.(md|pdf|epub)$/.test(item.name)))
       .slice(0,MAX_ENTRIES + 1)
       .map(item => ({name:item.name,path:relative ? `${relative}/${item.name}` : item.name,
-        kind:item.isDirectory() ? 'directory' : item.name.endsWith('.pdf') ? 'pdf' : 'note'}));
+        kind:item.isDirectory() ? 'directory' : item.name.endsWith('.epub') ? 'epub' : item.name.endsWith('.pdf') ? 'pdf' : 'note'}));
+  }
+
+  epub(relative) {
+    if (typeof relative !== 'string' || /[:\[\]#|\x00-\x1f\x7f]/.test(relative))
+      throw new VaultError('Invalid EPUB path');
+    const file = this.resolve(relative,{epub:true});
+    if (fs.lstatSync(file).size > MAX_EPUB_BYTES) throw new VaultError('EPUB 원본이 32MiB 한도를 넘었습니다.',413);
+    // Reuse the existing bounded, no-follow, full path/inode/owner readback contract.
+    const bytes = this.#ownedNoteBytes(file,MAX_EPUB_BYTES);
+    if (bytes.length < 4 || bytes.readUInt32LE(0) !== 0x04034b50)
+      throw new VaultError('Invalid EPUB archive signature');
+    return {path:relative,sha256:digest(bytes),dataBase64:bytes.toString('base64')};
   }
 
   pdf(relative) {

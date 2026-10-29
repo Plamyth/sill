@@ -1477,6 +1477,155 @@ final class CanvasStore: ObservableObject {
     private var noteRecoveryBytes: Data?
     private var noteRecoveryAttemptedBytes: Data?
     private var noteRecoveryReadable = true
+    @Published private(set) var epubReader: VaultEPUBReader?
+    @Published private(set) var epubBusy = false
+    private var epubRequest = UUID()
+    private var epubOwner: CanvasDocument.PageSnapshot?
+    private var epubConnection: UInt64 = 0
+    var hasPendingEPUBExcerpt: Bool { pdfExcerptRecovery?.sourceKind == .epub }
+    func epubIsCurrent(_ reader: VaultEPUBReader) -> Bool {
+        epubReader === reader && epubConnection == noteConnectionGeneration &&
+            epubOwner.map { document.accepts($0) } == true && !epubBusy
+    }
+    @discardableResult
+    func closeEPUBReader() -> Bool {
+        guard !vaultSaving else { vaultStatus = "발췌 저장을 확인하는 중입니다. EPUB과 저장 의도를 보존합니다."; return false }
+        if let pending = epubReader?.pendingExcerpt {
+            guard let record = pdfExcerptRecovery, record.sourceKind == .epub,
+                  record.path.utf8.elementsEqual(pending.notePath.utf8),
+                  (try? VaultEPUBExcerpt.parse(record.draft)) == pending else {
+                vaultStatus = "EPUB 발췌 입력의 기록을 먼저 확인하세요. Reader와 발췌 ID를 유지합니다."; return false
+            }
+        }
+        epubRequest = UUID(); epubBusy = false; epubReader = nil; epubOwner = nil
+        return true
+    }
+    @discardableResult
+    func openEPUB(_ path: String, source: VaultEPUBExcerpt? = nil,
+                  load: (String) async throws -> VaultEPUBSnapshot) async -> Bool {
+        guard !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy, !epubBusy, !pdfViewBusy,
+              !documentEditingBlocked, (!noteReconciliationHeld || epubMayRestoreHeld), noteRecoveryReadable, noteRecovery == nil,
+              blockRecovery == nil, pdfExcerptRecoveryReadable, !noteToken.isEmpty,
+              pdfExcerptRecovery == nil || hasPendingEPUBExcerpt else { return false }
+        guard closePDFView() else { return false }
+        // Keep an existing Reader/selection until the new archive and anchor are fully verified.
+        if let pending = epubReader?.pendingExcerpt {
+            guard let record = pdfExcerptRecovery, record.sourceKind == .epub,
+                  (try? VaultEPUBExcerpt.parse(record.draft)) == pending else { return false }
+        }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot()
+            epubRequest = request; epubBusy = true
+            defer { if epubRequest == request { epubBusy = false } }
+            let snapshot = try await load(path)
+            _ = try snapshot.bytes(at:path)
+            let reader = try VaultEPUBReader(snapshot:snapshot)
+            var reveal = source
+            if let record = pdfExcerptRecovery {
+                guard record.sourceKind == .epub, record.sceneID == scene.id, record.relayAddress == noteAddress,
+                      let pending = try VaultEPUBExcerpt.parse(record.draft), pending.sourcePath.utf8.elementsEqual(path.utf8) else { throw VaultBlockRecoveryError.context }
+                if let source { guard source == pending else { throw VaultBlockRecoveryError.changed } }
+                reveal = pending
+            }
+            if let reveal { try reader.reveal(reveal) }
+            guard epubRequest == request, connection == noteConnectionGeneration, document.accepts(owner), !Task.isCancelled else { return false }
+            epubReader = reader; epubOwner = owner; epubConnection = connection
+            vaultStatus = "EPUB 원본 SHA·장경로·출처를 확인했습니다. 원본 파일은 읽기만 합니다."
+            return true
+        } catch { if epubRequest == request { vaultStatus = "EPUB 원문을 적용하지 않았습니다. 입력과 저장 의도를 유지합니다. " + error.localizedDescription }; return false }
+    }
+    var epubConflictChoice: VaultPDFViewChoice? {
+        guard let choice = pdfViewChoice, choice.original.sourceKind == .epub else { return nil }; return choice
+    }
+    var epubCurrentChoice: VaultPDFViewLocalChoice? {
+        guard let choice = pdfViewLocalChoice, choice.original.sourceKind == .epub else { return nil }; return choice
+    }
+    private var epubMayRestoreHeld: Bool {
+        (epubConflictChoice?.original == pdfExcerptRecovery && epubConflictChoice?.original.sceneID == scene.id && epubConflictChoice?.original.relayAddress == noteAddress) ||
+        (epubCurrentChoice?.original == pdfExcerptRecovery && epubCurrentChoice?.original.sceneID == scene.id && epubCurrentChoice?.original.relayAddress == noteAddress)
+    }
+    func compareEPUBExcerptConflict(load: (String) async throws -> CanvasRelay.NoteConflict,
+                                   loadCurrent: (String) async throws -> VaultNoteSnapshot) async {
+        guard !vaultSaving, !vaultLoading, !epubBusy, let original = pdfExcerptRecovery, original.sourceKind == .epub,
+              original.sceneID == scene.id, original.relayAddress == noteAddress else { return }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot(), url = try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json")
+            epubRequest = request; epubBusy = true
+            defer { if epubRequest == request { epubBusy = false } }
+            let prior = FileManager.default.fileExists(atPath:url.path) ? try CanvasLocalFile.read(url) : nil
+            let choice: VaultPDFViewChoice
+            do {
+                let conflict = try await load(original.path).validated(path:original.path)
+                choice = .init(schema:VaultPDFViewChoice.epubSchema,original:original,conflict:conflict,phase:.compared)
+            } catch let error as NSError where error.domain == "CanvasRelay" && error.code == 404 {
+                let current = try await loadCurrent(original.path).validated(at:original.path)
+                let local = try VaultPDFViewLocalChoice(schema:VaultPDFViewLocalChoice.epubSchema,original:original,current:current,phase:.compared).validated()
+                guard epubRequest == request, connection == noteConnectionGeneration, document.accepts(owner), pdfExcerptRecovery == original, !Task.isCancelled else { throw VaultBlockRecoveryError.changed }
+                try archivePreviousPDFViewChoice(prior,original:original)
+                try writePDFViewChoiceBytes(JSONEncoder().encode(local),expected:prior)
+                vaultStatus = "EPUB 발췌의 현재 원문과 원래 저장 의도를 비교했습니다. 명시 채택 전에는 재전송하지 않습니다."
+                return
+            }
+            guard epubRequest == request, connection == noteConnectionGeneration, document.accepts(owner), pdfExcerptRecovery == original, !Task.isCancelled else { throw VaultBlockRecoveryError.changed }
+            try archivePreviousPDFViewChoice(prior,original:original)
+            try writePDFViewChoice(choice,expected:prior)
+            vaultStatus = "EPUB 발췌의 현재·기준·외부·제안 원문과 원래 의도를 보존했습니다. 명시 선택을 기다립니다."
+        } catch { if epubRequest == request { vaultStatus = "발췌 비교를 적용하지 않았습니다. 원문과 ID를 유지합니다. " + error.localizedDescription } }
+    }
+    func resolveEPUBExcerptConflict(_ decision: CanvasRelay.ConflictDecision,
+                                    resolve: (CanvasRelay.NoteConflict,CanvasRelay.ConflictDecision) async throws -> VaultNoteSnapshot) async {
+        guard !vaultSaving, !vaultLoading, !epubBusy, var choice = epubConflictChoice,
+              !choice.closed || (choice.phase == .resolved && choice.decision == decision),
+              choice.original == pdfExcerptRecovery, choice.original.sceneID == scene.id,
+              choice.original.relayAddress == noteAddress else { return }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot(), url = try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json")
+            guard let material = choice.conflict.selected(decision), material.validNote, let markdown = material.markdown else { throw VaultBlockRecoveryError.corrupt }
+            let candidate = VaultNoteSnapshot(path:choice.original.path,text:markdown,sha256:material.sha256,modifiedAt:"")
+            try choice.original.requireMatchingEPUBNote(candidate)
+            let prior = try CanvasLocalFile.read(url)
+            choice.decision = decision; choice.phase = .resolving
+            epubRequest = request; epubBusy = true
+            defer { if epubRequest == request { epubBusy = false } }
+            try writePDFViewChoice(choice,expected:prior)
+            let expected = try CanvasLocalFile.read(url)
+            let returned = try await resolve(choice.conflict,decision).validated(at:choice.original.path)
+            try choice.original.requireMatchingEPUBNote(returned)
+            guard returned.sha256 == candidate.sha256, returned.text.utf8.elementsEqual(candidate.text.utf8),
+                  epubRequest == request, connection == noteConnectionGeneration, document.accepts(owner), pdfExcerptRecovery == choice.original, !Task.isCancelled else { throw VaultBlockRecoveryError.changed }
+            choice.phase = .resolved; choice.resolved = returned
+            try writePDFViewChoice(choice,expected:expected)
+            // Leave the creation intent pending until its normal full GET attaches the card.
+            let record = VaultPDFCreateRecovery(sceneID:choice.original.sceneID,relayAddress:choice.original.relayAddress,
+                path:choice.original.path,draft:returned.text,submittedText:returned.text,sourceKind:.epub)
+            try writePDFExcerptRecovery(record)
+            vaultStatus = "선택한 EPUB 발췌 원문을 확인했습니다. 저장 결과 확인으로 카드 첨부를 이어가세요. 이전 의도는 보존했습니다."
+        } catch { if epubRequest == request { vaultStatus = "발췌 조정 결과 미확인. 원문·제안·선택을 보존합니다. " + error.localizedDescription } }
+    }
+    func adoptEPUBExcerptCurrent(load: (String) async throws -> VaultNoteSnapshot) async {
+        guard !vaultSaving, !vaultLoading, !epubBusy, var choice = epubCurrentChoice, choice.phase != .superseded,
+              choice.original == pdfExcerptRecovery, choice.original.sceneID == scene.id, choice.original.relayAddress == noteAddress else { return }
+        let request = UUID(), connection = noteConnectionGeneration
+        do {
+            let owner = try document.pageSnapshot(), url = try CanvasRuntime.conflictRecoveryURL("NoteConflictChoice.json")
+            let prior = try CanvasLocalFile.read(url)
+            epubRequest = request; epubBusy = true
+            defer { if epubRequest == request { epubBusy = false } }
+            let current = try await load(choice.original.path).validated(at:choice.original.path)
+            try choice.original.requireMatchingEPUBNote(current)
+            guard current.sha256 == choice.current.sha256, current.text.utf8.elementsEqual(choice.current.text.utf8), epubRequest == request,
+                  connection == noteConnectionGeneration, document.accepts(owner), pdfExcerptRecovery == choice.original, !Task.isCancelled else { throw VaultBlockRecoveryError.changed }
+            choice.phase = .resolved
+            try writePDFViewChoiceBytes(JSONEncoder().encode(choice.validated()),expected:prior)
+            let record = VaultPDFCreateRecovery(sceneID:choice.original.sceneID,relayAddress:choice.original.relayAddress,
+                path:choice.original.path,draft:current.text,submittedText:current.text,sourceKind:.epub)
+            try writePDFExcerptRecovery(record)
+            vaultStatus = "현재 EPUB 발췌 원문을 명시 채택했습니다. 원래 의도는 보존하며 저장 결과 확인으로 카드 첨부를 이어가세요."
+        } catch { if epubRequest == request { vaultStatus = "현재 원문 채택을 완료하지 않았습니다. 원문과 발췌 ID를 유지합니다. " + error.localizedDescription } }
+    }
     @Published private(set) var pdfViewReader: VaultPDFReader?
     @Published private(set) var pdfViewBase: VaultNoteSnapshot?
     @Published private(set) var pdfViewBusy = false
@@ -1847,13 +1996,15 @@ final class CanvasStore: ObservableObject {
 
     func setNoteConnection(address: String, token: String) {
         guard address != noteAddress || token != noteToken else { return }
+        let closedEPUB = closeEPUBReader()
+        epubRequest = UUID(); epubBusy = false
         let closedPDF = closePDFView()
         pdfViewRequest = UUID(); pdfViewBusy = false; pdfViewConflict = nil
         noteAddress = address
         noteToken = token
         noteConnectionGeneration &+= 1
         invalidateNoteRequests()
-        if !closedPDF { vaultStatus = "보기 초안을 화면에 보존했습니다. 연결이 바뀌어 이전 원본의 저장·콜백을 허용하지 않습니다." }
+        if !closedPDF || !closedEPUB { vaultStatus = "보기 초안을 화면에 보존했습니다. 연결이 바뀌어 이전 원본의 저장·콜백을 허용하지 않습니다." }
     }
 
     private func invalidateNoteRequests() {
@@ -1871,6 +2022,7 @@ final class CanvasStore: ObservableObject {
     }
 
     private func invalidateNoteScene() {
+        _ = closeEPUBReader(); epubRequest = UUID(); epubBusy = false
         _ = closePDFView()
         pdfViewRequest = UUID(); pdfViewBusy = false; pdfViewConflict = nil
         noteSceneGeneration &+= 1
@@ -1930,7 +2082,7 @@ final class CanvasStore: ObservableObject {
 
     func openVaultNote(_ path: String, nodeID: UUID? = nil,
                        load: (String) async throws -> VaultNoteSnapshot) async {
-        guard !pdfViewBusy, pdfViewReader?.hasViewEdits != true, !hasPendingPDFView, !vaultDirty, !vaultSaving, !vaultInputBusy else {
+        guard !epubBusy, epubReader?.pendingExcerpt == nil, !hasPendingEPUBExcerpt, !pdfViewBusy, pdfViewReader?.hasViewEdits != true, !hasPendingPDFView, !vaultDirty, !vaultSaving, !vaultInputBusy else {
             vaultStatus = "현재 입력을 먼저 저장하거나 명시적으로 버려 주세요."
             return
         }
@@ -2478,9 +2630,10 @@ final class CanvasStore: ObservableObject {
     func openPDFView(_ path: String, source: VaultPDFExcerpt? = nil,
                      loadPDF: (String) async throws -> VaultPDFSnapshot,
                      loadNote: (String) async throws -> VaultNoteSnapshot) async -> Bool {
-        guard !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy, !pdfViewBusy, !documentEditingBlocked,
+        guard !epubBusy, epubReader?.pendingExcerpt == nil, !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy, !pdfViewBusy, !documentEditingBlocked,
               noteRecoveryReadable, noteRecovery == nil, blockRecovery == nil, !noteToken.isEmpty,
               pdfExcerptRecoveryReadable, pdfExcerptRecovery?.viewRecovery != nil || pdfExcerptRecovery == nil else { return false }
+        guard closeEPUBReader() else { return false }
         if let current = pdfViewReader, !preservePDFViewDraft(current) { return false }
         let request = UUID(), connection = noteConnectionGeneration
         do {
@@ -2819,7 +2972,7 @@ final class CanvasStore: ObservableObject {
         pdfExcerptRecoveryBytes = bytes
         pdfExcerptRecoveryAttemptedBytes = nil
         pdfExcerptRecovery = record
-        pdfExcerptRecoveryNotice = record == nil ? "" : (record?.viewRecovery != nil ? "보존된 PDF 보기 초안·저장 의도가 있습니다. 자동 재전송하지 않습니다." : "보존된 PDF 발췌 생성 의도가 있습니다. 같은 ID의 저장 결과만 확인합니다.")
+        pdfExcerptRecoveryNotice = record == nil ? "" : record?.sourceKind == .epub ? "보존된 EPUB 발췌 생성 의도가 있습니다. 같은 ID의 저장 결과만 확인합니다." : (record?.viewRecovery != nil ? "보존된 PDF 보기 초안·저장 의도가 있습니다. 자동 재전송하지 않습니다." : "보존된 PDF 발췌 생성 의도가 있습니다. 같은 ID의 저장 결과만 확인합니다.")
     }
 
     @discardableResult
@@ -2831,17 +2984,25 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func preparePDFExcerpt(_ excerpt: VaultPDFExcerpt) -> Bool {
-        guard pdfViewReader?.hasViewEdits != true, !pdfViewBusy, !noteReconciliationHeld, !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy,
+        do { return prepareSourceExcerpt(path:excerpt.notePath,text:try excerpt.markdown(),kind:nil) }
+        catch { vaultStatus = error.localizedDescription; return false }
+    }
+    @discardableResult
+    func prepareEPUBExcerpt(_ excerpt: VaultEPUBExcerpt) -> Bool {
+        do { return prepareSourceExcerpt(path:excerpt.notePath,text:try excerpt.markdown(),kind:.epub) }
+        catch { vaultStatus = error.localizedDescription; return false }
+    }
+    private func prepareSourceExcerpt(path: String, text: String, kind: VaultPDFCreateRecovery.SourceKind?) -> Bool {
+        guard !epubBusy, pdfViewReader?.hasViewEdits != true, !pdfViewBusy, !noteReconciliationHeld, !vaultDirty, !vaultSaving, !vaultLoading, !vaultInputBusy,
               noteRecoveryReadable, noteRecovery == nil, pdfExcerptRecoveryReadable, pdfExcerptRecovery == nil,
               !noteToken.isEmpty else {
             vaultStatus = "현재 노트 입력 또는 보존된 저장 결과를 먼저 확인하세요."
             return false
         }
         do {
-            let text = try excerpt.markdown()
             try persistScene()
             try writePDFExcerptRecovery(VaultPDFCreateRecovery(sceneID:scene.id,relayAddress:noteAddress,
-                path:excerpt.notePath,draft:text,submittedText:nil))
+                path:path,draft:text,submittedText:nil,sourceKind:kind))
             do {
                 if vaultBlockEditing { try writeBlockRecovery(nil) }
             } catch {
@@ -2857,6 +3018,27 @@ final class CanvasStore: ObservableObject {
     func savePDFExcerpt(allowCreate: Bool,
                         create: (String,String) async throws -> VaultNoteSnapshot,
                         load: (String) async throws -> VaultNoteSnapshot) async -> UUID? {
+        guard pdfExcerptRecovery?.sourceKind == nil else { return nil }
+        return await saveSourceExcerpt(allowCreate:allowCreate,create:create,load:load)
+    }
+    @discardableResult
+    func saveEPUBExcerpt(allowCreate: Bool,
+                         create: (String,String) async throws -> VaultNoteSnapshot,
+                         load: (String) async throws -> VaultNoteSnapshot) async -> UUID? {
+        guard pdfExcerptRecovery?.sourceKind == .epub else { return nil }
+        let id = await saveSourceExcerpt(allowCreate:allowCreate,create:create,load:load)
+        if id != nil, let reader = epubReader {
+            if reader.pendingExcerpt != nil, let note = vaultNote {
+                do { _ = try reader.acceptSavedNote(note,relayAddress:noteAddress) }
+                catch { vaultStatus = "원문 노트·카드는 저장됐지만 Reader의 발췌 확인은 끝내지 못했습니다. " + error.localizedDescription; return id }
+            }
+            _ = closeEPUBReader()
+        }
+        return id
+    }
+    private func saveSourceExcerpt(allowCreate: Bool,
+                                   create: (String,String) async throws -> VaultNoteSnapshot,
+                                   load: (String) async throws -> VaultNoteSnapshot) async -> UUID? {
         guard !noteReconciliationHeld, var record = pdfExcerptRecovery, record.viewRecovery == nil, pdfExcerptRecoveryReadable,
               record.sceneID == scene.id, record.relayAddress == noteAddress,
               noteRecoveryReadable, noteRecovery == nil, !vaultDirty, !vaultInputBusy,
@@ -2917,9 +3099,24 @@ final class CanvasStore: ObservableObject {
                 guard let attached = attachOpenedVaultNote() else { throw VaultBlockRecoveryError.context }
                 id = attached
             }
+            if record.sourceKind == .epub {
+                guard let source = try VaultEPUBExcerpt.parse(latest.text),
+                      let index = scene.nodes.firstIndex(where:{ $0.id == id }) else { throw VaultBlockRecoveryError.context }
+                var reference = try source.reference(note:latest,relayAddress:noteAddress)
+                reference.cacheTruncated = !scene.nodes[index].text.utf8.elementsEqual(latest.text.utf8)
+                scene.nodes[index].vaultNote = reference
+                changingNoteState = true
+                vaultNote = latest; vaultDraft = latest.text
+                noteEditorGeneration &+= 1; noteInputSession = UUID()
+                noteContext = NoteContext(sceneID:scene.id,sceneGeneration:noteSceneGeneration,
+                    connectionGeneration:noteConnectionGeneration,editorGeneration:noteEditorGeneration,
+                    path:latest.path,nodeID:id,blockID:nil)
+                vaultBlocked = false; vaultSaving = false
+                changingNoteState = false
+            }
             try persistScene()
             try writePDFExcerptRecovery(nil)
-            vaultStatus = "PDF 발췌의 저장과 원본 GET을 확인하고 편집 가능한 노트 카드를 연결했습니다."
+            vaultStatus = "원문 발췌의 저장과 전체 GET을 확인하고 편집 가능한 노트 카드를 연결했습니다."
             return id
         } catch {
             if current() {
@@ -3035,9 +3232,26 @@ final class CanvasStore: ObservableObject {
                 }
             } else { source = note.text }
             let preview = ref.blockID == nil ? VaultPDFCard.preview(source) : VaultNoteSnapshot.preview(source)
-            let quoteSHA = ref.blockID == nil ? nil : CanvasPacket.sha(Data(source.utf8))
+            let quoteSHA: String?
+            if ref.blockID == nil, ref.quoteSha256 != nil {
+                do {
+                    guard try VaultPDFExcerpt.parse(note.text) == nil else {
+                        ref.sourceState = .ambiguous; next.nodes[index].vaultNote = ref; continue
+                    }
+                    guard let excerpt = try VaultEPUBExcerpt.parse(note.text) else {
+                        ref.sourceState = .missing; next.nodes[index].vaultNote = ref; continue
+                    }
+                    guard excerpt.notePath.utf8.elementsEqual(note.path.utf8) else {
+                        ref.sourceState = .unsupported; next.nodes[index].vaultNote = ref; continue
+                    }
+                    quoteSHA = CanvasPacket.sha(Data(excerpt.quote.utf8))
+                } catch {
+                    ref.sourceState = .unsupported; next.nodes[index].vaultNote = ref; continue
+                }
+            } else { quoteSHA = ref.blockID == nil ? nil : CanvasPacket.sha(Data(source.utf8)) }
             let changed = (ref.quoteSha256 != nil ? ref.quoteSha256 != quoteSHA :
                 !preview.utf8.elementsEqual(next.nodes[index].text.utf8)) ||
+                (ref.blockID == nil && ref.quoteSha256 != nil && ref.sha256 != note.sha256) ||
                 (ref.sourceState == .changed && ref.sha256 == note.sha256)
             ref.sha256 = note.sha256
             ref.cacheTruncated = !preview.utf8.elementsEqual(source.utf8)
@@ -3207,7 +3421,7 @@ final class CanvasStore: ObservableObject {
                 let bytes = try Self.readBlockRecovery(url)
                 pdfExcerptRecovery = try JSONDecoder().decode(VaultPDFCreateRecoveryFile.self,from:bytes).record()
                 pdfExcerptRecoveryBytes = bytes
-                if let record = pdfExcerptRecovery { pdfExcerptRecoveryNotice = record.viewRecovery == nil ? "보존된 PDF 발췌 생성 의도가 있습니다. 자동 전송하지 않습니다." : "보존된 PDF 보기 초안·저장 의도가 있습니다. 자동 전송하지 않습니다." }
+                if let record = pdfExcerptRecovery { pdfExcerptRecoveryNotice = record.sourceKind == .epub ? "보존된 EPUB 발췌 생성 의도가 있습니다. 자동 전송하지 않습니다." : record.viewRecovery == nil ? "보존된 PDF 발췌 생성 의도가 있습니다. 자동 전송하지 않습니다." : "보존된 PDF 보기 초안·저장 의도가 있습니다. 자동 전송하지 않습니다." }
             }
         } catch {
             pdfExcerptRecoveryReadable = false
@@ -3718,7 +3932,7 @@ final class CanvasStore: ObservableObject {
         inkShapeProposal != nil || inkMathRequest != nil || inkMathProposal != nil || handwritingRequest != nil
     }
     var canApplyReconciledCanvas: Bool {
-        !documentEditingBlocked && !pdfViewBusy && pdfViewReader?.hasViewEdits != true && sceneReadable && !cardTagInputBusy && !noteReconciliationHeld && !hasPendingInkProposal && pdfExcerptRecoveryReadable && !hasPendingPDFExcerpt &&
+        !documentEditingBlocked && !epubBusy && epubReader?.pendingExcerpt == nil && !pdfViewBusy && pdfViewReader?.hasViewEdits != true && sceneReadable && !cardTagInputBusy && !noteReconciliationHeld && !hasPendingInkProposal && pdfExcerptRecoveryReadable && !hasPendingPDFExcerpt &&
         fileWorkspaceState != .blocked && !fileSaveBusy && !inkBusy &&
         !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
         !inkMathInputBusy && inkMathProposal == nil && !commentInputBusy && commentSession == nil && proposedNode == nil
@@ -4024,7 +4238,7 @@ final class CanvasStore: ObservableObject {
     var canTransitionDocument: Bool { !documentBusy && documentInputsClear }
     private var documentInputsClear: Bool { documentRecoveryInputsClear() && !documentPresentationBusy && !documentSyncHeld }
     private func documentRecoveryInputsClear(recoveringFiles: Bool = false) -> Bool {
-        documentOperationsEnabled && !pdfViewBusy && pdfViewReader?.hasViewEdits != true && (sceneReadable || recoveringFiles) &&
+        documentOperationsEnabled && !epubBusy && epubReader?.pendingExcerpt == nil && !pdfViewBusy && pdfViewReader?.hasViewEdits != true && (sceneReadable || recoveringFiles) &&
         !fileSaveBusy && (fileWorkspaceState != .blocked || recoveringFiles) && !inkBusy && !hasPendingInkProposal &&
         !inkMathInputBusy && !cardTagInputBusy && cardTagEditor == nil && cardMergeDraft == nil && groupDraft == nil &&
         proposedNode == nil && commentSession == nil && !commentInputBusy &&

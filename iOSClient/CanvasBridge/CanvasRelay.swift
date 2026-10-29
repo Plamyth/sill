@@ -320,6 +320,14 @@ struct CanvasRelay {
         return try await response(request(path),as:VaultEntries.self).entries
     }
 
+    func vaultEPUB(at path: String) async throws -> VaultEPUBSnapshot {
+        guard VaultEPUBSnapshot.validPath(path) else { throw VaultEPUBError.invalid }
+        let value = try await response(request(vaultURL("/vault/epub",path:path)),as:VaultEPUBSnapshot.self,
+            maxBytes:(VaultEPUBSnapshot.byteLimit + 2) / 3 * 4 + 8192)
+        _ = try value.bytes(at:path)
+        return value
+    }
+
     func vaultPDF(at path: String) async throws -> VaultPDFSnapshot {
         guard VaultPDFSnapshot.validPath(path) else { throw VaultPDFError.invalid }
         do {
