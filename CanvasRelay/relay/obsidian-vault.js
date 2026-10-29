@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const child = require('node:child_process');
 const {validPNG} = require('./canvas-png');
 const {canvasDiagramMarkdown} = require('./canvas-diagram');
+const {rows: canvasCardTagRows} = require('./canvas-card-tags');
 const {assertInkScene,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
 
 const MAX_NOTE_BYTES = 1024 * 1024;
@@ -58,7 +59,7 @@ function canvasMarkdown(id, revision, sceneSha256, imageSha256) {
     `원본 획과 구조: [[${sceneAsset}]]\n`;
 }
 
-function canvasStructure(scene) {
+function canvasStructure(scene, includeTags = true) {
   const nodes = (Array.isArray(scene.nodes) ? scene.nodes : []).filter(node =>
     node && typeof node.id === 'string' && UUID.test(node.id) && typeof node.text === 'string');
   const links = (Array.isArray(scene.links) ? scene.links : []).filter(link =>
@@ -90,6 +91,14 @@ function canvasStructure(scene) {
     for (const link of links) {
       const kind = link.kind === 'parentChild' ? '부모·자식' : link.kind === 'arrow' ? '화살표' : '연결';
       if (!append(`\n- ${link.from} → ${link.to} · ${kind}\n`)) break;
+    }
+  }
+  if (includeTags && !remaining) {
+    const rows = canvasCardTagRows(scene);
+    if (rows.length && append('\n### 카드 태그\n')) {
+      for (const row of rows) {
+        if (!append(`\n- ${row.nodeID}: ${row.tags.join(' ')}\n`)) break;
+      }
     }
   }
   return text + (remaining ? omitted : '');
@@ -626,8 +635,10 @@ class ObsidianVault {
     if (scene.id?.toLowerCase() !== id || scene.revision !== revision)
       throw new VaultError('Canvas scene identity differs from its note',409);
     const legacy = canvasMarkdown(id,revision,sceneSha256,imageSha256);
-    const structured = legacy + canvasStructure(scene);
-    if (managed !== legacy && managed !== structured && managed !== structured + canvasDiagramMarkdown(scene))
+    const structured = legacy + canvasStructure(scene, false);
+    const tagged = legacy + canvasStructure(scene);
+    const diagram = canvasDiagramMarkdown(scene);
+    if (![legacy, structured, structured + diagram, tagged, tagged + diagram].includes(managed))
       throw new VaultError('Canvas note metadata was changed; manual reconciliation required',409);
     return {memo,schemaVersion:scene.schemaVersion,snapshot:{path:note.path,noteSha256:note.sha256,sceneSha256,imageSha256,
       revision:scene.revision,sceneJSONBase64:bytes.toString('base64')}};

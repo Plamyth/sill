@@ -472,6 +472,7 @@ struct CanvasWorkspace: View {
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
             foldButton
             CanvasCardMergeMenu(store:store)
+            CanvasCardTagsMenu(store:store)
             if store.linkStart != nil { Button("연결 취소") { store.cancelLink() } }
             Button("구조 데이터",systemImage:"sidebar.right") { inspectorOpen = true }
             Button("구조 수정 되돌리기",systemImage:"arrow.uturn.backward") { store.undoGraphEdit() }
@@ -497,7 +498,7 @@ struct CanvasWorkspace: View {
 
     private var canPresentRenderedExport: Bool {
         !store.hasPendingInkProposal && store.proposedNode == nil && !inkSpacingOpen && !inkTextDeleteOpen &&
-        !proposalInputBusy && !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen &&
+        !proposalInputBusy && !store.cardTagInputBusy && !inspectorOpen && !commentEditorOpen && !vaultOpen && !dictationOpen &&
         !connectionOpen && !workspaceDocumentsOpen && !workspacePickerOpen && !importOpen && !exportOpen &&
         !handwritingSearchOpen && expandedCard == nil && canvasEditorSheet == nil
     }
@@ -542,7 +543,7 @@ struct CanvasWorkspace: View {
     }
 
     private func cancelRenderedExportPreparation() {
-        if case .rendering = renderedExport { renderedExport = .idle }
+        renderedExport = .idle
     }
 
     private var penSettingsMenu: some View {
@@ -1695,7 +1696,7 @@ struct CanvasWorkspace: View {
     }
 
     private var canvas: some View {
-        let visible = store.scene.visibility
+        let visible = store.cardTagVisibility
         let displayed = store.displayedScene
         let annotationFrames = displayed.annotationFrames
         return GeometryReader { _ in
@@ -1727,6 +1728,7 @@ struct CanvasWorkspace: View {
                         .accessibilityHidden(diagramMode == .diagram)
                 }
                 if store.mode == .select, let id = store.selectedLink,
+                   visible.linkIDs.contains(id),
                    let link = store.scene.links.first(where:{ $0.id == id }),
                    let endpoints = store.scene.linkEndpoints(store.displayedLink(link)) {
                     ForEach(CanvasLink.Endpoint.allCases,id:\.self) { endpoint in
@@ -1751,7 +1753,7 @@ struct CanvasWorkspace: View {
             Text("같은 구조 데이터의 자동 배치 · 원본 획 위치는 유지됩니다.").font(.caption)
             Text("자유그림의 자동 의미 해석은 미지원입니다. 요소를 누르면 기존 편집기로 연결됩니다.")
                 .font(.caption).foregroundStyle(.secondary)
-            CanvasPeleView(scene:store.scene,selectedNode:store.selectedNode,onSelect:{ id in
+            CanvasPeleView(scene:store.cardTagDisplayScene,selectedNode:store.selectedNode,onSelect:{ id in
                 store.selectedNode = id
                 inspectorOpen = true
             },onError:{ store.status = $0 })
@@ -1884,7 +1886,8 @@ struct CanvasWorkspace: View {
             ForEach(store.scene.annotations.filter {
                 $0.nodeId == nil || store.scene.visibility.annotationIDs.contains($0.id)
             }) { note in
-                Text("\(note.author): \(note.text)").font(.body).textSelection(.enabled)
+                let author = note.author.utf8.elementsEqual(CanvasCardTags.author.utf8) ? "카드 태그" : note.author
+                Text("\(author): \(note.text)").font(.body).textSelection(.enabled)
             }
             if let voice = store.displayedVoice {
                 Text("현재 음성 대화 \(voice.threadId.uuidString)").font(.caption)
