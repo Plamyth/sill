@@ -18,6 +18,26 @@ final class CanvasInkView: PKCanvasView {
     override var undoManager: UndoManager? { nativeUndoManager }
 }
 
+@MainActor
+private enum CanvasDrawingHistory {
+    static func register(_ previous: PKDrawing, store: CanvasStore, manager: UndoManager,
+                         owner: CanvasInkHistory.Owner, generation: UUID) {
+        let needsGroup = manager.groupingLevel == 0 && !manager.isUndoing && !manager.isRedoing
+        if needsGroup { manager.beginUndoGrouping() }
+        manager.registerUndo(withTarget:store) { [weak manager] target in
+            MainActor.assumeIsolated {
+                guard let manager, target.nativeHistoryOwner == owner,
+                      target.inkHistory.generation == generation else { return }
+                let current = target.drawing
+                guard current != previous, target.updateDrawing(previous) else { return }
+                register(current,store:target,manager:manager,owner:owner,generation:generation)
+                target.inkHistory.scheduleRefresh()
+            }
+        }
+        if needsGroup { manager.endUndoGrouping() }
+    }
+}
+
 struct PencilCanvas: UIViewRepresentable {
     @ObservedObject var store: CanvasStore
     var isVisible = true
@@ -115,7 +135,8 @@ struct PencilCanvas: UIViewRepresentable {
         host.isUserInteractionEnabled = isVisible
         host.accessibilityValue = "확대 \(Int(store.zoom * 100))%"
         if context.coordinator.renderedOwner != store.nativeHistoryOwner || context.coordinator.renderedGeneration != store.inkHistory.generation ||
-           context.coordinator.renderedModelDrawing != store.drawing {
+           context.coordinator.renderedModelDrawing != store.drawing ||
+           context.coordinator.renderedDocument.map(store.document.accepts) != true {
             context.coordinator.replaceDrawingFromStore()
         }
         canvas.isUserInteractionEnabled = store.mode != .select && !store.documentBusy
@@ -136,17 +157,12 @@ struct PencilCanvas: UIViewRepresentable {
     }
 
     static func dismantleUIView(_ host: UIView, coordinator: Coordinator) {
-        guard let canvas = coordinator.canvas else { return }
+        guard let canvas = coordinator.canvas else { coordinator.retire(); return }
         canvas.isRulerActive = false
         canvas.delegate = nil
-        if coordinator.renderedOwner == coordinator.store.nativeHistoryOwner,
-           coordinator.renderedGeneration == coordinator.store.inkHistory.generation,
-           canvas.drawing != coordinator.store.drawing {
-            coordinator.store.updateDrawing(canvas.drawing)
-            coordinator.store.saveNow()
-        }
+        coordinator.flushPendingDrawing(save:true)
+        coordinator.retire()
         if !coordinator.store.isDocumentSource { coordinator.store.inkHistory.detach(canvas.inkUndoManager) }
-        coordinator.store.setPencilTraceActive(false, owner: coordinator.traceOwner)
         coordinator.canvas = nil
     }
 
@@ -174,6 +190,12 @@ struct PencilCanvas: UIViewRepresentable {
         private var usingTool = false
         private var backgroundObserver: NSObjectProtocol?
         private var drawingChangeSerial = 0
+        private var retired = false
+        private var activation = UUID()
+        private var toolActivation: UUID?
+        private var traceActivation: UUID?
+        private var panActivation: UUID?
+        private var pinchActivation: UUID?
         private var panStart = CanvasViewport()
         private var pinchStart = CanvasViewport()
         private var pinchAnchor = CGPoint.zero
@@ -193,14 +215,42 @@ struct PencilCanvas: UIViewRepresentable {
             if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         }
 
+        private var liveInput: Bool {
+            !retired && canvas != nil && renderedOwner == store.nativeHistoryOwner &&
+                renderedGeneration == store.inkHistory.generation && renderedDocument.map(store.document.accepts) == true
+        }
+
+        private func currentCanvas(_ view: PKCanvasView) -> Bool { liveInput && canvas === view }
+
+        private func currentGesture(_ gesture: UIGestureRecognizer) -> Bool {
+            guard liveInput, let host = canvas?.superview, let view = gesture.view else { return false }
+            return view === host || view.isDescendant(of:host)
+        }
+
+        fileprivate func retire() {
+            guard !retired else { return }
+            retired = true
+            activation = UUID(); drawingChangeSerial += 1; previewSession += 1
+            toolActivation = nil; traceActivation = nil; panActivation = nil; pinchActivation = nil
+            isDrawing = false; usingTool = false; hoverPoint = nil
+            previewLayer.path = nil; hoverLayer.isHidden = true
+            if renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation {
+                store.inkHistory.setUsingTool(false)
+            }
+            store.setPencilTraceActive(false,owner:traceOwner)
+        }
+
         func replaceDrawingFromStore() {
+            guard !retired else { return }
             if let canvas { canvas.inkUndoManager = store.inkHistory.activate(store.nativeHistoryOwner) }
             restoreDrawingFromStore()
         }
 
         private func restoreDrawingFromStore() {
-            guard let canvas else { return }
+            guard !retired, let canvas else { return }
             replacingDrawing = true
+            activation = UUID()
+            toolActivation = nil; traceActivation = nil; panActivation = nil; pinchActivation = nil
             drawingChangeSerial += 1
             let manager = canvas.nativeUndoManager
             manager.disableUndoRegistration()
@@ -227,17 +277,8 @@ struct PencilCanvas: UIViewRepresentable {
 
         private func registerDrawingUndo(_ previous: PKDrawing) {
             guard let canvas else { return }
-            let manager = canvas.inkUndoManager
-            let generation = renderedGeneration, owner = store.nativeHistoryOwner
-            let needsGroup = manager.groupingLevel == 0 && !manager.isUndoing && !manager.isRedoing
-            if needsGroup { manager.beginUndoGrouping() }
-            manager.registerUndo(withTarget: self) { coordinator in
-                guard coordinator.renderedGeneration == generation, coordinator.store.nativeHistoryOwner == owner,
-                      coordinator.store.inkHistory.generation == generation else { return }
-                coordinator.commitDrawing(previous)
-                coordinator.restoreDrawingFromStore()
-            }
-            if needsGroup { manager.endUndoGrouping() }
+            CanvasDrawingHistory.register(previous,store:store,manager:canvas.inkUndoManager,
+                owner:store.nativeHistoryOwner,generation:renderedGeneration)
         }
 
         private func commitDrawing(_ drawing: PKDrawing) {
@@ -248,11 +289,14 @@ struct PencilCanvas: UIViewRepresentable {
             }
             if previous != drawing { registerDrawingUndo(previous) }
             renderedModelDrawing = store.drawing
+            renderedDocument = try? store.document.pageSnapshot()
         }
 
         fileprivate func sample(_ point: CGPoint, phase: PencilTraceRecognizer.Phase) {
+            guard liveInput else { return }
             switch phase {
             case .began:
+                traceActivation = activation
                 isDrawing = true
                 store.setPencilTraceActive(true, owner: traceOwner)
                 hoverLayer.isHidden = true
@@ -265,22 +309,26 @@ struct PencilCanvas: UIViewRepresentable {
                     (store.mode == .eraser && store.eraserPreviewWidth == nil)
                 previewLayer.lineWidth = store.mode == .eraser ? (store.eraserPreviewWidth ?? 4) : store.penTool.width
             case .moved:
+                guard traceActivation == activation else { return }
                 previewPath.addLine(to: point)
                 previewLayer.path = previewPath.cgPath
             case .ended:
+                guard traceActivation == activation else { return }
+                traceActivation = nil
                 isDrawing = false
                 store.setPencilTraceActive(false, owner: traceOwner)
                 hoverPoint = point
                 updateHover()
                 let session = previewSession
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                    guard let self, self.previewSession == session else { return }
+                    guard let self, !self.retired, self.previewSession == session else { return }
                     self.previewLayer.path = nil
                 }
             }
         }
 
         @objc fileprivate func hoverCanvas(_ gesture: UIHoverGestureRecognizer) {
+            guard currentGesture(gesture) else { return }
             switch gesture.state {
             case .began, .changed:
                 guard !isDrawing else { return }
@@ -296,7 +344,7 @@ struct PencilCanvas: UIViewRepresentable {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             defer { CATransaction.commit() }
-            guard !isDrawing, let hoverPoint, store.mode == .pen || store.mode == .eraser,
+            guard liveInput, !isDrawing, let hoverPoint, store.mode == .pen || store.mode == .eraser,
                   store.mode != .eraser || store.eraserPreviewWidth != nil else {
                 hoverLayer.isHidden = true
                 return
@@ -313,30 +361,38 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         @objc fileprivate func panCanvas(_ gesture: UIPanGestureRecognizer) {
+            guard currentGesture(gesture) else { return }
             switch gesture.state {
-            case .began: panStart = store.viewport
+            case .began: panStart = store.viewport; panActivation = activation
             case .changed, .ended:
+                guard panActivation == activation else { return }
                 let shift = gesture.translation(in:nil)
                 store.viewport = panStart.translated(by: CGSize(width:shift.x,height:shift.y))
-            default: break
+                if gesture.state == .ended { panActivation = nil }
+            default: panActivation = nil
             }
         }
 
         @objc fileprivate func pinchCanvas(_ gesture: UIPinchGestureRecognizer) {
+            guard currentGesture(gesture) else { return }
             switch gesture.state {
             case .began:
+                pinchActivation = activation
                 pinchStart = store.viewport
                 pinchAnchor = gesture.location(in:gesture.view)
                 pinchCenter = gesture.location(in:nil)
             case .changed, .ended:
+                guard pinchActivation == activation else { return }
                 let center = gesture.location(in:nil)
                 store.viewport = pinchStart.scaled(by:Double(gesture.scale),around:pinchAnchor,
                     centerShift:CGSize(width:center.x-pinchCenter.x,height:center.y-pinchCenter.y))
-            default: break
+                if gesture.state == .ended { pinchActivation = nil }
+            default: pinchActivation = nil
             }
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard currentGesture(gestureRecognizer) else { return false }
             if canvas?.isRulerActive == true,
                gestureRecognizer is UIPanGestureRecognizer || gestureRecognizer is UIPinchGestureRecognizer {
                 return false
@@ -346,24 +402,26 @@ struct PencilCanvas: UIViewRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            true
+            currentGesture(gestureRecognizer) && currentGesture(otherGestureRecognizer)
         }
 
         func canvasViewSelectionDidChange(_ canvasView: PKCanvasView) {
-            guard !replacingDrawing, renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
+            guard !replacingDrawing, currentCanvas(canvasView) else { return }
             store.setInkSelection(canvasView.selection)
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard !replacingDrawing, renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
+            guard !replacingDrawing, currentCanvas(canvasView) else { return }
             drawingChangeSerial += 1
             guard !usingTool else { return }
             let serial = drawingChangeSerial
             let generation = renderedGeneration
+            let active = activation
             let drawing = canvasView.drawing, owner = renderedOwner
-            let snapshot = try? store.document.pageSnapshot()
-            Task { @MainActor [weak self] in
-                guard let self, self.drawingChangeSerial == serial, self.store.nativeHistoryOwner == owner,
+            let snapshot = renderedDocument
+            Task { @MainActor [weak self, weak canvasView] in
+                guard let self, let canvasView, self.currentCanvas(canvasView), self.activation == active,
+                      self.drawingChangeSerial == serial, self.store.nativeHistoryOwner == owner,
                       snapshot.map(self.store.document.accepts) == true,
                       self.store.inkHistory.generation == generation else { return }
                 self.commitDrawing(drawing)
@@ -372,22 +430,23 @@ struct PencilCanvas: UIViewRepresentable {
         }
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
-            guard !replacingDrawing, renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
+            guard !replacingDrawing, currentCanvas(canvasView) else { return }
             drawingChangeSerial += 1
+            toolActivation = activation
             usingTool = true
             store.inkHistory.setUsingTool(true)
         }
 
         func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
-            guard !replacingDrawing, renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
+            guard !replacingDrawing, currentCanvas(canvasView), toolActivation == activation else { return }
             flushPendingDrawing()
             usingTool = false
+            toolActivation = nil
             store.inkHistory.setUsingTool(false)
         }
 
         func flushPendingDrawing(save: Bool = false) {
-            guard let canvas, !replacingDrawing,
-                  renderedOwner == store.nativeHistoryOwner, renderedGeneration == store.inkHistory.generation else { return }
+            guard let canvas, !replacingDrawing, currentCanvas(canvas) else { return }
             drawingChangeSerial += 1
             commitDrawing(canvas.drawing)
             store.inkHistory.scheduleRefresh()
@@ -396,6 +455,7 @@ struct PencilCanvas: UIViewRepresentable {
 
         func pencilInteraction(_ interaction: UIPencilInteraction,
                                didReceiveTap tap: UIPencilInteraction.Tap) {
+            guard liveInput, interaction.view === canvas else { return }
             store.mode = store.mode == .eraser ? .pen : .eraser
             store.status = store.mode == .eraser ?
                 "Pencil 더블탭 · 지우기" : "Pencil 더블탭 · 그리기"
