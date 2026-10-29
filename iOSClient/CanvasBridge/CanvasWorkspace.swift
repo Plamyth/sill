@@ -3,6 +3,22 @@ import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct CanvasPaperBackground: View, Equatable {
+    let pattern: CanvasPagePaper.Pattern
+    let width: Double
+    let height: Double
+
+    var body: some View {
+        Canvas { context,_ in
+            guard pattern == .grid else { return }
+            var path = Path()
+            for (a,b) in CanvasPagePaper.gridLines(width:width,height:height) {
+                path.move(to:CGPoint(x:a.x,y:a.y)); path.addLine(to:CGPoint(x:b.x,y:b.y))
+            }
+            context.stroke(path,with:.color(.white.opacity(0.15)),lineWidth:1)
+        }.allowsHitTesting(false).accessibilityHidden(true)
+    }
+}
 
 struct CanvasWorkspace: View {
     @Environment(\.scenePhase) private var scenePhase
@@ -470,6 +486,12 @@ struct CanvasWorkspace: View {
                 ForEach(CanvasMode.allCases,id:\.self) { Text($0.rawValue).tag($0) }
             }
             penSettingsMenu
+            Menu("용지 · " + ((try? CanvasPagePaper.pattern(in:store.scene))?.label ?? "설정 확인")) {
+                ForEach(CanvasPagePaper.Pattern.allCases,id:\.rawValue) { pattern in
+                    Button(pattern.label) { store.applyPagePaper(pattern) }
+                }
+            }.disabled(!store.canTransitionDocument || (try? CanvasPagePaper.pattern(in:store.scene)) == nil)
+                .accessibilityIdentifier("canvasPagePaper")
             Toggle("자", isOn: $store.rulerEnabled)
                 .accessibilityHint("그리기 화면에서만 표시합니다. 자를 끄면 손가락으로 캔버스를 이동하고 확대할 수 있습니다.")
                 .accessibilityIdentifier("canvasRuler")
@@ -1895,6 +1917,8 @@ struct CanvasWorkspace: View {
         return GeometryReader { _ in
             ZStack(alignment:.topLeading) {
                 Color(uiColor:CanvasPalette.background)
+                CanvasPaperBackground(pattern:(try? CanvasPagePaper.pattern(in:store.scene)) ?? .plain,
+                    width:store.scene.width,height:store.scene.height).equatable()
                 PencilCanvas(store:store,isVisible:diagramMode != .diagram)
                 if store.scene.drawingBase64.isEmpty {
                     ForEach(store.scene.strokes) { stroke in strokeView(stroke) }
@@ -2092,8 +2116,12 @@ struct CanvasWorkspace: View {
             ForEach(store.scene.annotations.filter {
                 $0.nodeId == nil || store.scene.visibility.annotationIDs.contains($0.id)
             }) { note in
-                let author = note.author.utf8.elementsEqual(CanvasCardTags.author.utf8) ? "카드 태그" : CanvasGroup.displayAuthor(note)
-                Text("\(author): \(note.text)").font(.body).textSelection(.enabled)
+                if CanvasPagePaper.isMetadata(note) {
+                    Text("용지: " + ((try? CanvasPagePaper.pattern(in:store.scene))?.label ?? "설정 확인 필요")).font(.body)
+                } else {
+                    let author = note.author.utf8.elementsEqual(CanvasCardTags.author.utf8) ? "카드 태그" : CanvasGroup.displayAuthor(note)
+                    Text("\(author): \(note.text)").font(.body).textSelection(.enabled)
+                }
             }
             if let voice = store.displayedVoice {
                 Text("현재 음성 대화 \(voice.threadId.uuidString)").font(.caption)

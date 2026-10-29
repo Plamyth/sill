@@ -259,6 +259,7 @@ struct CanvasDocument: Codable, Equatable {
         var page = CanvasScene()
         page.schemaVersion = source.schemaVersion
         page.width = source.width; page.height = source.height; page.penSettings = source.penSettings
+        if try CanvasPagePaper.pattern(in:source) == .grid { page.annotations = [CanvasPagePaper.record()] }
         var next = self
         next.pages.insert(page,at:index + 1); next.activePageID = page.id
         next.revision += 1; next.pageEpoch += 1

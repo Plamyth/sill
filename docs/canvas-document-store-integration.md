@@ -1,5 +1,15 @@
 # 복수 페이지 문서 Store·UI 접합
 
+## 용지 무늬의 같은 원본 연결
+
+MyScript Notes 자체 페이지 자료의 `background_pattern=none/grid`와 배경 변경 뒤 원래 잉크 보존을 대응한다. 이 자료는 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/myscript-page-data-final-20261029/REPORT.md`와 원본 REA 영수증을 따른다. 원앱 색상 인코딩·모든 용지 종류·픽셀 동등성을 해독했다는 뜻은 아니다. CCR의 기존 검은 바탕과 잉크 색상은 그대로 두고, 명시적인 32캔버스 포인트 격자만 추가한다.
+
+설정은 같은 scene 안의 노드 없는 주석 하나에 `author=ccr.sill.page-paper/v1`, 사람이 읽는 용지 Markdown으로 저장한다. 일반 사용자 주석·원본 native 잉크·텍스트·출처를 바꾸지 않는다. 중복·다른 버전·다른 본문·노드에 붙은 표식은 거부하고 보존한다. UI의 용지 메뉴와 비입력 배경, PNG renderer가 같은 설정·좌표를 사용한다. 배경은 설정·크기가 같으면 다시 그리지 않는 Equatable 뷰이며 Pencil 터치·hover를 받지 않는다.
+
+기존 graph Undo/Redo와 전체 Files 저장·새 프로세스 재열기·외부 source 역수신을 사용한다. 정확히 용지만 바뀐 history에 한해서 펜 모드의 Undo/Redo를 허용하며, 본문·필기·다른 구조 변경이나 다른 입력 소유는 이 예외를 받지 않는다. 새 빈 페이지는 새 주석 ID로 용지 설정만 상속한다. 미지원 설정의 강제 정규화·별도 DB·별도 앱은 없다.
+
+`--page-actions --paper-only --sdk-check`는 원본 보존·손상 거부·용지 전용 history·현재 입력 장벽·Files 양방향·새 프로세스와 전체 iOS 타입을 검사한다. 첫 native 시도는 펜 모드의 기존 graph Undo 제한에서 실패했고, 용지 전용 변경만 식별하는 좁은 예외로 수리했다. 이 fixture의 PNG는 고정 미리보기이므로 실제 UIKit 배경·PNG 시각 일치·iPad/Pencil 수용은 이 검사로 선언하지 않는다.
+
 ## 빈 페이지와 순서 변경 후속
 
 f09 기반 후속은 기존 ‘문서 페이지’ 화면에 빈 페이지 추가와 한 칸 앞·뒤 이동을 연결한다. 빈 페이지는 현재 페이지 다음에 새 ID로 만들고 용지 크기·펜 설정만 이어받는다. 기존 필기·노드·댓글·원문 참조를 복사하거나 삭제하지 않는다. 순서 변경은 기존 모든 페이지 ID의 정확한 순열만 받으며 현재 선택한 페이지 ID와 각 페이지 바이트를 유지한다. 같은 순서는 revision도 바꾸지 않는다. 128페이지 상한·오래된 revision·누락·중복·외래 ID는 기존 문서를 보존하며 거부한다.

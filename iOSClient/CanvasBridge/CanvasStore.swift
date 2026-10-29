@@ -1040,6 +1040,18 @@ final class CanvasStore: ObservableObject {
         } catch { status = "태그를 추가하지 않았습니다. \(error.localizedDescription)"; return false }
     }
 
+    func applyPagePaper(_ pattern: CanvasPagePaper.Pattern) {
+        guard canTransitionDocument else { status = "다른 입력·저장을 마친 뒤 용지를 바꿀 수 있습니다."; return }
+        do {
+            let before = scene, next = try CanvasPagePaper.applying(pattern,to:scene)
+            guard next != before else { return }
+            try persistScene(next)
+            scene = next
+            recordGraphEdit(before:before,persistHistory:true)
+            status = "용지 무늬를 같은 원본에 보관했습니다. 기존 필기·색상은 유지됩니다."
+        } catch { status = error.localizedDescription }
+    }
+
     struct NodeResizeDrag {
         let owner: UUID
         let generation: UInt64
@@ -1244,7 +1256,8 @@ final class CanvasStore: ObservableObject {
         guard let undo = graphUndo, scene.id == undo.after.id else { return false }
         if graphRequiresPersistence {
             guard scene.revision < Int.max, graphPersistenceEpoch == linkSceneGeneration,
-                  cardMergeInputAllowed, cardMergeDraft == nil else { return false }
+                  (CanvasPagePaper.isOnlyChange(from:undo.before,to:undo.after) ? canTransitionDocument : cardMergeInputAllowed),
+                  cardMergeDraft == nil else { return false }
         }
         if undo.before.drawingBase64 != undo.after.drawingBase64 {
             let expected = undo.after
@@ -1287,7 +1300,8 @@ final class CanvasStore: ObservableObject {
         guard let redo = graphRedo, scene.id == redo.before.id else { return false }
         if graphRequiresPersistence {
             guard scene.revision < Int.max, graphPersistenceEpoch == linkSceneGeneration,
-                  cardMergeInputAllowed, cardMergeDraft == nil else { return false }
+                  (CanvasPagePaper.isOnlyChange(from:redo.before,to:redo.after) ? canTransitionDocument : cardMergeInputAllowed),
+                  cardMergeDraft == nil else { return false }
         }
         if redo.before.drawingBase64 != redo.after.drawingBase64 {
             let expected = redo.before
