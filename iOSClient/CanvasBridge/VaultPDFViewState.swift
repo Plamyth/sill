@@ -16,13 +16,28 @@ struct VaultPDFViewState: Codable, Equatable {
     let pageCount: Int
     var displayOrder: [Int]
     var crops: [Crop]
+    var bookmarks: [Int] = []
     static let marker = "<!-- ccr:pdf-view-state:v1 -->"
+    static let bookmarkMarker = "<!-- ccr:pdf-view-state:v2 -->"
     private static let tableHeader = "| 원문 쪽 | x | y | width | height |"
     private static let tableDivider = "| --- | --- | --- | --- | --- |"
 
     init(snapshot: VaultPDFSnapshot, pageCount: Int) {
         pdfPath = snapshot.path; pdfSHA256 = snapshot.sha256; self.pageCount = pageCount
         displayOrder = pageCount > 0 ? Array(1...pageCount) : []; crops = Array(repeating:Crop(),count:max(0,pageCount))
+    }
+
+    private enum CodingKeys: String, CodingKey { case pdfPath, pdfSHA256, pageCount, displayOrder, crops, bookmarks }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy:CodingKeys.self)
+        pdfPath = try c.decode(String.self,forKey:.pdfPath)
+        pdfSHA256 = try c.decode(String.self,forKey:.pdfSHA256)
+        pageCount = try c.decode(Int.self,forKey:.pageCount)
+        displayOrder = try c.decode([Int].self,forKey:.displayOrder)
+        crops = try c.decode([Crop].self,forKey:.crops)
+        // Existing Codable recovery payloads have no bookmarks key. Explicit null is invalid.
+        bookmarks = c.contains(.bookmarks) ? try c.decode([Int].self,forKey:.bookmarks) : []
     }
 
     var notePath: String {
@@ -35,15 +50,18 @@ struct VaultPDFViewState: Codable, Equatable {
               VaultPDFSnapshot.validPath(pdfPath), pdfSHA256.count == 64,
               pdfSHA256.allSatisfy({ "0123456789abcdef".contains($0) }), pageCount > 0, pageCount == count,
               displayOrder.count == count, displayOrder.sorted() == Array(1...count),
-              crops.count == count, crops.allSatisfy(\.valid) else { throw ViewError.invalid }
+              crops.count == count, crops.allSatisfy(\.valid),
+              bookmarks.count <= count, Set(bookmarks).count == bookmarks.count,
+              bookmarks.allSatisfy({ $0 > 0 && $0 <= count }) else { throw ViewError.invalid }
         return self
     }
 
     func markdown() throws -> String {
         _ = try validated(snapshot:.init(path:pdfPath,sha256:pdfSHA256,dataBase64:""),pageCount:pageCount)
-        var lines = [Self.marker,"# PDF 보기 설정","","PDF 경로: \(pdfPath)","PDF SHA256: \(pdfSHA256)",
-                     "물리 페이지 수: \(pageCount)","표시 순서: \(displayOrder.map(String.init).joined(separator:", "))","",
-                     Self.tableHeader,Self.tableDivider]
+        var lines = [bookmarks.isEmpty ? Self.marker : Self.bookmarkMarker,"# PDF 보기 설정","","PDF 경로: \(pdfPath)","PDF SHA256: \(pdfSHA256)",
+                     "물리 페이지 수: \(pageCount)","표시 순서: \(displayOrder.map(String.init).joined(separator:", "))"]
+        if !bookmarks.isEmpty { lines.append("책갈피: \(bookmarks.map(String.init).joined(separator:", "))") }
+        lines += ["",Self.tableHeader,Self.tableDivider]
         for (index,crop) in crops.enumerated() {
             lines.append("| \(index + 1) | \(crop.x) | \(crop.y) | \(crop.width) | \(crop.height) |")
         }
@@ -56,9 +74,11 @@ struct VaultPDFViewState: Codable, Equatable {
         guard text.utf8.count <= 1024 * 1024, pageCount > 0, pageCount <= text.utf8.count else { throw ViewError.invalid }
         var lines = text.replacingOccurrences(of:"\r\n",with:"\n").components(separatedBy:"\n")
         if lines.last == "" { lines.removeLast() }
-        guard lines.count == 10 + pageCount, lines[0] == marker, lines[1] == "# PDF 보기 설정",
-              lines[2].isEmpty, lines[7].isEmpty,
-              lines[8] == tableHeader, lines[9] == tableDivider else { throw ViewError.invalid }
+        let v2 = lines.first == bookmarkMarker
+        let table = v2 ? 9 : 8
+        guard lines.count == table + 2 + pageCount, lines[0] == (v2 ? bookmarkMarker : marker), lines[1] == "# PDF 보기 설정",
+              lines[2].isEmpty, lines[table - 1].isEmpty,
+              lines[table] == tableHeader, lines[table + 1] == tableDivider else { throw ViewError.invalid }
         func field(_ index: Int, _ prefix: String) throws -> String {
             guard lines[index].hasPrefix(prefix) else { throw ViewError.invalid }
             return String(lines[index].dropFirst(prefix.count))
@@ -70,7 +90,13 @@ struct VaultPDFViewState: Codable, Equatable {
         let order = try field(6,"표시 순서: ").components(separatedBy:",").map { Int($0.trimmingCharacters(in:.whitespaces)) }
         guard order.allSatisfy({ $0 != nil }) else { throw ViewError.invalid }
         state.displayOrder = order.compactMap { $0 }
-        state.crops = try lines.dropFirst(10).enumerated().map { index,line in
+        if v2 {
+            let value = try field(7,"책갈피: ")
+            let numbers = value.components(separatedBy:",").map { Int($0.trimmingCharacters(in:.whitespaces)) }
+            guard numbers.allSatisfy({ $0 != nil }) else { throw ViewError.invalid }
+            state.bookmarks = numbers.compactMap { $0 }
+        }
+        state.crops = try lines.dropFirst(table + 2).enumerated().map { index,line in
             let cells = line.components(separatedBy:"|").map { $0.trimmingCharacters(in:.whitespaces) }
             guard cells.count == 7, cells.first == "", cells.last == "", cells[1] == String(index + 1),
                   let x = Double(cells[2]), let y = Double(cells[3]), let width = Double(cells[4]), let height = Double(cells[5]) else { throw ViewError.invalid }
@@ -83,7 +109,7 @@ struct VaultPDFViewState: Codable, Equatable {
         case invalid, unconfirmed
         var errorDescription: String? {
             switch self {
-            case .invalid: return "PDF 보기 설정의 원본·순서·자르기 형식을 확인하지 못했습니다. 현재 보기와 원본을 보존합니다."
+            case .invalid: return "PDF 보기 설정의 원본·순서·자르기·책갈피 형식을 확인하지 못했습니다. 현재 보기와 원본을 보존합니다."
             case .unconfirmed: return "보기 설정의 저장·재조회가 같은 원문인지 확인하지 못했습니다. 기존 저장 의도와 입력을 보존하세요."
             }
         }

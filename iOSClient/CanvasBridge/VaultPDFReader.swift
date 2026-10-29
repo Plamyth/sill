@@ -203,6 +203,15 @@ private final class VaultReadOnlyPDFView: PDFView {
         var state = viewState; state.crops[physicalPageNumber - 1] = crop; try applyViewState(state)
     }
 
+    func setBookmark(_ included: Bool, physicalPageNumber: Int) throws {
+        guard physicalPageNumber > 0, physicalPageNumber <= pageCount else { throw VaultPDFViewState.ViewError.invalid }
+        var state = viewState
+        if included {
+            if !state.bookmarks.contains(physicalPageNumber) { state.bookmarks.append(physicalPageNumber) }
+        } else { state.bookmarks.removeAll { $0 == physicalPageNumber } }
+        try applyViewState(state)
+    }
+
     func undoViewState() throws {
         guard let state = viewUndo.last else { return }
         let old = viewState; try install(state,physicalPage:pageIndex,selection:originalSelection())
@@ -373,6 +382,22 @@ struct VaultPDFViewStateControls: View {
 
     var body: some View {
         VStack {
+            Text("원문 \(reader.pageNumber)쪽 · \(reader.viewState.bookmarks.contains(reader.pageNumber) ? "책갈피 있음" : "책갈피 없음")")
+                .accessibilityIdentifier("pdfBookmarkCurrentPage")
+            Button("현재 쪽 책갈피 추가") { edit { try reader.setBookmark(true,physicalPageNumber:reader.pageNumber) } }
+                .disabled(!canEdit || reader.viewState.bookmarks.contains(reader.pageNumber))
+                .accessibilityIdentifier("pdfBookmarkAdd")
+            Menu("책갈피 목록 · \(reader.viewState.bookmarks.count)개") {
+                ForEach(reader.viewState.bookmarks,id:\.self) { number in
+                    Button("원문 \(number)쪽으로 이동\(number == reader.pageNumber ? " · 현재 쪽" : "")") {
+                        if !reader.go(toPageNumber:number) { notice = "책갈피의 원문 쪽으로 이동하지 못했습니다. 현재 페이지와 선택을 유지합니다." }
+                    }
+                    Button("원문 \(number)쪽 책갈피 제거",role:.destructive) {
+                        edit { try reader.setBookmark(false,physicalPageNumber:number) }
+                    }.disabled(!canEdit)
+                }
+            }.disabled(reader.viewState.bookmarks.isEmpty).accessibilityIdentifier("pdfBookmarkList")
+            Text("책갈피 추가·제거는 보기 설정 Markdown 저장으로 확정합니다.").font(.caption)
             HStack {
                 Button("표시 순서 위로") { edit { try reader.moveDisplayPage(from:reader.displayPageNumber,to:reader.displayPageNumber - 1) } }
                     .disabled(!canEdit || reader.displayPageNumber <= 1)
