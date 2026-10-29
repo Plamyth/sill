@@ -30,7 +30,7 @@ env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer
 canvas = root / 'iOSClient/CanvasBridge'
 sources = [canvas / (name + '.swift') for name in [
     'CanvasModel', 'CanvasDocument', 'CanvasDocumentFiles', 'CanvasDocumentRelay', 'VaultPDFExcerpt', 'VaultPDFViewState', 'CanvasCardTags', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
-    'CanvasInkMathProposal', 'CanvasInkSpacingProposal', 'CanvasCardMerge', 'CanvasRelay', 'ControlRoomProjection'
+    'CanvasInkMathProposal', 'CanvasInkSpacingProposal', 'CanvasCardMerge', 'CanvasRelay', 'ControlRoomProjection', 'VaultEPUB', 'VaultEPUBExcerpt', 'VaultEPUBReader'
 ]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift', here / 'main.swift', here / 'GroupChecks.swift']
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
 native_reader = out / 'PDFNativeReader.swift'
