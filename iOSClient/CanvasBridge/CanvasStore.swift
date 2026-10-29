@@ -2986,7 +2986,9 @@ final class CanvasStore: ObservableObject {
             if record.sourceKind == .epub {
                 guard let source = try VaultEPUBExcerpt.parse(latest.text),
                       let index = scene.nodes.firstIndex(where:{ $0.id == id }) else { throw VaultBlockRecoveryError.context }
-                scene.nodes[index].vaultNote = try source.reference(note:latest,relayAddress:noteAddress)
+                var reference = try source.reference(note:latest,relayAddress:noteAddress)
+                reference.cacheTruncated = !scene.nodes[index].text.utf8.elementsEqual(latest.text.utf8)
+                scene.nodes[index].vaultNote = reference
                 changingNoteState = true
                 vaultNote = latest; vaultDraft = latest.text
                 noteEditorGeneration &+= 1; noteInputSession = UUID()
@@ -3114,9 +3116,26 @@ final class CanvasStore: ObservableObject {
                 }
             } else { source = note.text }
             let preview = ref.blockID == nil ? VaultPDFCard.preview(source) : VaultNoteSnapshot.preview(source)
-            let quoteSHA = ref.blockID == nil ? nil : CanvasPacket.sha(Data(source.utf8))
+            let quoteSHA: String?
+            if ref.blockID == nil, ref.quoteSha256 != nil {
+                do {
+                    guard try VaultPDFExcerpt.parse(note.text) == nil else {
+                        ref.sourceState = .ambiguous; next.nodes[index].vaultNote = ref; continue
+                    }
+                    guard let excerpt = try VaultEPUBExcerpt.parse(note.text) else {
+                        ref.sourceState = .missing; next.nodes[index].vaultNote = ref; continue
+                    }
+                    guard excerpt.notePath.utf8.elementsEqual(note.path.utf8) else {
+                        ref.sourceState = .unsupported; next.nodes[index].vaultNote = ref; continue
+                    }
+                    quoteSHA = CanvasPacket.sha(Data(excerpt.quote.utf8))
+                } catch {
+                    ref.sourceState = .unsupported; next.nodes[index].vaultNote = ref; continue
+                }
+            } else { quoteSHA = ref.blockID == nil ? nil : CanvasPacket.sha(Data(source.utf8)) }
             let changed = (ref.quoteSha256 != nil ? ref.quoteSha256 != quoteSHA :
                 !preview.utf8.elementsEqual(next.nodes[index].text.utf8)) ||
+                (ref.blockID == nil && ref.quoteSha256 != nil && ref.sha256 != note.sha256) ||
                 (ref.sourceState == .changed && ref.sha256 == note.sha256)
             ref.sha256 = note.sha256
             ref.cacheTruncated = !preview.utf8.elementsEqual(source.utf8)

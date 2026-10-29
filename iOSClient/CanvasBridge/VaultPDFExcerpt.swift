@@ -15,7 +15,9 @@ struct VaultPDFCreateRecovery: Codable, Equatable {
     var sourceKind: SourceKind? = nil
 
     func requireMatchingEPUBNote(_ note: VaultNoteSnapshot) throws {
-        guard sourceKind == .epub, let expected = try VaultEPUBExcerpt.parse(draft) else { throw VaultBlockRecoveryError.context }
+        guard sourceKind == .epub, try VaultPDFExcerpt.parse(draft) == nil,
+              try VaultPDFExcerpt.parse(note.text) == nil,
+              let expected = try VaultEPUBExcerpt.parse(draft) else { throw VaultBlockRecoveryError.context }
         _ = try expected.reference(note:note,relayAddress:relayAddress)
     }
 
@@ -24,16 +26,18 @@ struct VaultPDFCreateRecovery: Codable, Equatable {
               url.scheme.map({ ["http","https"].contains($0) }) == true,
               url.host?.isEmpty == false, url.user == nil, url.password == nil,
               url.query == nil, url.fragment == nil else { throw VaultBlockRecoveryError.corrupt }
+        let epubSource = try VaultEPUBExcerpt.parse(draft)
         if sourceKind == .epub {
-            guard viewRecovery == nil, let source = try VaultEPUBExcerpt.parse(draft),
+            guard viewRecovery == nil, try VaultPDFExcerpt.parse(draft) == nil, let source = epubSource,
                   source.notePath.utf8.elementsEqual(path.utf8),
                   submittedText == nil || submittedText?.utf8.elementsEqual(draft.utf8) == true else { throw VaultBlockRecoveryError.corrupt }
         } else if let viewRecovery {
+            guard epubSource == nil else { throw VaultBlockRecoveryError.corrupt }
             try viewRecovery.validate()
             guard (submittedText == nil) == (viewRecovery.submitted == nil), path.utf8.elementsEqual(viewRecovery.draft.path.utf8), draft.utf8.elementsEqual(viewRecovery.draft.markdown.utf8),
                   submittedText.map({ $0.utf8.elementsEqual(viewRecovery.submitted?.markdown.utf8 ?? "".utf8) }) ?? (viewRecovery.submitted == nil) else { throw VaultBlockRecoveryError.corrupt }
         } else {
-            guard let source = try VaultPDFExcerpt.parse(draft), source.notePath == path,
+            guard epubSource == nil, let source = try VaultPDFExcerpt.parse(draft), source.notePath == path,
                   submittedText == nil || submittedText?.utf8.elementsEqual(draft.utf8) == true else { throw VaultBlockRecoveryError.corrupt }
         }
         return self

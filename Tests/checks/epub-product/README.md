@@ -13,3 +13,7 @@
 부가 거부 경계만 실행하려면 `--contract-boundaries --choice-input <이전 자체 native 실행의 격리 NoteConflictChoice.json>`을 추가한다. 실제 이전 server-choice DTO를 입력으로 재사용하고 schema만 바꾸므로 서버 필드를 추정하지 않는다. 별도 `contract-UUID` 출력과 actual Store/원장/새 프로세스로 알 수 없는 kind·PDF 혼합·틀린 choice schema의 거부/원문 보존만 검사한다. 기존54 실행이나 HTTP를 다시 수행하지 않는다.
 
 확정 계약 부가 실행 `contract-6b090520-34a4-4d0c-86bd-531c5d0b7fb7`은 부모34조건·새 프로세스1회(2개 관측)와 입력/normal sentinel 불변을 통과했다. 제품은 70b와 같으며 기존54를 반복하지 않았다. 새 경계 fixture의 Rect initializer compile 오류와 후속 정상 실행은 별도 영수증으로 보존한다. 전체 SDK는 부모, actual HTTP는 Laplace 소유다.
+
+
+## 발췌 재조회·복구 출처 구분 회귀
+`run.py --source-repairs --output <storage-route 외장 폴더>`는 원래 독립 반례의 실제 Store·Reader와 결정적 note callback을 사용한다. 동일 GET의 quote SHA/current 유지, 명시 preview 잘림 상태, 순수 PDF/EPUB 수용, 이중 출처 복구와 채택 거부, 메모 수정과 missing/unsupported/ambiguous 원문에서 마지막 캐시·결속 보존을 확인한다. HTTP나 실제 ObsidianVault 서버 실행이 아니며 전체54·SDK 검사를 반복하지 않는다. 원래 반례 archive와 실행 증거는 외장 epub-store-independent-review-70b3dc55-20261029 및 epub-store-source-repair-20261029에서 보존한다.
