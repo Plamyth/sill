@@ -251,6 +251,30 @@ struct CanvasDocument: Codable, Equatable {
         try next.validate(); self = next
     }
     @discardableResult
+    mutating func addBlankPage(after pageID: UUID, expectedRevision: Int) throws -> UUID {
+        guard revision == expectedRevision, revision < Int.max, pageEpoch < UInt64.max else { throw Failure.stale }
+        try validate()
+        guard pages.count < Self.pageLimit, let index = pages.firstIndex(where:{ $0.id == pageID }) else { throw Failure.invalid }
+        let source = pages[index]
+        var page = CanvasScene()
+        page.width = source.width; page.height = source.height; page.penSettings = source.penSettings
+        var next = self
+        next.pages.insert(page,at:index + 1); next.activePageID = page.id
+        next.revision += 1; next.pageEpoch += 1
+        try next.validate(); self = next
+        return page.id
+    }
+    mutating func reorderPages(_ ids: [UUID], expectedRevision: Int) throws {
+        guard revision == expectedRevision, revision < Int.max, pageEpoch < UInt64.max else { throw Failure.stale }
+        try validate()
+        guard ids.count == pages.count, Set(ids).count == ids.count, Set(ids) == Set(pages.map(\.id)) else { throw Failure.invalid }
+        guard ids != pages.map(\.id) else { return }
+        let originals = Dictionary(uniqueKeysWithValues:pages.map { ($0.id,$0) })
+        var next = self
+        next.pages = ids.map { originals[$0]! }; next.revision += 1; next.pageEpoch += 1
+        try next.validate(); self = next
+    }
+    @discardableResult
     mutating func duplicatePage(_ sourceID: UUID, expectedRevision: Int) throws -> Duplication {
         guard revision == expectedRevision, revision < Int.max, pageEpoch < UInt64.max else { throw Failure.stale }
         try validate()

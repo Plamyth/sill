@@ -29,15 +29,18 @@ env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer
            CFFIXED_USER_HOME=str(out / 'home'), TMPDIR=str(out / 'tmp') + '/')
 canvas = root / 'iOSClient/CanvasBridge'
 sources = [canvas / (name + '.swift') for name in [
-    'CanvasModel', 'CanvasDocument', 'CanvasDocumentFiles', 'CanvasDocumentRelay', 'VaultPDFExcerpt', 'CanvasCardTags', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
+    'CanvasModel', 'CanvasDocument', 'CanvasDocumentFiles', 'CanvasDocumentRelay', 'VaultPDFExcerpt', 'VaultPDFViewState', 'CanvasCardTags', 'CanvasStore', 'CanvasInkTextEditing', 'CanvasInkShapeProposal',
     'CanvasInkMathProposal', 'CanvasInkSpacingProposal', 'CanvasCardMerge', 'CanvasRelay', 'ControlRoomProjection'
 ]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift', here / 'main.swift', here / 'GroupChecks.swift']
 protocol = root / 'Sources/StreamProtocol/TestDestinations.swift'
+native_reader = out / 'PDFNativeReader.swift'
+native_reader.write_text((canvas / 'VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])
+sources.append(native_reader)
 ios_sources = sorted(canvas.glob('*.swift')) + [root / 'iOSClient' / (n + '.swift') for n in [
     'IPadAudioSession', 'IPadAudioLeaseState', 'IPadAudioLeaseCoordinator'
 ]] + [root / 'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
 project = root / 'iOSClient/Sill.xcodeproj/project.pbxproj'
-inputs = list(dict.fromkeys(sources + [protocol, project, canvas / 'CanvasWorkspace.swift', Path(__file__)] +
+inputs = list(dict.fromkeys([p for p in sources if p != native_reader] + [canvas / 'VaultPDFReader.swift', protocol, project, canvas / 'CanvasWorkspace.swift', Path(__file__)] +
                            (ios_sources if args.sdk_check else [])))
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}

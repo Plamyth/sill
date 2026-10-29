@@ -2,7 +2,7 @@ import Foundation
 import PDFKit
 import AppKit
 
-private func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data {
+func pagesPDF(_ pages: [(String,String)], outlineObjects: [String] = []) -> Data {
     var objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Count \(pages.count) /Kids [\(pages.indices.map { "\(4+$0*2) 0 R" }.joined(separator:" "))] >>", "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
     for (index,item) in pages.enumerated() {
         let stream = "BT /F1 16 Tf 60 700 Td (Core) Tj 0 -40 Td (\(item.0)) Tj 0 -40 Td (Core) Tj ET"

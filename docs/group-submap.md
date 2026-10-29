@@ -38,3 +38,7 @@ Store의 그룹 명령 블록과 `sceneDidChange`/선택·입력 guard에만 접
 ## 검사 근거
 
 기존 card-merge 실행기의 --group-submap만 사용해 실제 Model/Store/PKDrawing·격리 Files·새 Swift 프로세스·전체 문서 페이지 경계를 검사한다. PNG는 기존1px preview fixture이며 시각 수용이 아니다. 기존 전체385/PDF/서버 회귀를 반복하지 않는다. 별도 group-relay.cjs는 기존 ObsidianVault 모듈로 own vault에 저장·새 인스턴스 재열기·역방향 JSON 수정·CAS 거부·자산/원본 보존을 검사하고 fixture를 제거한다. Mini는 작업별 한시 입력/정리 영수증을 사용하며 listener0이다. 정확 결과·실패 수리·소스 해시는 전용 evidence 영수증에 연결한다.
+
+## 공식 후속 결합
+
+독립 구현은 f09 기준78344fffa79d5c55593233de603fa1c987568523으로 먼저 확정했다. 이후 사용자 지정 공식5fcb42cc1a1430a64210dd5d89c930a61fd8a0da/tree5c63f332fd6786adbd4291461c9f5b83e83f34c5를 같은 소유 브랜치에 의미 병합한다. Store/Workspace는 텍스트 충돌 없이 합쳐졌고, PDF 보기 저장 수리와 빈 페이지·순서 연산 본문은 공식과 바이트 대조한다. 기존 card-merge native 검사기는 새 Store의 PDF 타입 의존성 때문에 정식 codec과 Reader의 기존 native 부분을 포함하도록만 조정한다. PDF 제품 코드는 별도로 바꾸지 않는다. 그룹/문서/PDF 복구 barrier를 합집합으로 유지하고 새 결합부만 검사한다. 설치/실기기 수용으로 표시하지 않는다.
