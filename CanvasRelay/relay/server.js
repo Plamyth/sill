@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const {validPNG} = require('./canvas-png');
+const {DOCUMENT_CAPABILITY,MAX_DOCUMENT_REQUEST_BYTES} = require('./canvas-document');
 const {assertInkScene,assertAgentRevision,SCENE_CAPABILITIES,MAX_CANVAS_SCENE_BYTES} = require('./canvas-scene');
 const {appServerDeliveryReady,withAppServer,deliverPacket} = require('./codex-delivery');
 const {controlRoomProjection,hiddenThreadIds} = require('./control-room-projection');
@@ -226,15 +227,20 @@ function json(response, status, value) {
   response.end(JSON.stringify(value));
 }
 
-function receive(request, limit = 9*1024*1024) {
+function receive(request, limit = 9*1024*1024, document = false) {
   return new Promise((resolve,reject) => {
-    const chunks = []; let length = 0;
+    const chunks = []; let length = 0, exceeded = false;
     request.on('data', chunk => {
-      length += chunk.length;
-      if (length > limit) { request.destroy(); reject(new Error('Request too large')); }
+      if(exceeded)return;length += chunk.length;
+      if (length > limit) {
+        exceeded=true;chunks.length=0;
+        if(document)reject(new VaultError('문서 wire 한도를 초과했습니다.',413,{code:'document_too_large',publicationAttempted:false,reconciliationRequired:false}));
+        else {request.destroy();reject(new Error('Request too large'));}
+      }
       else chunks.push(chunk);
     });
     request.on('end', () => {
+      if(exceeded)return;
       try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
       catch { reject(new Error('Invalid JSON')); }
     });
@@ -279,10 +285,27 @@ function createServer({snapshotPath = SNAPSHOT, hiddenPath = HIDDEN, store = STO
     const url = new URL(request.url,'http://localhost');
     try {
       if (request.method === 'GET' && url.pathname === '/vault/canvas/capabilities')
-        return json(response,200,SCENE_CAPABILITIES);
+        return json(response,200,{...SCENE_CAPABILITIES,document:DOCUMENT_CAPABILITY});
       if (url.pathname.startsWith('/vault/')) {
         if (!vault) return json(response,503,{error:'Obsidian vault is not configured'});
         const relative = url.searchParams.get('path') ?? '';
+        if (url.pathname === '/vault/document') {
+          if([...url.searchParams.keys()].join(',')!=='id')throw new VaultError('Only the document ID is accepted');
+          const id=url.searchParams.get('id');
+          if(request.method==='GET')return json(response,200,vault.document(id));
+          if(request.method==='PUT')return json(response,200,vault.saveDocument(id,await receive(request,MAX_DOCUMENT_REQUEST_BYTES,true)));
+        }
+        if (url.pathname === '/vault/document/conflict') {
+          const keys=[...url.searchParams.keys()].sort().join(','),id=url.searchParams.get('id');
+          if(request.method==='GET') {
+            if(keys==='id')return json(response,200,vault.documentConflict(id));
+            if(keys==='id,material,recoveryID,sha256')return json(response,200,vault.documentConflict(id,Object.fromEntries(['material','recoveryID','sha256'].map(k=>[k,url.searchParams.get(k)]))));
+            throw new VaultError('Only document reconciliation identifiers are accepted');
+          }
+          if(request.method==='PUT'&&keys==='id')return json(response,200,vault.resolveDocumentConflict(id,await receive(request,16*1024)));
+          throw new VaultError('Invalid document reconciliation request');
+        }
+
         if (url.pathname === '/vault/block') {
           const blockID = url.searchParams.get('blockID') ?? '';
           if (request.method === 'GET') return json(response,200,blockEdits.block(relative,blockID));
@@ -463,8 +486,8 @@ function createServer({snapshotPath = SNAPSHOT, hiddenPath = HIDDEN, store = STO
       return json(response,404,{error:'Not found'});
     } catch (error) { return json(response,error instanceof VaultError ? error.status : 409,
       {error:error.message,...(error.code ? {code:error.code} : {}),
-        ...(error.reconciliationRequired ? {reconciliationRequired:true,recoveryID:error.recoveryID,
-          publicationAttempted:error.publicationAttempted} : {})}); }
+        ...(typeof error.reconciliationRequired==='boolean' ? {reconciliationRequired:error.reconciliationRequired,
+          ...(error.recoveryID?{recoveryID:error.recoveryID}:{}),publicationAttempted:error.publicationAttempted} : {})}); }
   });
   const close = server.close;
   server.close = function (...args) {

@@ -13,6 +13,7 @@ parser.add_argument('--output', required=True, type=Path)
 parser.add_argument('--focused', action='store_true')
 parser.add_argument('--notes', action='store_true')
 parser.add_argument('--pdf', action='store_true')
+parser.add_argument('--documents', action='store_true')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent
 output = args.output.resolve()
@@ -26,7 +27,7 @@ before = hashes()
 node = str(Path.home() / '.local/bin/node')
 if not Path(node).is_file():
     node = shutil.which('node')
-tests = ['vault-pdf.test.js'] if args.pdf else ['note-reconciliation.test.js'] if args.notes else ['vault-reconciliation.test.js'] if args.focused else [
+tests = ['vault-document.test.js'] if args.documents else ['vault-pdf.test.js'] if args.pdf else ['note-reconciliation.test.js'] if args.notes else ['vault-reconciliation.test.js'] if args.focused else [
     'canvas-diagram.test.js', 'braintrinity-projection.test.js', 'canvas-schema.test.js',
     'canvas-scene3.test.js', 'obsidian-vault.test.js', 'canvas-limits.test.js',
     'codex-delivery.test.js', 'control-room-public-relay.test.js', 'vault-save-boundary.test.js',
