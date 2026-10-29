@@ -47,6 +47,13 @@ final class CanvasInkHistory: ObservableObject {
     private var toolOwner: UUID?
     private var refreshScheduled = false
     private var refreshing = false
+    private var focusSuspended = false
+
+    func setFocusSuspended(_ suspended: Bool) {
+        focusSuspended = suspended
+        if suspended { availability = Availability() }
+        else { scheduleRefresh() }
+    }
 
     func attach(_ manager: UndoManager) {
         if let previous = self.manager { detach(previous) }
@@ -123,7 +130,7 @@ final class CanvasInkHistory: ObservableObject {
     }
 
     var commandAvailability: Availability {
-        guard let manager, !usingTool, !manager.isUndoing, !manager.isRedoing,
+        guard !focusSuspended, let manager, !usingTool, !manager.isUndoing, !manager.isRedoing,
               manager.groupingLevel <= 1 else { return Availability() }
         return Availability(canUndo: manager.canUndo,
                             canRedo: manager.groupingLevel == 0 && manager.canRedo)
@@ -186,6 +193,7 @@ final class CanvasStore: ObservableObject {
             pendingInkSpacing?.invalidatePending()
             inkMathRequest = nil
             linkSceneGeneration &+= 1
+            reconcileHierarchyFocus()
             nodeResizeDrag = nil
             nodeRotationDrag = nil
             if oldScene.id != scene.id { cardTagFilter = nil }
@@ -940,7 +948,7 @@ final class CanvasStore: ObservableObject {
         } catch { status = error.localizedDescription; return false }
     }
     @discardableResult func enterGroup(_ expected: CanvasNode, owner: GroupOwner) -> Bool {
-        guard owner == groupCommandOwner, groupInputAllowed, groupDraft == nil,
+        guard owner == groupCommandOwner, groupInputAllowed, groupDraft == nil, hierarchyFocusRootID == nil,
               let group = groups.first(where:{ $0.node.id == expected.id }),
               CanvasScene.sameNode(group.node,expected), group.node.isCollapsed == true else { return false }
         if openedGroupID == nil { groupRootViewport = viewport }
@@ -956,14 +964,159 @@ final class CanvasStore: ObservableObject {
         if let saved = groupRootViewport { viewport = saved }; groupRootViewport = nil
     }
 
+    struct HierarchyFocusOwner: Equatable {
+        let documentID: UUID, pageID: UUID
+        let pageEpoch: UInt64, sceneEpoch: UInt64, selection: UInt64, view: UInt64
+    }
+    private struct HierarchyFocusPage: Codable {
+        var rootID: UUID?
+        var visited: [UUID] = []
+    }
+    private struct HierarchyFocusPreferences: Codable {
+        var schema = "ccr.hierarchy-focus-preferences/v1"
+        var pages: [String:HierarchyFocusPage] = [:]
+    }
+    private static let hierarchyFocusKey = "canvas.hierarchyFocus.v1"
+    private var hierarchyFocusPreferences = HierarchyFocusPreferences()
+    private var hierarchyFocusRaw: String?
+    private var hierarchyFocusLoaded = false
+    private var hierarchyFocusReadable = true
+    private var hierarchyFocusContext: String?
+    @Published private(set) var hierarchyFocusRootID: UUID?
+    @Published private(set) var hierarchyFocusNotice = ""
+    var hierarchyFocusOwner: HierarchyFocusOwner {
+        .init(documentID:document.id,pageID:scene.id,pageEpoch:document.pageEpoch,
+              sceneEpoch:linkSceneGeneration,selection:noteSelectionGeneration,view:groupViewGeneration)
+    }
+    private var hierarchyFocusPageKey: String {
+        (isDocumentSource ? "document:\(document.id):" : "legacy:") + scene.id.uuidString
+    }
+    var hierarchyFocusVisits: [UUID] { hierarchyFocusPreferences.pages[hierarchyFocusPageKey]?.visited ?? [] }
+    var hierarchyFocusInputAllowed: Bool {
+        canApplyReconciledCanvas && nodeResizeDrag == nil && nodeRotationDrag == nil && endpointDrag == nil && linkStart == nil &&
+        groupDraft == nil && cardMergeDraft == nil && cardTagEditor == nil &&
+        openedGroupID == nil && hierarchyFocusReadable && groupReadError == nil
+    }
+    // Transient indexes derive only from original links; there is no second tree/source.
+    private func hierarchyFocusScope(_ root: UUID) throws -> Set<UUID> {
+        let ids = Set(scene.nodes.map(\.id)), links = scene.links.filter { $0.kind == .parentChild }
+        guard ids.count == scene.nodes.count, ids.contains(root) else { throw CanvasDocument.Failure.stale }
+        var parents: [UUID:UUID] = [:]
+        for link in links {
+            guard link.from != link.to, ids.contains(link.from), ids.contains(link.to), parents[link.to] == nil else { throw CanvasDocument.Failure.stale }
+            parents[link.to] = link.from
+        }
+        var checked = Set<UUID>()
+        for node in parents.keys {
+            var path = Set<UUID>(), cursor = node
+            while !checked.contains(cursor) {
+                guard path.insert(cursor).inserted else { throw CanvasDocument.Failure.stale }
+                guard let parent = parents[cursor] else { break }; cursor = parent
+            }
+            checked.formUnion(path)
+        }
+        let children = Dictionary(grouping:links,by:\.from)
+        var included = Set<UUID>(), pending = [root]
+        while let id = pending.popLast() {
+            guard included.insert(id).inserted else { continue }
+            pending.append(contentsOf:children[id,default:[]].map(\.to))
+        }
+        return included
+    }
+    func canFocusHierarchy(_ id: UUID) -> Bool {
+        hierarchyFocusInputAllowed && !groups.contains(where:{ $0.node.id == id }) &&
+        cardTagVisibility.nodeIDs.contains(id) && (try? hierarchyFocusScope(id)) != nil
+    }
+    @discardableResult func focusHierarchy(_ id: UUID, owner: HierarchyFocusOwner) -> Bool {
+        guard owner == hierarchyFocusOwner, canFocusHierarchy(id) else { return false }
+        return setHierarchyFocus(id)
+    }
+    @discardableResult func focusHierarchyParent(owner: HierarchyFocusOwner) -> Bool {
+        guard owner == hierarchyFocusOwner, hierarchyFocusInputAllowed, let root = hierarchyFocusRootID,
+              (try? hierarchyFocusScope(root)) != nil else { return false }
+        let parent = scene.links.first { $0.kind == .parentChild && $0.to == root && !$0.label.hasPrefix(CanvasGroup.linkPrefix) }?.from
+        return setHierarchyFocus(parent)
+    }
+    @discardableResult func leaveHierarchyFocus(owner: HierarchyFocusOwner) -> Bool {
+        guard owner == hierarchyFocusOwner, hierarchyFocusInputAllowed else { return false }
+        return setHierarchyFocus(nil)
+    }
+    private func setHierarchyFocus(_ root: UUID?) -> Bool {
+        do {
+            if let root { _ = try hierarchyFocusScope(root) }
+            // Preserve independent external preference edits instead of overwriting a stale view.
+            guard eraserDefaults.string(forKey:Self.hierarchyFocusKey) == hierarchyFocusRaw else { throw CanvasDocument.Failure.stale }
+            var next = hierarchyFocusPreferences
+            var page = next.pages[hierarchyFocusPageKey] ?? .init()
+            page.rootID = root
+            if let root { page.visited.removeAll { $0 == root }; page.visited.append(root) }
+            next.pages[hierarchyFocusPageKey] = page
+            let bytes = try JSONEncoder().encode(next)
+            guard bytes.count <= 256 * 1024, let text = String(data:bytes,encoding:.utf8) else { throw CanvasDocument.Failure.stale }
+            try eraserDefaults.set(text,forKey:Self.hierarchyFocusKey)
+            guard eraserDefaults.string(forKey:Self.hierarchyFocusKey) == text else { throw CanvasDocument.Failure.stale }
+            hierarchyFocusPreferences = next; hierarchyFocusRaw = text; hierarchyFocusRootID = root
+            inkHistory.setFocusSuspended(root != nil)
+            groupViewGeneration &+= 1
+            clearLinkSelection(); clearPendingLink(); setInkSelection([])
+            if let root { selectedNode = root }
+            hierarchyFocusNotice = ""
+            status = root == nil ? "전체 가지 보기로 돌아왔습니다. 원문과 방문 이력은 유지됩니다." : "선택 카드와 자손만 표시합니다. 숨은 카드·연결·주석·원본 획은 보존됩니다."
+            return true
+        } catch {
+            hierarchyFocusNotice = "초점 보기를 저장하지 못했습니다. 이전 보기와 원본을 유지합니다. " + error.localizedDescription
+            return false
+        }
+    }
+    private func restoreHierarchyFocusPreferences() {
+        hierarchyFocusLoaded = true
+        do {
+            if let object = eraserDefaults.object(forKey:Self.hierarchyFocusKey) {
+                guard let text = object as? String, text.utf8.count <= 256 * 1024,
+                      let bytes = text.data(using:.utf8) else { throw CanvasDocument.Failure.stale }
+                let value = try JSONDecoder().decode(HierarchyFocusPreferences.self,from:bytes)
+                guard value.schema == "ccr.hierarchy-focus-preferences/v1" else { throw CanvasDocument.Failure.unsupported }
+                hierarchyFocusPreferences = value; hierarchyFocusRaw = text
+            }
+            reconcileHierarchyFocus()
+        } catch {
+            hierarchyFocusReadable = false
+            hierarchyFocusNotice = "초점 환경설정을 읽지 못했습니다. 원문과 설정을 보존하고 전체 보기를 표시합니다."
+        }
+    }
+    private func reconcileHierarchyFocus() {
+        guard hierarchyFocusLoaded else { return }
+        if hierarchyFocusContext != hierarchyFocusPageKey {
+            hierarchyFocusContext = hierarchyFocusPageKey
+            hierarchyFocusRootID = hierarchyFocusPreferences.pages[hierarchyFocusPageKey]?.rootID
+            groupViewGeneration &+= 1
+        }
+        if let root = hierarchyFocusRootID,
+           (try? hierarchyFocusScope(root)) == nil || groups.contains(where:{ $0.node.id == root }) {
+            hierarchyFocusRootID = nil; groupViewGeneration &+= 1
+            hierarchyFocusNotice = "초점 카드가 없거나 계층을 확인할 수 없습니다. 원문·방문 이력을 보존하고 전체 보기를 표시합니다."
+        }
+        inkHistory.setFocusSuspended(hierarchyFocusRootID != nil)
+    }
+    // Read-only projection; only the canonical document/scene is ever persisted or sent.
+    private var hierarchyFocusProjection: CanvasScene {
+        guard let root = hierarchyFocusRootID, let ids = try? hierarchyFocusScope(root) else { return scene }
+        var projection = scene
+        projection.nodes.removeAll { !ids.contains($0.id) }
+        projection.links.removeAll { !ids.contains($0.from) || !ids.contains($0.to) }
+        projection.annotations.removeAll { $0.nodeId.map(ids.contains) != true }
+        return projection
+    }
+
     @Published private(set) var cardTagFilter: String?
     @Published private(set) var cardTagInputBusy = false
     private var cardTagEditor: (id:UUID, nodeID:UUID, sceneSHA:String, epoch:UInt64, selection:UInt64)?
 
     var availableCardTags: [String] { CanvasCardTags.available(in:scene) }
     var cardTagVisibility: CanvasScene.Visibility {
-        let tags = CanvasCardTags.visibility(in:scene,filter:cardTagFilter)
-        let group = CanvasGroup.visibility(in:scene,opened:openedGroupID)
+        let projection = hierarchyFocusProjection
+        let tags = CanvasCardTags.visibility(in:projection,filter:cardTagFilter)
+        let group = CanvasGroup.visibility(in:projection,opened:openedGroupID)
         return .init(nodeIDs:tags.nodeIDs.intersection(group.nodeIDs),linkIDs:tags.linkIDs.intersection(group.linkIDs),
                      annotationIDs:tags.annotationIDs.intersection(group.annotationIDs))
     }
@@ -3201,6 +3354,7 @@ final class CanvasStore: ObservableObject {
         }
         restoreDocumentSource()
         if !documentSourcePresent { restoreFileWorkspace() }
+        restoreHierarchyFocusPreferences()
     }
 
     private static func outboxURL() throws -> URL {
@@ -3332,7 +3486,7 @@ final class CanvasStore: ObservableObject {
 
     @discardableResult
     func updateDrawing(_ next: PKDrawing) -> Bool {
-        guard !documentEditingBlocked else { return false }
+        guard !documentEditingBlocked, hierarchyFocusRootID == nil else { return false }
         guard drawing != next else { return true }
         let nativeBytes = next.dataRepresentation()
         guard let authoritative = try? PKDrawing(data: nativeBytes) else {
@@ -3465,6 +3619,7 @@ final class CanvasStore: ObservableObject {
     }
 
     func setInkSelection(_ ids: Set<UUID>) {
+        guard hierarchyFocusRootID == nil || ids.isEmpty else { return }
         let next = ids.intersection(drawing.strokes.map(\.id))
         guard next != inkSelection else { return }
         pendingInkTextEditing?.invalidatePending()
@@ -3566,7 +3721,7 @@ final class CanvasStore: ObservableObject {
     }
 
     private var inkTextEditAllowed: Bool {
-        !documentEditingBlocked && !inkMathInputBusy && sceneReadable && !inkBusy && !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
+        hierarchyFocusRootID == nil && !documentEditingBlocked && !inkMathInputBusy && sceneReadable && !inkBusy && !vaultDirty && !vaultSaving && !vaultLoading && !vaultInputBusy && !vaultBlockEditing &&
             !fileSaveBusy && fileWorkspaceState != .blocked
     }
 

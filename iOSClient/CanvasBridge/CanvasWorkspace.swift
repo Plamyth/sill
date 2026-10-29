@@ -513,6 +513,7 @@ struct CanvasWorkspace: View {
             Button("화살표") { store.beginLink() }.disabled(store.selectedNode == nil)
             Button("하위 요소 연결") { store.beginChildLink() }.disabled(store.selectedNode == nil)
             foldButton
+            CanvasHierarchyFocusMenu(store:store)
             CanvasCardMergeMenu(store:store)
             CanvasGroupMenu(store:store)
             CanvasCardTagsMenu(store:store)
@@ -1895,9 +1896,12 @@ struct CanvasWorkspace: View {
         return GeometryReader { _ in
             ZStack(alignment:.topLeading) {
                 Color(uiColor:CanvasPalette.background)
-                PencilCanvas(store:store,isVisible:diagramMode != .diagram)
-                if store.scene.drawingBase64.isEmpty {
-                    ForEach(store.scene.strokes) { stroke in strokeView(stroke) }
+                if store.hierarchyFocusRootID == nil {
+                    PencilCanvas(store:store,isVisible:diagramMode != .diagram)
+                        .id("ink-focus:\(store.hierarchyFocusOwner.view)")
+                    if store.scene.drawingBase64.isEmpty {
+                        ForEach(store.scene.strokes) { stroke in strokeView(stroke) }
+                    }
                 }
                 ForEach(displayed.links.filter { visible.linkIDs.contains($0.id) }) { link in linkView(link,in:displayed) }
                 ForEach(displayed.nodes.filter { visible.nodeIDs.contains($0.id) }) { node in
@@ -1939,7 +1943,13 @@ struct CanvasWorkspace: View {
         }
         .clipped()
         .overlay(alignment:.topLeading) {
-            if let id = store.openedGroupID, let group = store.groups.first(where:{ $0.node.id == id }) {
+            if let id = store.hierarchyFocusRootID, let node = store.scene.nodes.first(where:{ $0.id == id }) {
+                CanvasHierarchyFocusMenu(store:store)
+                    .padding(8).background(.regularMaterial)
+                    .accessibilityLabel("가지 초점 · \(node.text.isEmpty ? "이름 없는 카드" : node.text) · 원본 획은 전체 보기에서 표시")
+            } else if !store.hierarchyFocusNotice.isEmpty {
+                Text(store.hierarchyFocusNotice).padding(8).background(.regularMaterial)
+            } else if let id = store.openedGroupID, let group = store.groups.first(where:{ $0.node.id == id }) {
                 HStack {
                     Button("전체 지도로 돌아가기") { store.leaveGroup(owner:groupOwner) }
                     Text("하위 지도 · \(group.node.text) · 같은 원본 획 바탕").font(.caption)
@@ -1953,15 +1963,17 @@ struct CanvasWorkspace: View {
 
     private var diagram: some View {
         let owner = try? store.document.pageSnapshot()
+        let focusOwner = store.hierarchyFocusOwner
         return VStack(alignment:.leading,spacing:8) {
             Text("같은 구조 데이터의 자동 배치 · 원본 획 위치는 유지됩니다.").font(.caption)
             Text("자유그림의 자동 의미 해석은 미지원입니다. 요소를 누르면 기존 편집기로 연결됩니다.")
                 .font(.caption).foregroundStyle(.secondary)
             CanvasPeleView(scene:store.cardTagDisplayScene,selectedNode:store.selectedNode,onSelect:{ id in
-                guard !store.documentEditingBlocked, owner.map(store.document.accepts) == true else { return }
+                guard !store.documentEditingBlocked, owner.map(store.document.accepts) == true,
+                      focusOwner == store.hierarchyFocusOwner else { return }
                 store.selectedNode = id
                 inspectorOpen = true
-            },onError:{ if owner.map(store.document.accepts) == true { store.status = $0 } })
+            },onError:{ if owner.map(store.document.accepts) == true && focusOwner == store.hierarchyFocusOwner { store.status = $0 } })
             .id((store.isDocumentSource ? "\(store.document.id):\(store.document.pageEpoch)" : store.scene.id.uuidString) + ":group:\(store.groupCommandOwner.view)")
         }.padding(8)
     }
@@ -2064,7 +2076,10 @@ struct CanvasWorkspace: View {
                 Text("하위 요소 \(children.count)개").accessibilityIdentifier("canvasHierarchyChildren")
                 foldButton
                 ForEach(children) { child in
-                    Text(child.text.isEmpty ? "이름 없는 요소" : child.text).font(.caption)
+                    let owner = store.hierarchyFocusOwner
+                    Button("\(child.text.isEmpty ? "이름 없는 요소" : child.text) · 이 가지로 초점") {
+                        _ = store.focusHierarchy(child.id,owner:owner)
+                    }.font(.caption).frame(minHeight:44).disabled(!store.canFocusHierarchy(child.id))
                 }
                 if let reference = node.vaultNote {
                     Text(reference.cacheTruncated == true ? "원본 일부 미리보기 · \(reference.path)" :
@@ -2516,6 +2531,26 @@ private struct CanvasNodeResizeHandle: View {
                 store.adjustNodeSize(node,sceneID:sceneID,by:.init(x:0,y:-20))
             }
             .accessibilityIdentifier("canvasNodeResize-\(node.id.uuidString)")
+    }
+}
+
+private struct CanvasHierarchyFocusMenu: View {
+    @ObservedObject var store: CanvasStore
+    var body: some View {
+        let owner = store.hierarchyFocusOwner
+        let name = store.hierarchyFocusRootID.flatMap { root in store.scene.nodes.first { $0.id == root }?.text }
+        Menu(name.map { "가지 초점 · " + ($0.isEmpty ? "이름 없는 카드" : $0) } ?? "가지 초점 · 전체") {
+            if let id = store.selectedNode {
+                Button("선택 카드와 자손만 보기") { _ = store.focusHierarchy(id,owner:owner) }
+                    .disabled(!store.canFocusHierarchy(id))
+            }
+            Button("상위 가지로 초점") { _ = store.focusHierarchyParent(owner:owner) }
+                .disabled(store.hierarchyFocusRootID == nil || !store.hierarchyFocusInputAllowed)
+            Button("전체 가지 보기로 돌아가기") { _ = store.leaveHierarchyFocus(owner:owner) }
+                .disabled((store.hierarchyFocusRootID == nil && store.hierarchyFocusNotice.isEmpty) || !store.hierarchyFocusInputAllowed)
+            Text("보기 범위만 바뀝니다. 숨은 원문·연결·주석·원본 획은 저장과 AI 전달에 그대로 포함됩니다.")
+        }
+        .accessibilityIdentifier("canvasHierarchyFocusMenu")
     }
 }
 
