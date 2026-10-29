@@ -67,6 +67,37 @@ import PencilKit
         }
         let s = try makeStore()
         s.mode = .select;s.selectedNode = a
+        if CommandLine.arguments.contains("--view-only") {
+            let original = try s.document.bytes()
+            for kind in ["focus","outline"] {
+                let gate = SearchGate(), viewport = s.viewport
+                let task = Task { @MainActor in await s.searchHandwriting("한글",search:gate.search) }
+                await gate.wait()
+                if kind == "focus" {
+                    check(s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"pending search can enter branch focus without editing ink")
+                    check(s.leaveHierarchyFocus(owner:s.hierarchyFocusOwner),"focus ABA returns to the same full view and geometry")
+                } else {
+                    check(s.setHierarchyOutlineVisible(true,owner:s.hierarchyFocusOwner),"pending search can enter outline without copying ink")
+                    check(s.setHierarchyOutlineVisible(false,owner:s.hierarchyFocusOwner),"outline ABA returns to the same full view and geometry")
+                }
+                gate.finish([[first.id]]);await task.value
+                check(s.viewport==viewport && s.inkSelection.isEmpty && s.mode == .select,"obsolete \(kind) callback cannot move or select hidden ink after ABA")
+            }
+            check(s.focusHierarchy(a,owner:s.hierarchyFocusOwner),"focus refusal fixture uses an actual current view")
+            var invoked = false
+            await s.searchHandwriting("한글") { _,_ in invoked=true;return [[first.id]] }
+            check(!invoked && s.inkSelection.isEmpty,"focused hidden ink does not enter native search")
+            check(s.leaveHierarchyFocus(owner:s.hierarchyFocusOwner),"full view can return after refused search")
+            check(s.setHierarchyOutlineVisible(true,owner:s.hierarchyFocusOwner),"outline refusal fixture uses an actual current view")
+            await s.searchHandwriting("한글") { _,_ in invoked=true;return [[first.id]] }
+            check(!invoked && s.inkSelection.isEmpty,"outline hidden ink does not enter native search")
+            check(s.setHierarchyOutlineVisible(false,owner:s.hierarchyFocusOwner),"map view can return after refused search")
+            await s.searchHandwriting("한글") { _,_ in [[first.id]] }
+            check(s.viewport != CanvasViewport() && s.inkSelection==Set([first.id]),"current full map still reveals native search result")
+            check(try s.document.bytes()==original,"view guards and successful navigation preserve canonical source")
+            try JSONSerialization.data(withJSONObject:["count":checks.count,"checks":checks,"viewOnly":true,"GUI":false],options:[.prettyPrinted,.sortedKeys]).write(to:out.appendingPathComponent("observations.json"))
+            return
+        }
         check(s.rotateNode(s.scene.nodes.first{$0.id==a}!,sceneID:s.scene.id,to:30),"보존 대조용 기존 graph Undo 생성")
         s.saveNow()
         let counter = UndoCounter(), manager = s.inkHistory.activate(s.nativeHistoryOwner)

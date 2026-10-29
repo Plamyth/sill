@@ -2,7 +2,7 @@
 """현재 페이지 필기 검색 이동의 native Store/geometry와 최종 SDK를 검사한다."""
 import argparse,hashlib,json,os,plistlib,subprocess,uuid
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--sdk-check',action='store_true');p.add_argument('--sdk-only',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--sdk-check',action='store_true');p.add_argument('--sdk-only',action='store_true');p.add_argument('--view-only',action='store_true');a=p.parse_args()
 if a.sdk_only:a.sdk_check=True
 root=Path(__file__).resolve().parents[3];canvas=root/'iOSClient/CanvasBridge'
 archive=Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))['path']).resolve()
@@ -26,6 +26,7 @@ env=dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer',C
 sdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],env=env,text=True).strip()
 b=['xcrun','swiftc','-D','DEBUG','-sdk',sdk,'-target','arm64e-apple-macos27.0','-swift-version','5','-parse-as-library','-whole-module-optimization','-module-cache-path',out/'modules']
 commands=[('protocol',b+['-emit-module','-emit-object','-module-name','StreamProtocol',proto,'-emit-module-path',out/'StreamProtocol.swiftmodule','-o',out/'StreamProtocol.o']),('compile',b+['-I',out,*sources,reader,out/'StreamProtocol.o','-Xlinker','-sectcreate','-Xlinker','__TEXT','-Xlinker','__info_plist','-Xlinker',out/'Info.plist','-o',out/'check']),('native-search-navigation',[out/'check',out,'--ccr-test-runtime',identity])]
+if a.view_only:commands[-1][1].append('--view-only')
 if a.sdk_only:commands=[('project-plist',['plutil','-lint',root/'iOSClient/Sill.xcodeproj/project.pbxproj'])]
 if a.sdk_check:
  if not a.sdk_only:commands.append(('project-plist',['plutil','-lint',root/'iOSClient/Sill.xcodeproj/project.pbxproj']))

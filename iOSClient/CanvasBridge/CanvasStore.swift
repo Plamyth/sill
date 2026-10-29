@@ -4189,7 +4189,7 @@ final class CanvasStore: ObservableObject {
         guard !query.isEmpty else { status = "찾을 글자를 입력하세요."; return }
         let source = drawing
         guard !source.strokes.isEmpty else { status = "검색할 획이 없습니다."; return }
-        guard !documentEditingBlocked, !inkBusy else { return }
+        guard !documentEditingBlocked, !inkBusy, hierarchyFocusRootID == nil, !hierarchyOutlineVisible else { return }
         guard let surface = handwritingSearchSurface, openedGroupID == nil else {
             status = "전체 원본 그림이 보이는 화면에서 검색하세요."; return
         }
@@ -4197,6 +4197,7 @@ final class CanvasStore: ObservableObject {
         handwritingRequest = request
         handwritingSearchRequest = request
         let owner = try? document.pageSnapshot()
+        let viewEpoch = groupCommandOwner.view
         defer {
             if handwritingRequest == request { handwritingRequest = nil }
             if handwritingSearchRequest == request { handwritingSearchRequest = nil }
@@ -4204,7 +4205,8 @@ final class CanvasStore: ObservableObject {
         do {
             let matches = try await search(source, query)
             guard !Task.isCancelled, owner.map(document.accepts) == true, handwritingRequest == request,
-                  !documentEditingBlocked, !inkBusy, handwritingSearchSurface == surface, openedGroupID == nil else { return }
+                  !documentEditingBlocked, !inkBusy, handwritingSearchSurface == surface, openedGroupID == nil,
+                  hierarchyFocusRootID == nil, !hierarchyOutlineVisible, groupCommandOwner.view == viewEpoch else { return }
             let validIDs = Set(source.strokes.map(\.id))
             let validMatches = matches.map { $0.intersection(validIDs) }.filter { !$0.isEmpty }
             guard let first = validMatches.first else {
@@ -4221,7 +4223,8 @@ final class CanvasStore: ObservableObject {
             viewport = next
             status = "손글씨 검색 결과 \(validMatches.count)곳을 선택하고 첫 결과 위치를 표시했습니다."
         } catch {
-            guard !Task.isCancelled, owner.map(document.accepts) == true, handwritingRequest == request else { return }
+            guard !Task.isCancelled, owner.map(document.accepts) == true, handwritingRequest == request,
+                  hierarchyFocusRootID == nil, !hierarchyOutlineVisible, groupCommandOwner.view == viewEpoch else { return }
             status = "손글씨 검색을 마치지 못했습니다. 원본과 보기를 유지했습니다."
         }
     }

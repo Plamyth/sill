@@ -529,7 +529,7 @@ struct CanvasWorkspace: View {
             Button("메모") { store.addNode(.note) }
             Button("손글씨 찾기",systemImage:"magnifyingglass") {
                 store.cancelHandwritingSearch(); handwritingSearchOpen = true
-            }
+            }.disabled(store.hierarchyFocusRootID != nil || store.hierarchyOutlineVisible)
             Button("글자 인식") { Task { await store.proposeHandwriting() } }
             Button("선택한 글자 인식") { Task { await store.proposeHandwriting(selectedOnly:true) } }
                 .disabled(store.inkSelection.isEmpty)
@@ -1987,6 +1987,7 @@ struct CanvasWorkspace: View {
 
     private func handwritingSearchSurface(in size: CGSize) -> CGSize? {
         guard scenePhase == .active, diagramMode != .diagram,
+              store.hierarchyFocusRootID == nil, !store.hierarchyOutlineVisible,
               !otherDocumentUIBusy else { return nil }
         return CGSize(width:diagramMode == .split ? max(0,(size.width - 1) / 2) : size.width,height:size.height)
     }
