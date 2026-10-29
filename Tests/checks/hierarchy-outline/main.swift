@@ -49,6 +49,19 @@ import PencilKit
         let g=grouped.groupID
         try CanvasLocalFile.write(CanvasFileWorkspace.bytes(original),to:sceneURL)
         let s=store();s.selectedNode=a
+        // The combined paper-vs-fold Undo guard must retain the stronger paper input barrier.
+        s.applyPagePaper(.grid)
+        check(try CanvasPagePaper.pattern(in:s.scene) == .grid && s.canUndoGraph,"combined source preserves paper Undo in original pen mode")
+        let paperBytes=try s.document.bytes(), toolOwner=UUID()
+        s.inkHistory.setUsingTool(true,owner:toolOwner);s.undoGraphEdit()
+        check(try !s.canUndoGraph && s.document.bytes()==paperBytes,"active tool refuses paper Undo after outline guard composition")
+        s.inkHistory.setUsingTool(false,owner:toolOwner);s.undoGraphEdit()
+        check(try CanvasPagePaper.pattern(in:s.scene) == .plain && s.canRedoGraph,"paper Undo restores original annotation scope")
+        let plainBytes=try s.document.bytes()
+        s.inkHistory.setUsingTool(true,owner:toolOwner);s.redoGraphEdit()
+        check(try !s.canRedoGraph && s.document.bytes()==plainBytes,"active tool also refuses paper Redo")
+        s.inkHistory.setUsingTool(false,owner:toolOwner);s.redoGraphEdit();s.undoGraphEdit()
+        check(try CanvasPagePaper.pattern(in:s.scene) == .plain && s.scene.annotations==original.annotations,"paper redo and undo preserve every original user annotation")
         let baseline=try s.document.bytes(),cache=try CanvasLocalFile.read(sceneURL),initialOwner=s.hierarchyFocusOwner
         check(s.mode == .pen,"fixture starts in original drawing mode")
         check(s.setHierarchyOutlineVisible(true,owner:initialOwner),"map to outline uses local view setting")
@@ -61,6 +74,10 @@ import PencilKit
         check(s.selectHierarchyOutlineRow(b,owner:s.hierarchyFocusOwner) && s.selectedNode==b,"outline selection is same canonical card ID")
         check(s.toggleHierarchyOutlineRow(a,owner:s.hierarchyFocusOwner),"outline ordinary fold uses shared persisted transaction")
         check(!s.hierarchyOutlineRows.contains{$0.id==b} && s.scene.nodes.first{$0.id==a}?.isCollapsed==true,"same isCollapsed hides outline descendants")
+        let foldedBytes=try s.document.bytes()
+        s.inkHistory.setUsingTool(true,owner:toolOwner);s.undoGraphEdit()
+        check(try !s.canUndoGraph && s.document.bytes()==foldedBytes,"new outline fold path cannot bypass active native input")
+        s.inkHistory.setUsingTool(false,owner:toolOwner)
         check(s.setHierarchyOutlineVisible(false,owner:s.hierarchyFocusOwner),"outline returns to existing map")
         check(!s.cardTagVisibility.nodeIDs.contains(b) && s.canUndoGraph,"map shares fold and Undo even in preserved pen mode")
         s.undoGraphEdit();check(s.cardTagVisibility.nodeIDs.contains(c) && s.canRedoGraph,"map Undo restores same whole branch")

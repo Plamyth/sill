@@ -9,7 +9,7 @@ archive=Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/stor
 assert a.output.resolve().is_relative_to(archive)
 out=a.output.resolve()/('outline-'+str(uuid.uuid4()));out.mkdir(parents=True)
 for n in ['home','tmp','modules']:(out/n).mkdir()
-names=['CanvasModel','CanvasDocument','CanvasDocumentFiles','CanvasDocumentRelay','VaultPDFExcerpt','VaultPDFViewState','CanvasCardTags','CanvasStore','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasCardMerge','CanvasRelay','ControlRoomProjection']
+names=['CanvasModel','CanvasDocument','CanvasDocumentFiles','CanvasDocumentRelay','VaultPDFExcerpt','VaultPDFViewState','CanvasCardTags','CanvasStore','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasCardMerge','CanvasRelay','ControlRoomProjection','VaultEPUB','VaultEPUBExcerpt','VaultEPUBReader']
 sources=[canvas/(n+'.swift') for n in names]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',Path(__file__).with_name('main.swift')]
 proto=root/'Sources/StreamProtocol/TestDestinations.swift';reader=out/'PDFNativeReader.swift';reader.write_text((canvas/'VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])
 iosSources=sorted(canvas.glob('*.swift'))+[root/'iOSClient'/(n+'.swift') for n in ['IPadAudioSession','IPadAudioLeaseState','IPadAudioLeaseCoordinator']]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift']
