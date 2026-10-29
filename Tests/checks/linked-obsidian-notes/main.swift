@@ -109,6 +109,26 @@ final class NoteProtocol: URLProtocol {
             print("RESULT \(checks) assertions, \(failures) failures")
             exit(failures == 0 ? 0 : 1)
         }
+        if CommandLine.arguments.contains("--pdf-view-state-identity") {
+            do { try checkPDFViewStateIdentity(check) } catch { check(false,"PDF 보기 설정 경로 검사 중 오류: \(error)") }
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--pdf-view-state") {
+            do { try await checkPDFViewState(check) } catch { check(false,"PDF 보기 설정 검사 중 오류: \(error)") }
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--pdf-view-state-files") {
+            do { try await checkPDFViewStateFiles(check) } catch { check(false,"PDF 보기 설정 파일 검사 중 오류: \(error)") }
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--pdf-view-state-reopen") {
+            do { try checkPDFViewStateReopen(check) } catch { check(false,"PDF 보기 설정 재열기 검사 중 오류: \(error)") }
+            print("RESULT \(checks) assertions, \(failures) failures")
+            exit(failures == 0 ? 0 : 1)
+        }
         if CommandLine.arguments.contains("--pdf-outline") {
             try checkPDFOutline(check)
             print("RESULT \(checks) assertions, \(failures) failures")
