@@ -649,14 +649,14 @@ class ObsidianVault {
     return bytes;
   }
 
-  #documentMarkdown(id,manifest,manifestSHA,document) {
+  #documentMarkdown(id,manifest,manifestSHA,document,includeTags = true) {
     const prefix = `Assets/${id}/${manifest.generation}`;
     let text = `---\nccr_document_id: ${id}\nccr_document_revision: ${document.revision}\nccr_document_generation: ${manifest.generation}\nccr_document_sha256: ${manifest.documentSHA}\nccr_document_manifest_sha256: ${manifestSHA}\n---\n\n# iPad 문서 ${id.slice(0,8)}\n\n문서 전체 원본: [[${prefix}/document.json]]\n`;
     let projected = 0;
     for (let index=0;index<document.pages.length;index++) {
       const page=document.pages[index],pageID=page.id.toLowerCase();
       text += `\n## 페이지 ${index+1} · ${page.id}\n\n![[${prefix}/pages/${pageID}/preview.png]]\n\n원본 획: [[${prefix}/pages/${pageID}/drawing.pkdrawing]]\n`;
-      const projection = canvasStructure(page) + canvasDiagramMarkdown(page);
+      const projection = canvasStructure(page,includeTags) + canvasDiagramMarkdown(page);
       if (projected+Buffer.byteLength(projection) <= 64*1024) { text += projection;projected += Buffer.byteLength(projection); }
       else text += '\n이 페이지의 표시 글자는 생략됐습니다. 전체 원본은 문서 JSON에 있습니다.\n';
     }
@@ -683,7 +683,7 @@ class ObsidianVault {
       if(total>documentWire.PREVIEW_BYTES||!validPNG(preview)||!drawing.equals(documentWire.base64(page.drawingBase64,documentWire.SCENE_BYTES)))throw new VaultError('문서 전체 자산을 재열 수 없습니다.',409);
       assets.push({id:asset.id,drawingSha256:asset.drawingSHA,previewSha256:asset.previewSHA,...(includeAssets?{previewPNGBase64:preview.toString('base64')}:{})});
     }
-    if(managed!==this.#documentMarkdown(id,manifest,header[5],document))throw new VaultError('문서 관리 Markdown이 바뀌었습니다.',409);
+    if(![true,false].some(includeTags=>managed===this.#documentMarkdown(id,manifest,header[5],document,includeTags)))throw new VaultError('문서 관리 Markdown이 바뀌었습니다.',409);
     this.#checkDocumentLocation(location);
     for(const [file,before] of identities){const after=fs.lstatSync(file);if(after.isSymbolicLink()||before.dev!==after.dev||before.ino!==after.ino||before.isFile()&&(before.size!==after.size||before.mtimeMs!==after.mtimeMs||before.ctimeMs!==after.ctimeMs))throw new VaultError('문서 전체 자산의 최종 경로 또는 바이트가 바뀌었습니다.',409);}
     return {schema:'ccr.vault-document/v1',id,path:note.path,revision:document.revision,activePageID:document.activePageID,
@@ -746,6 +746,13 @@ class ObsidianVault {
     this.#guard(relative);let current=null,prior=null;
     try {current=this.#rawNote(relative,true);prior=this.#documentSnapshot(id,current,false);}catch(error){if(error.status!==404)throw error;}
     if((body.base===null)!==(!current)||current&&['noteSha256','documentSha256','manifestSha256'].some(k=>body.base[k]!==prior[k]))throw new VaultError('문서 전체가 바뀌었습니다.',409,{code:'document_stale',publicationAttempted:false,reconciliationRequired:false});
+    if(current) {
+      const previous=documentWire.decodeDocument(this.#documentAsset(path.join(this.root,'CCR Documents/Assets',id,prior.generation,'document.json'),documentWire.DOC_BYTES,prior.documentSha256));
+      const pages=new Map(input.document.pages.map(page=>[page.id.toLowerCase(),page]));
+      if(previous.pages.some(page=>!pages.has(page.id.toLowerCase())))throw new VaultError('기존 페이지를 빠뜨린 문서는 저장할 수 없습니다.',409,{code:'document_page_loss',publicationAttempted:false,reconciliationRequired:false});
+      if(input.document.revision<previous.revision||body.documentSha256!==prior.documentSha256&&input.document.revision<=previous.revision)throw new VaultError('문서 revision이 이전 상태입니다.',409,{code:'document_stale',publicationAttempted:false,reconciliationRequired:false});
+      if(previous.pages.some(page=>page.schemaVersion===3&&pages.get(page.id.toLowerCase()).schemaVersion!==3))throw new VaultError('문서 페이지 형식을 이전 버전으로 낮출 수 없습니다.',409,{code:'document_schema_downgrade',publicationAttempted:false,reconciliationRequired:false});
+    }
     let memo=current?canvasNoteParts(current.text).memo:null,legacy=null;
     if(!current) {
       const legacyRelative=`CCR Canvas/${id}.md`;

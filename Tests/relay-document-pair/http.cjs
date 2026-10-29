@@ -58,7 +58,7 @@ async function run(){
  checks.push('409 ACK 유실→active=proposal여도GET barrier→고정후보→명시useDisplaced→재열기/멱등/정상쓰기');
  // Maximal valid wire uses all128 pages,16MiB JSON,32MiB PNGs and worst base64 padding.
  const big=document();big.pages=Array.from({length:128},page);big.activePageID=big.pages[0].id;
- const seed=await request('PUT','/vault/document?id='+big.id,body(big));
+ const seed=await request('PUT','/vault/document?id='+big.id,body(big));big.revision++;
  let remaining=w.DOC_BYTES-Buffer.byteLength(JSON.stringify(big));
  for(const p of big.pages){const add=Math.min(remaining,w.SCENE_BYTES-Buffer.byteLength(JSON.stringify(p)));p.nodes[0].text+='x'.repeat(add);remaining-=add;if(!remaining)break;}
  assert.equal(remaining,0);assert.equal(Buffer.byteLength(JSON.stringify(big)),w.DOC_BYTES);

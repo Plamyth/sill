@@ -9,7 +9,8 @@ def gone(pid):
 report={'schema':'ccr.document-source-http-checks/v1','host':socket.gethostname(),'inputs':manifest,'sourceBefore':hashes(),'passed':False,'cleanupVerified':False};lease=None
 try:
  assert report['sourceBefore']=={x['path']:x['sha256'] for x in manifest['files']}
- for mode in ['documents','regression']:
+ if manifest.get('verificationScope')=='document-delta':report['regression']={'executed':False,'reason':'문서 경계만 변경되어 기존 82ad9e7142fd의 전체 회귀와 분리하고 문서 파일/HTTP 경계를 검사한다. 이전 통과를 새 전체 회귀로 표시하지 않는다.'}
+ for mode in (['documents'] if manifest.get('verificationScope')=='document-delta' else ['documents','regression']):
   cmd=['python3','CanvasRelay/run-checks.py','--output',str(out/mode)]+(['--documents'] if mode=='documents' else [])
   p=subprocess.Popen(cmd,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
   try:stdout,stderr=p.communicate(timeout=180)

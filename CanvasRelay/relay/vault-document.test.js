@@ -66,13 +66,40 @@ test('발행 뒤 정본 디렉터리 교체는 false success 대신 vaultroot의
  assert(fs.existsSync(path.join(f.root,'preserved-directory','Assets',f.d.id,first.generation,'document.json')));assert.equal(fs.readFileSync(file,'utf8'),'외부 정본');
 });
 
-test('missing/symlink/FIFO/변경된 자산은 전체 읽기를 거부하고 세대 원본을 덮지 않는다',t=>{
+test('missing/symlink/변경된 자산은 전체 읽기를 거부하고 세대 원본을 덮지 않는다',t=>{
  const f=fixture(t),first=f.vault.saveDocument(f.d.id,body(f.d)),asset=path.join(f.root,'CCR Documents/Assets',f.d.id,first.generation,'pages',f.d.pages[1].id,'preview.png'),raw=fs.readFileSync(asset);
  fs.renameSync(asset,asset+'.original');assert.throws(()=>f.vault.document(f.d.id));fs.symlinkSync(asset+'.original',asset);assert.throws(()=>f.vault.document(f.d.id));fs.unlinkSync(asset);fs.writeFileSync(asset,Buffer.from('not png'));assert.throws(()=>f.vault.document(f.d.id));assert(fs.readFileSync(asset+'.original').equals(raw));
+});
+
+test('바뀐 expected와 다른 문서의 recovery ID를 거부하고 과거 resolved ID보다 새 held를 우선한다',t=>{
+ const f=fixture(t),{state,file}=fault(f),request={recoveryID:state.recoveryID,expected:state.expected,decision:'keepCurrent'};
+ assert.throws(()=>f.vault.resolveDocumentConflict(f.d.id,{...request,expected:{...state.expected,bundlesSha256:'0'.repeat(64)}}),{code:'note_reconciliation_required'});
+ assert.throws(()=>f.vault.documentConflict(f.d.id,{recoveryID:uuid(),material:'active',sha256:state.expected.activeSha256}),{code:'note_reconciliation_required'});
+ const other=document();f.vault.saveDocument(other.id,body(other));assert.throws(()=>f.vault.resolveDocumentConflict(other.id,request),{status:409});
+ const resolved=f.vault.resolveDocumentConflict(f.d.id,request),current=f.vault.document(f.d.id),original=fs.readFileSync(file);f.d.revision++;
+ atExchange(file,()=>child.execFileSync(process.execPath,[path.join(__dirname,'test-input/vault-external-writer.cjs'),file,Buffer.from(original+'\r\n새 독립 외부 메모\r\n').toString('base64'),'in-place']),()=>assert.throws(()=>f.vault.saveDocument(f.d.id,body(f.d,base(current))),{code:'note_reconciliation_required'}));
+ const next=f.vault.documentConflict(f.d.id);assert.notEqual(next.recoveryID,resolved.recoveryID);
+ assert.throws(()=>new ObsidianVault(f.root).resolveDocumentConflict(f.d.id,request),error=>error.code==='note_reconciliation_required'&&error.recoveryID===next.recoveryID);
+ for(const id of [state.recoveryID,next.recoveryID])for(const name of ['base.md','displaced.md','proposal.md'])assert(fs.existsSync(path.join(f.root,'.ccr-save-'+id,name)));
+});
+
+test('태그 예약 namespace와 자유 주석 원문을 문서 전체에 보존하며 관리 MD의 임의 편집은 거부한다',t=>{
+ const f=fixture(t);f.d.pages[1].nodes[0].kind='note';
+ f.d.pages[1].annotations.push({id:uuid(),nodeId:f.d.pages[1].nodes[0].id,author:'ccr.sill.card-tag/v1',text:'#업무'});
+ f.d.pages[1].annotations.push({id:uuid(),nodeId:f.d.pages[1].nodes[0].id,author:'카드 태그',text:'#사람주석 e\u0301\r\n원문'});
+ const input=body(f.d),saved=f.vault.saveDocument(f.d.id,input);assert.equal(new ObsidianVault(f.root).document(f.d.id).documentJSONBase64,input.documentJSONBase64);
+ const file=path.join(f.root,saved.path);fs.writeFileSync(file,fs.readFileSync(file,'utf8').replace('원본 획:','임의 변경:'));assert.throws(()=>f.vault.document(f.d.id),{status:409});
 });
 module.exports={page,document,body,png,base};
 
 test('수리 모델의 nested support 표와 회전 overflow를 보존 거부한다',t=>{
  const f=fixture(t),shapes=[d=>d.pages[1].nodes[0].vaultNote={path:'x.md',sha256:'x',relayAddress:'http://example.invalid',future:1},d=>d.pages[1].penSettings={version:1,color:'white',width:2,future:1},d=>{d.pages[1].strokes=[{id:uuid(),createdAt:0,points:[{x:0,y:0,pressure:1,future:1}]}];},d=>{d.pages[1].nodes[0].frame={x:1.25e308,y:1.25e308,width:5e307,height:5e307};d.pages[1].nodes[0].rotationDegrees=45;}];
  for(const mutate of shapes){const d=structuredClone(f.d);mutate(d);assert.throws(()=>f.vault.saveDocument(d.id,body(d)),{status:400});assert.deepEqual(fs.readdirSync(f.root),[]);}
+});
+
+test('동일문서ID의 선택페이지만 남긴 유효 문서와 schema3 downgrade는 정본을 덮지 않는다',t=>{
+ const f=fixture(t),first=f.vault.saveDocument(f.d.id,body(f.d)),file=path.join(f.root,first.path),raw=fs.readFileSync(file);
+ const selected=structuredClone(f.d);selected.pages=[selected.pages[0]];selected.revision++;assert.throws(()=>f.vault.saveDocument(f.d.id,body(selected,base(first))),{code:'document_page_loss'});
+ const downgraded=structuredClone(f.d);downgraded.revision++;downgraded.pages[1].schemaVersion=2;downgraded.pages[1].nodes.forEach(n=>n.kind='box');assert.throws(()=>f.vault.saveDocument(f.d.id,body(downgraded,base(first))),{code:'document_schema_downgrade'});
+ const sameRevision=structuredClone(f.d);sameRevision.pages[1].nodes[0].text='revision 없이 바뀜';assert.throws(()=>f.vault.saveDocument(f.d.id,body(sameRevision,base(first))),{code:'document_stale'});assert(fs.readFileSync(file).equals(raw));
 });
