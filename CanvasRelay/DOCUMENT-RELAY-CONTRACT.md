@@ -17,3 +17,7 @@ CCR Documents/문서UUID.md가유일한발행지점이다. Assets/문서UUID/gen
 GET /vault/document/conflict?id=UUID는ccr.document-conflict/v1과기존expected5개에bundlesSha256을추가한expected,자료4종의markdownBase64/sha256/validDocument/전체세대메타데이터/history를반환한다. JSON총8MiB로제한한다. 큰후보는같은GET에recoveryID/material(active|base|displaced|proposal)/sha256을추가해하나의전체bundle로읽는다. caller path/text는받지않는다. PUT은기존3필드recoveryID/expected/decision(keepCurrent|useDisplaced)만허용한다.
 
 선택후문서전체와모든자산을새Vault에서재검증하고최종정본SHA·보존자료·독립새충돌을확인한뒤durable resolution을기록한다. 같은ID/같은결정/상태는멱등반환하고새독립held가우선한다. 선택본의자산을재열수없으면명시거부하고모든자료를보존한다. 자동rollback·자동선택·원장삭제는없다. Core 소비는원담당의문서ID/pageID/documentSHA 계약확정전연결하지않는다.
+
+## 수리 모델과의 대조
+
+0fd의DOC-R1/R2/R3 수리후보782978d7bc574080ae72fd9ebd48b5699473f0ea/tree3cb212afd4f4cc05407b4dfb32c403e50c0a5bc9의지원키표를직접대조했다. Node의scene/node/frame/vaultNote/link/anchor/annotation/stroke/point/visibility/segment/style/color/transform/sample/penSettings는같은닫힌키목록을사용하며원문JSON바이트를재직렬화하지않는다. 이모델은독립재검수중이므로SOURCE_CLEAR로확대하지않는다. Apple PKDrawing 해석은서버검증이아니며향후Swift재열기경계로별도검증한다.

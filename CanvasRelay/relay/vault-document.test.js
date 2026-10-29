@@ -71,3 +71,8 @@ test('missing/symlink/FIFO/변경된 자산은 전체 읽기를 거부하고 세
  fs.renameSync(asset,asset+'.original');assert.throws(()=>f.vault.document(f.d.id));fs.symlinkSync(asset+'.original',asset);assert.throws(()=>f.vault.document(f.d.id));fs.unlinkSync(asset);fs.writeFileSync(asset,Buffer.from('not png'));assert.throws(()=>f.vault.document(f.d.id));assert(fs.readFileSync(asset+'.original').equals(raw));
 });
 module.exports={page,document,body,png,base};
+
+test('수리 모델의 nested support 표와 회전 overflow를 보존 거부한다',t=>{
+ const f=fixture(t),shapes=[d=>d.pages[1].nodes[0].vaultNote={path:'x.md',sha256:'x',relayAddress:'http://example.invalid',future:1},d=>d.pages[1].penSettings={version:1,color:'white',width:2,future:1},d=>{d.pages[1].strokes=[{id:uuid(),createdAt:0,points:[{x:0,y:0,pressure:1,future:1}]}];},d=>{d.pages[1].nodes[0].frame={x:1.25e308,y:1.25e308,width:5e307,height:5e307};d.pages[1].nodes[0].rotationDegrees=45;}];
+ for(const mutate of shapes){const d=structuredClone(f.d);mutate(d);assert.throws(()=>f.vault.saveDocument(d.id,body(d)),{status:400});assert.deepEqual(fs.readdirSync(f.root),[]);}
+});

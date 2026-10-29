@@ -229,7 +229,9 @@ test('지정 capability endpoint는 기존 인증으로 정확한 계약을 반�
   assert.equal((await f.call(route,'GET',undefined,false)).status,401);
   const result = await f.call(route);
   assert.equal(result.status,200);
-  assert.deepEqual(result.body,{schema:'ccr.canvas-capabilities/v1',sceneSchemaVersions:[1,2,3],
+  const {document,...legacy}=result.body;
+  assert.equal(document.schema,'ccr.vault-document/v1');assert.equal(document.wholeDocument,true);
+  assert.deepEqual(legacy,{schema:'ccr.canvas-capabilities/v1',sceneSchemaVersions:[1,2,3],
     nodeKinds:['note','box','ellipse','line'],diagramProjection:'ccr.diagram-shapes/v1'});
   assert.deepEqual((await f.call('/delivery/ready')).body,{available:false});
 });
