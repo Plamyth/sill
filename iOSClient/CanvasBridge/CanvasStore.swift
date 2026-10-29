@@ -1893,6 +1893,45 @@ final class CanvasStore: ObservableObject {
     }
 
     @discardableResult
+    func selectVaultReview(_ field: VaultReviewCard.Field, selection: NSRange, session: VaultReviewEditSession) -> Bool {
+        guard vaultReviewEditIsCurrent(session), !vaultSaving, !vaultLoading, !vaultBlocked else { return false }
+        guard let card = try? VaultReviewCard.parse(vaultDraft), card.metadata.cardID == session.cardID,
+              let whole = card.noteSelection(selection,field:field) else {
+            noteSelectionGeneration &+= 1
+            vaultStatus = VaultReviewError.cloze.localizedDescription
+            return false
+        }
+        vaultSelection = whole
+        return true
+    }
+
+    struct VaultReviewClozeSelection {
+        let session: VaultReviewEditSession
+        let selection: NSRange
+        fileprivate let editGeneration: UInt64
+    }
+
+    func captureVaultReviewCloze(_ selection: NSRange, session: VaultReviewEditSession) -> VaultReviewClozeSelection? {
+        guard vaultReviewEditIsCurrent(session), let card = try? VaultReviewCard.parse(vaultDraft),
+              card.metadata.cardID == session.cardID, card.noteSelection(selection,field:.front) == vaultSelection else { return nil }
+        return .init(session:session,selection:selection,editGeneration:noteEditGeneration)
+    }
+
+    @discardableResult
+    func setVaultReviewCloze(removing: Bool, captured: VaultReviewClozeSelection) -> Bool {
+        guard !noteReconciliationHeld, vaultReviewEditIsCurrent(captured.session),
+              noteEditGeneration == captured.editGeneration, !vaultInputBusy,
+              !vaultSaving, !vaultLoading, !vaultBlocked else { vaultStatus = VaultReviewError.changed.localizedDescription; return false }
+        do {
+            guard let card = try VaultReviewCard.parse(vaultDraft), card.metadata.cardID == captured.session.cardID,
+                  card.noteSelection(captured.selection,field:.front) == vaultSelection else { throw VaultReviewError.changed }
+            vaultDraft = try card.settingCloze(removing:removing,selection:captured.selection)
+            vaultStatus = removing ? "빈칸 표식을 초안에서 해제했습니다. 원문 저장으로 확정하세요." : "선택 글자를 빈칸 초안으로 지정했습니다. 원문 저장으로 확정하세요."
+            return true
+        } catch { vaultStatus = error.localizedDescription; return false }
+    }
+
+    @discardableResult
     func pauseVaultNoteEditing() -> Bool {
         guard !vaultBlockEditing, !vaultSaving, !vaultLoading, !vaultInputBusy,
               vaultInputSessionID != nil, persistNoteDraft() else { return false }
@@ -1906,8 +1945,9 @@ final class CanvasStore: ObservableObject {
     }
 
     var vaultReviewCanBegin: Bool {
-        vaultCanAttach && noteRecoveryReadable && !noteRecoveryWriteFailed &&
-        (try? VaultReviewCard.parse(vaultDraft))?.ready == true
+        guard vaultCanAttach, noteRecoveryReadable, !noteRecoveryWriteFailed,
+              let card = try? VaultReviewCard.parse(vaultDraft), card.ready else { return false }
+        return (try? card.reviewQuestion(revealed:false)) != nil
     }
 
     var vaultReviewMessage: String {
@@ -1915,6 +1955,7 @@ final class CanvasStore: ObservableObject {
             guard let card = try VaultReviewCard.parse(vaultDraft) else {
                 return "복습 카드를 추가하면 질문과 답을 나누어 작성할 수 있습니다."
             }
+            _ = try card.reviewQuestion(revealed:false)
             return card.ready ? "저장된 원문으로 앞면과 뒷면을 복습합니다. 평가는 선택한 고정 간격으로 저장합니다." :
                 VaultReviewError.empty.localizedDescription
         } catch { return error.localizedDescription }
@@ -1936,6 +1977,7 @@ final class CanvasStore: ObservableObject {
         do {
             guard let card = try VaultReviewCard.parse(base.text) else { return nil }
             guard card.ready else { throw VaultReviewError.empty }
+            _ = try card.reviewQuestion(revealed:false)
             return VaultReviewSession(id:UUID(),card:card,base:base,inputSessionID:inputSessionID,
                 editGeneration:noteEditGeneration,selection:vaultSelection,selectedNode:selectedNode,
                 selectionGeneration:noteSelectionGeneration)

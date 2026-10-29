@@ -3,21 +3,50 @@
 import argparse,hashlib,json,os,plistlib,shutil,subprocess,uuid
 from pathlib import Path
 root=Path(__file__).resolve().parents[3]
-p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--bookmarks',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);mode=p.add_mutually_exclusive_group();mode.add_argument('--bookmarks',action='store_true');mode.add_argument('--cloze',action='store_true');a=p.parse_args()
 archive=Path(json.loads(subprocess.check_output(['/Users/ambrion/.local/bin/storage-route','path','development-archive','--project','BT_CCR-ipad'],text=True))['path']).resolve()
 assert a.output.resolve().is_relative_to(archive)
 out=a.output.resolve()/('native-'+str(uuid.uuid4()));out.mkdir(parents=True)
 for n in ['home','tmp','modules','vault']: (out/n).mkdir()
 canvas=root/'iOSClient/CanvasBridge'
 names=['CanvasModel','CanvasDocument','CanvasDocumentFiles','CanvasStore','VaultPDFExcerpt','VaultPDFViewState','CanvasCardMerge','CanvasCardTags','CanvasInkTextEditing','CanvasInkShapeProposal','CanvasInkMathProposal','CanvasInkSpacingProposal','CanvasRelay','CanvasDocumentRelay','ControlRoomProjection','VaultEPUB','VaultEPUBExcerpt','VaultEPUBReader']
-main=Path(__file__).with_name('BookmarkChecks.swift' if a.bookmarks else 'main.swift')
+main=root/'Tests/checks/obsidian-review-cards/ClozeChecks.swift' if a.cloze else Path(__file__).with_name('BookmarkChecks.swift' if a.bookmarks else 'main.swift')
 sources=[canvas/(n+'.swift') for n in names]+[root/'iOSClient/TestDestinations/TestDestinationsPolicy.swift',main]
 extra=[]
-if a.bookmarks:
+if a.bookmarks or a.cloze:
  support=out/'PDFCheckSupport.swift';support.write_text(Path(__file__).with_name('main.swift').read_text().split('@main struct PDFProductChecks')[0]);extra.append(support)
+if a.bookmarks:
  legacyBytes=subprocess.check_output(['git','show','cd5e79105904e25438c50a53b845c2d17a2b6b3e:iOSClient/CanvasBridge/VaultPDFViewState.swift'],cwd=root)
  legacy=out/'LegacyPDFViewState.swift';legacy.write_text(legacyBytes.decode().replace('VaultPDFViewState','LegacyPDFViewState'));extra.append(legacy)
  (out/'legacy-input.json').write_text(json.dumps(dict(commit='cd5e79105904e25438c50a53b845c2d17a2b6b3e',path='iOSClient/CanvasBridge/VaultPDFViewState.swift',sha256=hashlib.sha256(legacyBytes).hexdigest(),adaptation='type name only; exact old codec emits legacy Markdown and Codable request'),indent=2))
+if a.cloze:
+ workspace=(canvas/'CanvasWorkspace.swift').read_text()
+ assert 'VaultReviewFields(store:store,session:session,showRawMarkdown:{ vaultRawMarkdown = true })\n                                .id(session.inputSessionID)' in workspace, 'field identity must survive selection changes'
+ fields=workspace.split('private struct VaultReviewFields: View {')[1].split('private struct VaultReviewSheet: View {')[0]
+ def function(signature):
+  start=fields.index(signature);opening=fields.index('{',start);depth=1
+  for index in range(opening+1,len(fields)):
+   depth+=(fields[index]=='{')-(fields[index]=='}')
+   if depth==0:return fields[start:index+1].replace('private ','',1)
+ bindings=out/'ClozeUIBindings.swift'
+ bindings.write_text('''import Foundation
+import SwiftUI
+@propertyWrapper struct ClozeState<Value> {
+ final class Box { var value:Value; init(_ v:Value){value=v} }
+ private let box:Box
+ init(wrappedValue:Value){box=Box(wrappedValue)}
+ var wrappedValue:Value { get{box.value} nonmutating set{box.value=newValue} }
+}
+@MainActor struct ClozeUIBindings {
+ let store:CanvasStore
+ let session:CanvasStore.VaultReviewEditSession
+ let showRawMarkdown:()->Void
+ @ClozeState var frontSelection=NSRange(location:0,length:0)
+ @ClozeState var backSelection=NSRange(location:0,length:0)
+ @ClozeState var frontBusy=false
+ @ClozeState var backBusy=false
+'''+ '\n'.join(function(s) for s in ['    private func inputBusy(', '    private func text(', '    private var questionSelection:', '    private var answerSelection:'])+'\n}\n')
+ extra.append(bindings)
 
 protocol=root/'Sources/StreamProtocol/TestDestinations.swift'
 reader=out/'PDFNativeReader.swift';reader.write_text((canvas/'VaultPDFReader.swift').read_text().split('struct VaultPDFPageControls:')[0])

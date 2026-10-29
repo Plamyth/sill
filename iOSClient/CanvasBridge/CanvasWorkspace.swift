@@ -969,7 +969,7 @@ struct CanvasWorkspace: View {
                                 .id(session)
                         } else if !vaultRawMarkdown, let session = store.vaultReviewEditSession {
                             VaultReviewFields(store:store,session:session,showRawMarkdown:{ vaultRawMarkdown = true })
-                                .id(session)
+                                .id(session.inputSessionID)
                         } else {
                             VaultMarkdownEditor(text:$store.vaultDraft,selection:$store.vaultSelection,
                                 inputBusy:$store.vaultInputBusy,editSession:{ store.vaultInputSessionID })
@@ -2831,15 +2831,38 @@ private struct VaultReviewFields: View {
         })
     }
 
+    private var questionSelection: Binding<NSRange> {
+        Binding(get:{ frontSelection },set:{ value in
+            if store.selectVaultReview(.front,selection:value,session:session) { frontSelection = value }
+        })
+    }
+
+    private var answerSelection: Binding<NSRange> {
+        Binding(get:{ backSelection },set:{ value in
+            if store.selectVaultReview(.back,selection:value,session:session) { backSelection = value }
+        })
+    }
+
     var body: some View {
         VStack(alignment:.leading,spacing:8) {
             Text("질문").font(.headline)
-            VaultMarkdownEditor(text:text(.front),selection:$frontSelection,
+            VaultMarkdownEditor(text:text(.front),selection:questionSelection,
                 identifier:"obsidianReviewQuestion",label:"복습 카드 질문",
                 inputBusy:inputBusy(.front),editSession:{ store.vaultReviewEditIsCurrent(session) ? session.inputSessionID : nil })
                 .frame(minHeight:150)
+            let captured = store.captureVaultReviewCloze(frontSelection,session:session)
+            HStack {
+                Button("선택 글자를 빈칸으로") { if let captured { _ = store.setVaultReviewCloze(removing:false,captured:captured) } }
+                    .accessibilityIdentifier("obsidianClozeAdd")
+                Button("선택 빈칸 해제") { if let captured { _ = store.setVaultReviewCloze(removing:true,captured:captured) } }
+                    .accessibilityIdentifier("obsidianClozeRemove")
+            }.buttonStyle(.bordered).disabled(captured == nil || frontSelection.length == 0 || frontBusy || backBusy)
+            Text("질문에서 글자를 선택해 빈칸으로 지정합니다. 해제하려면 표식 전체 또는 안의 원문 전체를 선택하세요. 저장 전까지 초안이며 원문 편집에서도 수정할 수 있습니다.").font(.caption)
+            if let card = try? VaultReviewCard.parse(store.vaultDraft), (try? card.reviewQuestion(revealed:false)) == nil {
+                Text(VaultReviewError.cloze.localizedDescription).font(.footnote).foregroundStyle(.orange)
+            }
             Text("답").font(.headline)
-            VaultMarkdownEditor(text:text(.back),selection:$backSelection,
+            VaultMarkdownEditor(text:text(.back),selection:answerSelection,
                 identifier:"obsidianReviewAnswer",label:"복습 카드 답",
                 inputBusy:inputBusy(.back),editSession:{ store.vaultReviewEditIsCurrent(session) ? session.inputSessionID : nil })
                 .frame(minHeight:150)
@@ -2875,10 +2898,15 @@ private struct VaultReviewSheet: View {
                 VStack(alignment:.leading,spacing:20) {
                     Text(session.path).font(.caption).textSelection(.enabled)
                     Text(showingBack ? "뒷면 · 답" : "앞면 · 질문").font(.headline)
-                    Text(showingBack ? session.card.back : session.card.front)
+                    Text(showingBack ? session.card.back : (try? session.card.reviewQuestion(revealed:false)) ?? VaultReviewError.cloze.localizedDescription)
                         .font(.body).textSelection(.enabled)
                         .frame(maxWidth:.infinity,alignment:.leading)
                         .accessibilityIdentifier("obsidianReviewContent")
+                    if showingBack && session.card.hasCloze {
+                        Text("빈칸 원문").font(.headline)
+                        Text((try? session.card.reviewQuestion(revealed:true)) ?? VaultReviewError.cloze.localizedDescription)
+                            .textSelection(.enabled).accessibilityIdentifier("obsidianClozeRevealed")
+                    }
                     if let due = displayedDue {
                         Text("다음 복습: \(Date(timeIntervalSince1970:Double(due)).formatted(date:.abbreviated,time:.shortened))")
                             .font(.footnote)

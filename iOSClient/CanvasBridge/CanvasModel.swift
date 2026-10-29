@@ -900,7 +900,7 @@ struct VaultBlockEditResult: Decodable {
 }
 
 enum VaultReviewError: LocalizedError {
-    case malformed, empty, changed, time
+    case malformed, empty, changed, time, cloze
 
     var errorDescription: String? {
         switch self {
@@ -908,6 +908,7 @@ enum VaultReviewError: LocalizedError {
         case .empty: return "질문과 답을 작성하고 저장한 뒤 복습하세요. 빈 내용은 초안으로 보존됩니다."
         case .changed: return "노트·선택·입력 또는 연결이 바뀌었습니다. 최신 원문에서 복습을 다시 여세요."
         case .time: return "평가 시각과 선택한 고정 간격의 기한을 확인할 수 없습니다. 원문을 유지합니다."
+        case .cloze: return "빈칸은 {{c1::원문}}만 지원합니다. 질문의 글자 전체를 선택하세요. 해제할 때는 표식 전체 또는 안의 원문 전체를 선택하세요. 중첩·다른 번호·힌트·코드·손상 표식은 원문 편집에서 확인하며 자동으로 고치지 않습니다."
         }
     }
 }
@@ -1058,6 +1059,81 @@ struct VaultReviewCard {
         return raw
     }
 
+    private struct Cloze {
+        let range: NSRange
+        let content: NSRange
+    }
+
+    private func clozes() throws -> [Cloze] {
+        let text = self.text(for:.front), ns = text as NSString
+        if text.contains("{{") || text.contains("}}") {
+            guard !text.contains("`"), !text.contains("~~~"), !text.contains("<!--") else { throw VaultReviewError.cloze }
+        }
+        var tokens = [Cloze](), cursor = 0
+        while cursor < ns.length {
+            let remaining = NSRange(location:cursor,length:ns.length - cursor)
+            let open = ns.range(of:"{{",options:.literal,range:remaining)
+            let close = ns.range(of:"}}",options:.literal,range:remaining)
+            if open.location == NSNotFound {
+                guard close.location == NSNotFound else { throw VaultReviewError.cloze }
+                break
+            }
+            guard close.location != NSNotFound, close.location > open.location,
+                  ns.substring(with:NSRange(location:open.location,length:min(6,ns.length - open.location))) == "{{c1::",
+                  open.location == 0 || ns.substring(with:NSRange(location:open.location - 1,length:1)) != "\\" else { throw VaultReviewError.cloze }
+            let content = NSRange(location:open.location + 6,length:close.location - open.location - 6)
+            guard content.length > 0 else { throw VaultReviewError.cloze }
+            let value = ns.substring(with:content)
+            guard !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+                  !value.contains("{"), !value.contains("}"), !value.contains("::"),
+                  !value.contains("\n"), !value.contains("\r") else { throw VaultReviewError.cloze }
+            let range = NSRange(location:open.location,length:NSMaxRange(close) - open.location)
+            tokens.append(Cloze(range:range,content:content)); cursor = NSMaxRange(range)
+        }
+        return tokens
+    }
+
+    var hasCloze: Bool { (try? clozes().isEmpty) == false }
+
+    func reviewQuestion(revealed: Bool) throws -> String {
+        let tokens = try clozes(), raw = text(for:.front) as NSString
+        let result = NSMutableString(string:text(for:.front))
+        for token in tokens.reversed() {
+            result.replaceCharacters(in:token.range,with:revealed ? raw.substring(with:token.content) : "[빈칸]")
+        }
+        return result as String
+    }
+
+    func noteSelection(_ selection: NSRange, field: Field) -> NSRange? {
+        let text = text(for:field)
+        guard selection.location >= 0, selection.length >= 0, selection.location <= text.utf16.count,
+              selection.length <= text.utf16.count - selection.location,
+              let range = Range(selection,in:text),
+              range.lowerBound == text.endIndex || text.indices.contains(range.lowerBound),
+              range.upperBound == text.endIndex || text.indices.contains(range.upperBound) else { return nil }
+        let offset = field == .front ? frontRange.lowerBound : backRange.lowerBound
+        let prefix = String(decoding:source.utf8.prefix(offset),as:UTF8.self)
+        return NSRange(location:prefix.utf16.count + selection.location,length:selection.length)
+    }
+
+    func settingCloze(removing: Bool, selection: NSRange) throws -> String {
+        let text = text(for:.front), tokens = try clozes()
+        guard selection.length > 0, canvasSelectedCharacterRange(in:text,selection:selection) == selection else { throw VaultReviewError.cloze }
+        let ns = text as NSString
+        let result: String
+        if removing {
+            guard let token = tokens.first(where:{ $0.range == selection || $0.content == selection }) else { throw VaultReviewError.cloze }
+            result = ns.replacingCharacters(in:token.range,with:ns.substring(with:token.content))
+        } else {
+            guard !tokens.contains(where:{ NSIntersectionRange($0.range,selection).length > 0 }) else { throw VaultReviewError.cloze }
+            result = ns.replacingCharacters(in:selection,with:"{{c1::" + ns.substring(with:selection) + "}}")
+        }
+        let updated = try replacing(.front,with:result)
+        guard let card = try Self.parse(updated) else { throw VaultReviewError.malformed }
+        _ = try card.clozes()
+        return updated
+    }
+
     func replacing(_ field: Field, with text: String) throws -> String {
         if text.utf8.elementsEqual(self.text(for:field).utf8) { return source }
         let raw = field == .front ? front : back
@@ -1094,6 +1170,7 @@ struct VaultReviewCard {
 
     func rating(_ grade: Grade, eventID: UUID, injectedDate: Date) throws -> String {
         guard ready else { throw VaultReviewError.empty }
+        _ = try clozes()
         let event = eventID.uuidString.lowercased()
         guard Self.validID(event), event != metadata.cardID else { throw VaultReviewError.malformed }
         if metadata.eventID == event {
