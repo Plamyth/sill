@@ -24,6 +24,9 @@ extension StreamClient {
         v.extendedDesktop = lastViewport?.extendedDesktop ?? v.extendedDesktop
         lastViewport = v
         send(.viewport, payload: Wire.encode(v))
+        #if os(iOS)
+        reconcileExtendedDesktopIntent()
+        #endif
     }
 
     /// Say whether this client draws its own pointer: true takes the Mac cursor out of the video,

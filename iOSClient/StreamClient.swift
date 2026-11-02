@@ -513,6 +513,10 @@ final class StreamClient: ObservableObject {
     #if os(iOS)
     @Published private(set) var extendedDesktopControl: Int? { didSet { refreshExtendedDesktopAdmission() } }
     @Published private(set) var extendedDesktopProblem: String?
+    private var wantsExtendedDesktop = UIDevice.current.userInterfaceIdiom == .pad
+    private var extendedDesktopForeground = UIApplication.shared.applicationState == .active
+    private var extendedDesktopAttempts = 0
+    private var extendedDesktopRetryScheduled = false
     private struct PendingExtendedDesktop {
         let peer: NWConnection
         let macID: String
@@ -520,6 +524,9 @@ final class StreamClient: ObservableObject {
         let intent: UInt64
         let deadline: TimeInterval
         let request: SessionLink.Submission
+        let requestID: UUID
+        var revision: String?
+        var epoch: UUID?
         var selection: SessionLink.Submission?
     }
     @Published private var pendingExtendedDesktop: PendingExtendedDesktop? { didSet { refreshExtendedDesktopAdmission() } }
@@ -591,10 +598,17 @@ final class StreamClient: ObservableObject {
         ExtendedDesktopAdmission.Binding(peer: ObjectIdentifier(pending.peer), macID: pending.macID, host: pending.host)
     }
 
-    func selectIPadExtendedDesktop() {
+    func selectIPadExtendedDesktop(recovering: Bool = false) {
         guard !extendedDesktopRequestPending else { return }
+        if !recovering {
+            noteSourceIntent()
+            wantsExtendedDesktop = true
+            extendedDesktopAttempts = 0
+        }
+        guard wantsExtendedDesktop, extendedDesktopAttempts < 3 else { return }
         if extendedDesktopControl != 1, let display = extendedDesktopCandidate {
             selectDisplay(display)
+            wantsExtendedDesktop = true
             return
         }
         guard extendedDesktopRequestReady, let peer = connection,
@@ -603,15 +617,19 @@ final class StreamClient: ObservableObject {
             extendedDesktopProblem = "현재 Mac에서 iPad 확장 화면을 요청할 수 없습니다."
             return
         }
-        noteSourceIntent()
+        extendedDesktopAttempts += 1
         let intent = explicitSourceIntent
+        let requestID = UUID()
         let submission = SessionLink.Submission { [weak self, weak peer] outcome in
             guard let self, let peer, self.pendingExtendedDesktop?.intent == intent,
-                  self.pendingExtendedDesktop?.peer === peer, outcome == .cancelled else { return }
-            self.cancelExtendedDesktopRequest(problem: "확장 화면 요청이 전송 전에 취소되었습니다.")
+                  self.pendingExtendedDesktop?.peer === peer, self.pendingExtendedDesktop?.requestID == requestID,
+                  outcome == .cancelled else { return }
+            self.cancelExtendedDesktopRequest(problem: "확장 화면 요청을 다시 시도합니다.")
+            self.scheduleExtendedDesktopRecovery()
         }
         let pending = PendingExtendedDesktop(peer: peer, macID: macID, host: host,
-            intent: intent, deadline: ProcessInfo.processInfo.systemUptime + 15, request: submission)
+            intent: intent, deadline: ProcessInfo.processInfo.systemUptime + 15, request: submission, requestID: requestID,
+            revision: selectionRevision, epoch: sourceCatalogEpoch)
         pendingExtendedDesktop = pending
         viewport.extendedDesktopIntent = .request
         let message = StreamMessage(kind: .viewport, timestamp: Date().timeIntervalSince1970,
@@ -621,12 +639,14 @@ final class StreamClient: ObservableObject {
         guard link.send(message.serialized(), onlyOn: peer, submission: submission, admit: { [weak admission] in
             admission?.allows(binding, intent: intent) == true
         }) else {
-            cancelExtendedDesktopRequest(release: false, problem: "확장 화면 요청을 전송하지 못했습니다.")
+            cancelExtendedDesktopRequest(release: false, problem: "확장 화면 연결을 다시 시도합니다.")
+            scheduleExtendedDesktopRecovery()
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak peer] in
             guard let self, let peer, self.pendingExtendedDesktop?.peer === peer,
-                  self.pendingExtendedDesktop?.intent == intent else { return }
+                  self.pendingExtendedDesktop?.intent == intent,
+                  self.pendingExtendedDesktop?.requestID == requestID else { return }
             self.expireExtendedDesktopRequest()
         }
         finishExtendedDesktopSelection()
@@ -634,7 +654,47 @@ final class StreamClient: ObservableObject {
 
     private func expireExtendedDesktopRequest(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         guard let pending = pendingExtendedDesktop, now >= pending.deadline else { return }
-        cancelExtendedDesktopRequest(problem: "확장 화면 응답을 확인하지 못했습니다. 다시 누르면 새로 요청합니다.")
+        cancelExtendedDesktopRequest(problem: extendedDesktopAttempts < 3 ?
+            "확장 화면 응답이 지연되어 다시 연결합니다." :
+            "확장 화면 응답을 확인하지 못했습니다. 다시 누르면 새로 요청합니다.")
+        scheduleExtendedDesktopRecovery()
+    }
+
+    private func suspendExtendedDesktopIntent() {
+        extendedDesktopForeground = false
+        cancelExtendedDesktopRequest()
+    }
+
+    private func resumeExtendedDesktopIntent() {
+        extendedDesktopForeground = true
+        guard wantsExtendedDesktop, !extendedDesktopRequestPending else { return }
+        if let candidate = extendedDesktopCandidate, active == .desktop,
+           candidate.id == activeDisplayID { return }
+        extendedDesktopAttempts = 0
+        scheduleExtendedDesktopRecovery()
+    }
+
+    func reconcileExtendedDesktopIntent() {
+        guard extendedDesktopForeground, wantsExtendedDesktop, pendingExtendedDesktop == nil,
+              !extendedDesktopRetryScheduled, extendedDesktopAttempts < 3,
+              extendedDesktopRequestReady else { return }
+        if let candidate = extendedDesktopCandidate, active == .desktop,
+           activeDisplayID == candidate.id { return }
+        selectIPadExtendedDesktop(recovering: true)
+    }
+
+    private func scheduleExtendedDesktopRecovery() {
+        guard extendedDesktopForeground, wantsExtendedDesktop, extendedDesktopAttempts < 3,
+              !extendedDesktopRetryScheduled else { return }
+        extendedDesktopRetryScheduled = true
+        let intent = explicitSourceIntent
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            guard let self else { return }
+            self.extendedDesktopRetryScheduled = false
+            guard self.explicitSourceIntent == intent, self.wantsExtendedDesktop,
+                  self.extendedDesktopRequestReady else { return }
+            self.reconcileExtendedDesktopIntent()
+        }
     }
 
     private func cancelExtendedDesktopRequest(release: Bool = true, problem: String? = nil) {
@@ -657,6 +717,7 @@ final class StreamClient: ObservableObject {
     private func observeExtendedDesktopCatalog(_ list: WindowList, peer: NWConnection) {
         guard connection === peer else { return }
         extendedDesktopControl = list.extendedDesktopControl
+        reconcileExtendedDesktopIntent()
         guard let pending = pendingExtendedDesktop else { return }
         guard pending.peer === peer, pending.macID == authenticatedDisplayMacID(),
               pending.host == list.launchID, pending.intent == explicitSourceIntent else {
@@ -667,6 +728,16 @@ final class StreamClient: ObservableObject {
               Set(displays.map(\.id)).count == displays.count,
               displays.filter({ $0.role == "ipadExtendedDesktop" }).count <= 1 else {
             cancelExtendedDesktopRequest(problem: "Mac의 확장 화면 지원이나 모니터 목록을 확인할 수 없습니다.")
+            return
+        }
+        if let candidate = extendedDesktopCandidate, list.active == .desktop,
+           list.activeDisplayID == candidate.id, pending.selection != nil,
+           let revision = list.selectionRevision, revision != pending.revision,
+           let epoch = list.videoEpoch, epoch.isValid, epoch.source == .desktop,
+           epoch.generation == list.inputGeneration, epoch.id != pending.epoch {
+            pendingExtendedDesktop = nil
+            extendedDesktopAttempts = 0
+            extendedDesktopProblem = nil
             return
         }
         expireExtendedDesktopRequest()
@@ -1262,6 +1333,9 @@ final class StreamClient: ObservableObject {
     }
 
     private func requestInitialDisplay(_ list: WindowList, peer: NWConnection) {
+        #if os(iOS)
+        if wantsExtendedDesktop { return }
+        #endif
         guard !automaticDisplayCatalogObserved else { return }
         if initialDisplayOpportunity == nil {
             guard automaticSourceIntent == explicitSourceIntent, scheduledAutomaticTicket == nil else { return }
@@ -1305,6 +1379,9 @@ final class StreamClient: ObservableObject {
     }
 
     private func requestAutomaticDisplay(ticket: AutomaticSourceTicket) -> Bool {
+        #if os(iOS)
+        if wantsExtendedDesktop { return false }
+        #endif
         guard !Self.noAutoDesktop, automaticDisplaySelection == 1,
               let macID = authenticatedDisplayMacID(), let launchID = sessionHost, !launchID.isEmpty,
               let inventory = displayInventoryID else { return false }
@@ -1399,6 +1476,7 @@ final class StreamClient: ObservableObject {
 
     private func noteSourceIntent() {
         #if os(iOS)
+        wantsExtendedDesktop = false
         cancelExtendedDesktopRequest()
         #endif
         if let automaticSubmission { link.cancel(automaticSubmission) }
@@ -1419,6 +1497,7 @@ final class StreamClient: ObservableObject {
         #if os(iOS)
         cancelExtendedDesktopRequest(release: false)
         extendedDesktopControl = nil
+        extendedDesktopAttempts = 0
         #endif
         if let automaticSubmission { link.cancel(automaticSubmission) }
         automaticSubmission = nil
@@ -1450,6 +1529,9 @@ final class StreamClient: ObservableObject {
     }
 
     private func requestAutomatic(_ source: StreamSource, ticket: AutomaticSourceTicket) {
+        #if os(iOS)
+        if wantsExtendedDesktop { return }
+        #endif
         guard let peer = connection, automaticTicketIsCurrent(ticket) else { return }
         let submission = SessionLink.Submission { _ in }
         automaticSubmission = submission
@@ -2111,12 +2193,14 @@ final class StreamClient: ObservableObject {
             self?.displayView.setPresentationForeground(true)
             #if os(iOS)
             self?.resumeIPadSentryReturn()
+            self?.resumeExtendedDesktopIntent()
             #endif
         }
         NotificationCenter.default.addObserver(forName: UIApplication.willResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
             self?.visionInputPermit = nil
             #if os(iOS)
             self?.suspendIPadSentryReturn()
+            self?.suspendExtendedDesktopIntent()
             #endif
             self?.link.setInputPermit(nil)
             self?.cancelVisionInputs()
@@ -4678,13 +4762,16 @@ final class StreamClient: ObservableObject {
                   macID == ticket.macID else { return false }
         }
         if origin == .human { noteAction() }
+        #if os(iOS)
+        let extendedRequestID = pendingExtendedDesktop?.requestID
+        #endif
         let submission = SessionLink.Submission { [weak self] outcome in
             #if os(iOS)
-            if let self, let intent = extendedDesktopIntent, self.pendingExtendedDesktop?.intent == intent {
-                if outcome == .submitted {
-                    self.pendingExtendedDesktop = nil
-                } else {
-                    self.cancelExtendedDesktopRequest(problem: "확장 화면 선택이 취소되었습니다.")
+            if let self, let intent = extendedDesktopIntent, self.pendingExtendedDesktop?.intent == intent,
+               self.pendingExtendedDesktop?.requestID == extendedRequestID {
+                if outcome != .submitted {
+                    self.cancelExtendedDesktopRequest(problem: "확장 화면 선택을 다시 시도합니다.")
+                    self.scheduleExtendedDesktopRecovery()
                 }
             }
             #endif
@@ -4694,7 +4781,11 @@ final class StreamClient: ObservableObject {
             #endif
         }
         #if os(iOS)
-        if extendedDesktopIntent != nil { pendingExtendedDesktop?.selection = submission }
+        if extendedDesktopIntent != nil {
+            pendingExtendedDesktop?.revision = selectionRevision
+            pendingExtendedDesktop?.epoch = sourceCatalogEpoch
+            pendingExtendedDesktop?.selection = submission
+        }
         #endif
         if origin == .automatic {
             automaticSubmission = submission

@@ -2,7 +2,7 @@ def bind_client(client, root, block, ios=True):
     source = (root / 'iOSClient/StreamClient.swift').read_text()
     viewport = (root / 'iOSClient/StreamClient+Viewport.swift').read_text()
     markers = [
-        'private struct PendingExtendedDesktop', 'var extendedDesktopRequestPending:',
+        'private struct PendingExtendedDesktop', 'private func scheduleExtendedDesktopRecovery(', 'private func resumeExtendedDesktopIntent(', 'private func suspendExtendedDesktopIntent(', 'func reconcileExtendedDesktopIntent(', 'var extendedDesktopRequestPending:',
         'private var extendedDesktopCandidate:', 'var canSelectIPadExtendedDesktop:',
         'private var extendedDesktopRequestReady:', 'func selectIPadExtendedDesktop(',
         'private final class ExtendedDesktopAdmission', 'private func extendedDesktopBinding(',
@@ -10,9 +10,9 @@ def bind_client(client, root, block, ios=True):
         'private func observeExtendedDesktopCatalog(', 'private func finishExtendedDesktopSelection(',
     ]
     members = '\n'.join(block(source, marker) for marker in markers).replace('private ', '')
-    fields = '\n'.join(line.strip().replace('@Published private(set) ', '').replace('@Published private ', '')
+    fields = '\n'.join(line.strip().replace('@Published private(set) ', '').replace('@Published private ', '').replace('private ', '')
                        for line in source.splitlines() if any(marker in line for marker in [
-                           'var extendedDesktopControl:', 'var extendedDesktopProblem:', 'var pendingExtendedDesktop:']))
+                           'var wantsExtendedDesktop =', 'var extendedDesktopForeground =', 'var extendedDesktopAttempts =', 'var extendedDesktopRetryScheduled =', 'var extendedDesktopControl:', 'var extendedDesktopProblem:', 'var pendingExtendedDesktop:']))
     members += '\n' + fields + '\n    let extendedDesktopAdmission = ExtendedDesktopAdmission()\n' + '''
     var lastViewport: Viewport?
     let localCursorState = LocalCursorState()
