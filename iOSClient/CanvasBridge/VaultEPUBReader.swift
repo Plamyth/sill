@@ -11,6 +11,7 @@ typealias VaultEPUBTextView = NSTextView
     let book: VaultEPUBBook
     let view: VaultEPUBTextView
     @Published private(set) var chapterIndex = 0
+    var chapterDidChange: (() -> Void)?
     @Published private(set) var fontSize: Double = 18
     @Published private(set) var pendingExcerpt: VaultEPUBExcerpt?
     @Published var status = "원문 한 문단의 글자를 선택해 발췌하세요."
@@ -137,6 +138,7 @@ typealias VaultEPUBTextView = NSTextView
         view.textStorage?.setAttributedString(styled)
         #endif
         chapterIndex = chapter; select(selection)
+        chapterDidChange?()
     }
     func openChapter(_ chapter: Int, fragment: String? = nil) throws {
         guard book.chapters.indices.contains(chapter) else { throw VaultEPUBError.invalid }

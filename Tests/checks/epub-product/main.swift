@@ -58,6 +58,81 @@ import PencilKit
         let sourceBytes = try Data(contentsOf:sourceURL)
         let png = Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==")!
         func store() -> CanvasStore { let s = CanvasStore(); s.enableDocumentChecks(); s.filePreview = { _ in png }; s.setNoteConnection(address:context.relayAddress,token:context.token); return s }
+        if CommandLine.arguments.contains("--reading-position") {
+            let snapshot = try await vault.epub(path)
+            if CommandLine.arguments.contains("--position-child") {
+                let child = store()
+                check(await child.openEPUB(path,load:vault.epub),"fresh process opens same original")
+                check(child.epubReader?.chapterIndex == 1,"fresh process restores Beta chapter")
+                return
+            }
+            let s = store()
+            check(await s.openEPUB(path,load:vault.epub),"initial original opens")
+            let first = s.epubReader!
+            try first.openChapter(1)
+            check(s.closeEPUBReader(),"close reader after Beta navigation")
+            check(await s.openEPUB(path,load:vault.epub),"same original reopens")
+            check(s.epubReader?.chapterIndex == 1,"same Store restores Beta")
+            let child = Process(); child.executableURL = URL(fileURLWithPath:CommandLine.arguments[0])
+            child.arguments = [out.path,"--reading-position","--position-child","--ccr-test-runtime",context.id.uuidString.lowercased()]
+            try child.run(); child.waitUntilExit()
+            check(child.terminationStatus == 0,"separate process reading preference persists")
+            let alpha = try VaultEPUBExcerpt.capture(book:VaultEPUBBook(snapshot:snapshot),chapter:0,paragraph:0,range:NSRange(location:0,length:2))
+            check(await s.openEPUB(path,source:alpha,load:vault.epub),"explicit Alpha source opens")
+            check(s.epubReader?.chapterIndex == 0,"explicit source takes priority over remembered Beta")
+            check(s.closeEPUBReader(),"explicit source closes")
+            check(await s.openEPUB(path,load:vault.epub) && s.epubReader?.chapterIndex == 0,"explicit source becomes latest location")
+            try s.epubReader!.openChapter(1)
+            let before = s.epubReader!
+            let changed = try VaultEPUBSnapshot(path:path,bytes:try Data(contentsOf:out.appendingPathComponent("vault/changed.epub")))
+            check(!(await s.openEPUB(path,source:alpha,load:{ _ in changed })) && s.epubReader === before,
+                  "stale explicit source preserves current reader")
+            check(await s.openEPUB(path,load:{ _ in changed }),"changed original opens independently")
+            check(s.epubReader?.chapterIndex == 0,"changed SHA never receives old Beta location")
+            check(await s.openEPUB(path,load:vault.epub) && s.epubReader?.chapterIndex == 1,
+                  "returning to original SHA restores its own Beta location")
+            let other = store(); other.setNoteConnection(address:"http://192.168.88.89:4242",token:context.token)
+            check(await other.openEPUB(path,load:vault.epub) && other.epubReader?.chapterIndex == 0,"different vault origin does not inherit location")
+            check(other.closeEPUBReader(),"other vault closes at Alpha")
+            check(await s.openEPUB(path,load:vault.epub) && s.epubReader?.chapterIndex == 1,
+                  "same SHA keeps separate Beta location for original vault")
+            check(await other.openEPUB(path,load:vault.epub) && other.epubReader?.chapterIndex == 0,
+                  "same SHA keeps separate Alpha location for other vault")
+            let reopened = store()
+            check(await reopened.openEPUB(path,load:vault.epub),"original source opens again")
+            try reopened.epubReader!.openChapter(1)
+            let retired = reopened.epubReader!
+            check(reopened.closeEPUBReader(),"retire reader")
+            try retired.openChapter(0)
+            check(await reopened.openEPUB(path,load:vault.epub) && reopened.epubReader?.chapterIndex == 1,
+                  "retired reader cannot overwrite last accepted location")
+            let frozen = reopened.epubReader!
+            let task = Task { @MainActor in await reopened.openEPUB(path,load:{ _ in
+                reopened.setNoteConnection(address:"http://192.168.88.90:4242",token:context.token)
+                return snapshot
+            }) }
+            check(!(await task.value),"connection change rejects pending load")
+            check(reopened.epubReader == nil,"cancelled load does not publish replacement reader")
+            try frozen.openChapter(0)
+            let final = store()
+            check(await final.openEPUB(path,load:vault.epub) && final.epubReader?.chapterIndex == 1,
+                  "cancelled load and old callback preserve original vault preference")
+            let preferences = try CanvasRuntime.stateURL(.preferences)
+            let goodPreferences = try CanvasLocalFile.read(preferences), priorScene = final.scene
+            try CanvasLocalFile.write(Data("corrupt test preferences".utf8),to:preferences)
+            try final.epubReader!.openChapter(0)
+            check(final.vaultStatus.contains("읽기 위치를 저장하지 못했습니다"),
+                  "preference write failure is reported in Korean")
+            check(try CanvasLocalFile.read(preferences) == Data("corrupt test preferences".utf8) && final.scene == priorScene,
+                  "failed preference write preserves existing bytes and document")
+            try CanvasLocalFile.write(goodPreferences,to:preferences)
+            check(final.closeEPUBReader(),"reader still closes after preference failure")
+            check(await final.openEPUB(path,load:vault.epub) && final.epubReader?.chapterIndex == 1,
+                  "last verified location survives failed preference write")
+            check(try Data(contentsOf:sourceURL) == sourceBytes,"Obsidian EPUB original bytes unchanged")
+            print("READING_POSITION_CHECKS",assertions.count)
+            return
+        }
         if CommandLine.arguments.contains("--reopen") {
             let s = store(), expected = try JSONDecoder().decode(VaultEPUBExcerpt.self,from:Data(contentsOf:out.appendingPathComponent("expected-source.json")))
             if CommandLine.arguments.contains("--pending") {

@@ -20,3 +20,6 @@
 
 
 `run.py --source-composition --output <승인 외장 폴더>`는 이전 발췌 반례를 반복하지 않고 EPUB 카드·그룹·용지를 한 전체 문서에 함께 저장한다. 같은 원본의 외부 용지/메모 CAS 수정이 역수신되고, 그룹 소속·발췌 reference·native PKDrawing을 유지하며 새 Store 프로세스가 동일 문서를 복원하는지만 검사한다. 미리보기 PNG는 고정1픽셀 fixture이며 UIKit 렌더링이나 실기기 수용은 아니다.
+## 마지막 장 복원 검사
+
+`python3 -B Tests/checks/epub-product/run.py --reading-position --output <연결 SSD의 승인 출력 경로>`는 실제 Store와 Reader를 통해 마지막 장 복원, 별도 프로세스 재열기, 명시적 앵커 우선, 보관함·원문 SHA 분리, 늦은 콜백 거부와 선호 저장 실패를 검사한다. 원문 EPUB와 Obsidian 발췌 데이터를 읽기 선호와 분리하며 원문 바이트를 보존한다. 기기 간 읽기 위치 동기화나 실제 iPad 조작의 수용 증거는 아니다.

@@ -1782,6 +1782,39 @@ final class CanvasStore: ObservableObject {
     private var epubRequest = UUID()
     private var epubOwner: CanvasDocument.PageSnapshot?
     private var epubConnection: UInt64 = 0
+    private struct EPUBReadingPosition: Codable {
+        let sourceSHA256: String
+        let spineItem: String
+        let chapterPath: String
+    }
+    private func epubReadingPositionKey(_ snapshot: VaultEPUBSnapshot) -> String {
+        var identity = Data(noteAddress.utf8)
+        identity.append(0); identity.append(contentsOf:snapshot.path.utf8)
+        return "ccr.epub.reading-position.v1." + CanvasPacket.sha(identity) + "." + snapshot.sha256
+    }
+    private func restoreEPUBReadingPosition(_ reader: VaultEPUBReader) throws {
+        guard let text = eraserDefaults.string(forKey:epubReadingPositionKey(reader.book.snapshot)),
+              let saved = try? JSONDecoder().decode(EPUBReadingPosition.self,from:Data(text.utf8)),
+              saved.sourceSHA256 == reader.book.snapshot.sha256 else { return }
+        let matches = reader.book.chapters.indices.filter {
+            reader.book.chapters[$0].id.utf8.elementsEqual(saved.spineItem.utf8) &&
+            reader.book.chapters[$0].path.utf8.elementsEqual(saved.chapterPath.utf8)
+        }
+        guard matches.count == 1, let chapter = matches.first else { return }
+        try reader.openChapter(chapter)
+    }
+    private func rememberEPUBReadingPosition(_ reader: VaultEPUBReader) {
+        guard epubIsCurrent(reader), reader.book.chapters.indices.contains(reader.chapterIndex) else { return }
+        let chapter = reader.book.chapters[reader.chapterIndex]
+        let saved = EPUBReadingPosition(sourceSHA256:reader.book.snapshot.sha256,
+            spineItem:chapter.id,chapterPath:chapter.path)
+        do {
+            let text = String(decoding:try JSONEncoder().encode(saved),as:UTF8.self)
+            let key = epubReadingPositionKey(reader.book.snapshot)
+            guard eraserDefaults.string(forKey:key) != text else { return }
+            try eraserDefaults.set(text,forKey:key)
+        } catch { vaultStatus = "EPUB 읽기 위치를 저장하지 못했습니다. 원본과 발췌는 보존합니다." }
+    }
     var hasPendingEPUBExcerpt: Bool { pdfExcerptRecovery?.sourceKind == .epub }
     func epubIsCurrent(_ reader: VaultEPUBReader) -> Bool {
         epubReader === reader && epubConnection == noteConnectionGeneration &&
@@ -1797,6 +1830,7 @@ final class CanvasStore: ObservableObject {
                 vaultStatus = "EPUB 발췌 입력의 기록을 먼저 확인하세요. Reader와 발췌 ID를 유지합니다."; return false
             }
         }
+        epubReader?.chapterDidChange = nil
         epubRequest = UUID(); epubBusy = false; epubReader = nil; epubOwner = nil
         return true
     }
@@ -1829,9 +1863,16 @@ final class CanvasStore: ObservableObject {
                 reveal = pending
             }
             if let reveal { try reader.reveal(reveal) }
+            else { try restoreEPUBReadingPosition(reader) }
             guard epubRequest == request, connection == noteConnectionGeneration, document.accepts(owner), !Task.isCancelled else { return false }
             epubReader = reader; epubOwner = owner; epubConnection = connection
+            reader.chapterDidChange = { [weak self, weak reader] in
+                guard let reader else { return }
+                self?.rememberEPUBReadingPosition(reader)
+            }
             vaultStatus = "EPUB 원본 SHA·장경로·출처를 확인했습니다. 원본 파일은 읽기만 합니다."
+            epubBusy = false
+            rememberEPUBReadingPosition(reader)
             return true
         } catch { if epubRequest == request { vaultStatus = "EPUB 원문을 적용하지 않았습니다. 입력과 저장 의도를 유지합니다. " + error.localizedDescription }; return false }
     }
