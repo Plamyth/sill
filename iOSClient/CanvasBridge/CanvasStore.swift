@@ -1186,6 +1186,36 @@ final class CanvasStore: ObservableObject {
         return result
     }
     var hierarchyOutlineRows: [HierarchyOutlineRow] { (try? makeHierarchyOutlineRows()) ?? [] }
+    struct HierarchyOutlineSnapshot {
+        struct Entry {
+            let id: UUID
+            let depth: Int
+            let text: String
+            let reference: String?
+            let isGroup: Bool
+        }
+        let owner: HierarchyFocusOwner
+        let sourceSHA: String
+        let documentMode: Bool
+        let filter: String?
+        let entries: [Entry]
+    }
+    func hierarchyOutlineSnapshot() throws -> HierarchyOutlineSnapshot {
+        guard hierarchyViewInputAllowed, hierarchyPresentationReadable, hierarchyFocusReadable else { throw CanvasDocument.Failure.stale }
+        let rows = try makeHierarchyOutlineRows()
+        let nodes = Dictionary(uniqueKeysWithValues:scene.nodes.map { ($0.id,$0) })
+        let entries = try rows.map { row -> HierarchyOutlineSnapshot.Entry in
+            guard let node = nodes[row.id] else { throw CanvasDocument.Failure.stale }
+            return .init(id:row.id,depth:row.depth,text:node.text,reference:node.vaultNote?.path,isGroup:row.isGroup)
+        }
+        return .init(owner:hierarchyFocusOwner,sourceSHA:try CanvasFileWorkspace.sceneSHA(scene),
+                     documentMode:isDocumentSource,filter:cardTagFilter,entries:entries)
+    }
+    func acceptsHierarchyOutlineSnapshot(_ snapshot: HierarchyOutlineSnapshot) -> Bool {
+        hierarchyViewInputAllowed && hierarchyPresentationReadable && hierarchyFocusReadable &&
+        snapshot.owner == hierarchyFocusOwner && snapshot.documentMode == isDocumentSource && snapshot.filter == cardTagFilter &&
+        (try? CanvasFileWorkspace.sceneSHA(scene)) == snapshot.sourceSHA
+    }
     var hierarchyOutlineError: String? {
         do { _ = try makeHierarchyOutlineRows(); return nil }
         catch { return "계층이나 그룹을 확인할 수 없어 개요를 표시하지 않았습니다. 원문을 보존하며 지도 보기로 돌아갈 수 있습니다." }
@@ -1274,6 +1304,7 @@ final class CanvasStore: ObservableObject {
             guard cardMergeInputAllowed, cardMergeDraft == nil,
                   availableCardTags.contains(where:{ CanvasCardTags.key($0) == CanvasCardTags.key(input) }) else { return }
         }
+        if cardTagFilter != input { groupViewGeneration &+= 1 }
         cardTagFilter = input
         let visible = cardTagVisibility
         if selectedNode.map({ !visible.nodeIDs.contains($0) }) == true { selectedNode = nil }

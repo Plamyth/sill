@@ -42,6 +42,7 @@ struct CanvasWorkspace: View {
     @State private var connectionOpen = false
     @State private var exportOpen = false
     @State private var renderedExport: RenderedExportState = .idle
+    @State private var renderedExportTask: Task<Void,Never>?
     @State private var importOpen = false
     @State private var workspacePickerOpen = false
     @State private var workspaceOpening = false
@@ -150,6 +151,7 @@ struct CanvasWorkspace: View {
     private var relay: CanvasRelay { CanvasRelay(address:relayAddress,token:relayToken) }
 
     var body: some View {
+        let renderedExportID = renderedExport.id
         VStack(spacing: 0) {
             toolbar.zIndex(1)
             if canvasVaultBlocked {
@@ -225,6 +227,9 @@ struct CanvasWorkspace: View {
         .onChange(of:requestedCanvasEditors,initial:true) { _,_ in synchronizeCanvasEditorSheet() }
         .onChange(of:canPresentCanvasConflict) { _,allowed in if !allowed { advanceCanvasConflictEpoch() } }
         .onChange(of:canPresentRenderedExport) { _,allowed in if !allowed { cancelRenderedExportPreparation() } }
+        .onChange(of:store.hierarchyFocusOwner) { _,owner in
+            if let expected = renderedExport.owner, owner != expected { cancelRenderedExportPreparation() }
+        }
         .onDisappear { cancelRenderedExportPreparation(); cancelCanvasConflictRead(); dismissCanvasEditorSheet(); inkSpacingTask?.cancel(); inkSpacing.invalidatePending(); store.cancelInkMath(); store.cancelInkShape(); inkTextEditing.invalidatePending(); dictation.cancel(); store.cancelLink(); store.clearLinkSelection(); store.saveNow() }
         .onChange(of:scenePhase) { _,phase in
             if phase != .active {
@@ -388,10 +393,11 @@ struct CanvasWorkspace: View {
                       defaultFilename:"canvas-\(store.isDocumentSource ? store.document.id : store.scene.id)") { result in
             if case .failure(let error) = result { store.status = error.localizedDescription }
         }
-        .fileExporter(isPresented:Binding(get:{ renderedExport.document != nil && canPresentRenderedExport },set:{ if !$0 { renderedExport = .idle } }),
+        .fileExporter(isPresented:Binding(get:{ renderedExport.document != nil && canPresentRenderedExport },set:{ if !$0 && renderedExport.id == renderedExportID { cancelRenderedExportPreparation() } }),
                       document:renderedExport.document,contentType:renderedExport.document?.format.contentType ?? .pdf,
                       defaultFilename:renderedExport.document?.filename) { result in
-            renderedExport = .idle
+            guard renderedExport.id == renderedExportID || !renderedExport.isBusy else { return }
+            cancelRenderedExportPreparation()
             switch result {
             case .success: store.status = "공유용 파일을 저장했습니다. 편집 원본과 Obsidian 동기화 상태는 그대로입니다."
             case .failure(let error): store.status = error.localizedDescription
@@ -569,6 +575,7 @@ struct CanvasWorkspace: View {
                 Button("편집 원본 JSON · 보존용 사본") { exportOpen = true }.disabled(store.documentBusy)
                 Button("현재 페이지 PNG 이미지") { prepareRenderedExport(.png) }.disabled(!canPresentRenderedExport)
                 Button("현재 페이지 PDF · 한 장 이미지로 저장") { prepareRenderedExport(.pdf) }.disabled(!canPresentRenderedExport)
+                Button("현재 개요 PDF") { prepareOutlineExport() }.disabled(!canPresentRenderedExport || renderedExport.isBusy)
             }.disabled(renderedExport.isBusy)
         }
         .frame(minWidth:44,minHeight:44)
@@ -674,8 +681,14 @@ struct CanvasWorkspace: View {
     }
 
     private enum RenderedExportState {
-        case idle, rendering(UUID), ready(RenderedSceneFile)
-        var document: RenderedSceneFile? { if case .ready(let file) = self { return file }; return nil }
+        case idle, rendering(UUID,CanvasStore.HierarchyFocusOwner), ready(UUID,RenderedSceneFile,CanvasStore.HierarchyFocusOwner)
+        var document: RenderedSceneFile? { if case .ready(_,let file,_) = self { return file }; return nil }
+        var id: UUID? {
+            switch self { case .idle: return nil; case .rendering(let id,_), .ready(let id,_,_): return id }
+        }
+        var owner: CanvasStore.HierarchyFocusOwner? {
+            switch self { case .idle: return nil; case .rendering(_,let owner), .ready(_,_,let owner): return owner }
+        }
         var isBusy: Bool { if case .idle = self { return false }; return true }
     }
 
@@ -688,7 +701,7 @@ struct CanvasWorkspace: View {
 
     private func prepareRenderedExport(_ format: RenderedSceneFile.Format) {
         guard !renderedExport.isBusy, canPresentRenderedExport else { return }
-        let scene = store.scene, token = UUID(), scale = UIScreen.main.scale
+        let scene = store.scene, token = UUID(), scale = UIScreen.main.scale, owner = store.hierarchyFocusOwner
         guard scene.width.isFinite, scene.height.isFinite, scene.width > 0, scene.height > 0,
               scene.width <= 16384, scene.height <= 16384,
               scene.width * scene.height * scale * scale <= 32 * 1024 * 1024 else {
@@ -699,33 +712,60 @@ struct CanvasWorkspace: View {
             store.status = "편집 원본을 확인하지 못했습니다. 내보내기와 원본 변경은 하지 않았습니다."
             return
         }
-        renderedExport = .rendering(token)
-        Task { @MainActor in
+        renderedExport = .rendering(token,owner)
+        renderedExportTask = Task { @MainActor in
             do {
                 guard let png = await SceneRenderer.png(scene:scene) else { throw CocoaError(.fileReadCorruptFile) }
-                guard case .rendering(let current) = renderedExport, current == token else { return }
+                guard case .rendering(let current,_) = renderedExport, current == token else { return }
                 guard canPresentRenderedExport else {
                     renderedExport = .idle
                     store.status = "다른 편집창이 열려 이미지 내보내기를 취소했습니다. 현재 입력과 원본은 유지합니다."
                     return
                 }
-                guard try CanvasFileWorkspace.sceneSHA(store.scene) == originalSHA else {
+                guard owner == store.hierarchyFocusOwner, try CanvasFileWorkspace.sceneSHA(store.scene) == originalSHA else {
                     renderedExport = .idle
                     store.status = "그림이 바뀌어 이전 이미지 내보내기를 취소했습니다. 현재 그림과 원본은 그대로 유지합니다."
                     return
                 }
                 let file = try RenderedSceneFile(png:png,size:CGSize(width:scene.width,height:scene.height),format:format,
                     filename:"canvas-\(scene.id.uuidString.lowercased())-r\(scene.revision)")
-                renderedExport = .ready(file)
+                renderedExport = .ready(token,file,owner)
             } catch {
-                guard case .rendering(let current) = renderedExport, current == token else { return }
+                guard case .rendering(let current,_) = renderedExport, current == token else { return }
                 renderedExport = .idle
                 store.status = error.localizedDescription
             }
         }
     }
 
+    private func prepareOutlineExport() {
+        guard !renderedExport.isBusy, canPresentRenderedExport else { return }
+        do {
+            let snapshot = try store.hierarchyOutlineSnapshot(), token = UUID()
+            let rows = snapshot.entries.map { CanvasOutlinePDF.Row(id:$0.id,depth:$0.depth,text:$0.text,reference:$0.reference,isGroup:$0.isGroup) }
+            renderedExport = .rendering(token,snapshot.owner)
+            renderedExportTask = Task { @MainActor in
+                do {
+                    let file = try await RenderedSceneFile(outlineRows:rows,
+                        filename:"canvas-outline-\(snapshot.owner.pageID.uuidString.lowercased())")
+                    guard case .rendering(let current,_) = renderedExport, current == token else { return }
+                    guard canPresentRenderedExport, store.acceptsHierarchyOutlineSnapshot(snapshot) else {
+                        cancelRenderedExportPreparation()
+                        store.status = "문서나 표시 범위가 바뀌어 개요 내보내기를 취소했습니다. 원본은 유지합니다."
+                        return
+                    }
+                    renderedExport = .ready(token,file,snapshot.owner)
+                } catch {
+                    guard case .rendering(let current,_) = renderedExport, current == token else { return }
+                    cancelRenderedExportPreparation()
+                    if !(error is CancellationError) { store.status = error.localizedDescription }
+                }
+            }
+        } catch { store.status = error.localizedDescription }
+    }
+
     private func cancelRenderedExportPreparation() {
+        renderedExportTask?.cancel(); renderedExportTask = nil
         renderedExport = .idle
     }
 

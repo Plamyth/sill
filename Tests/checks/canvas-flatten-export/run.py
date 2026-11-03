@@ -15,7 +15,7 @@ output.mkdir(parents=True,exist_ok=True)
 source = root/'iOSClient/CanvasBridge/SceneFile.swift'
 body = source.read_text().split('struct RenderedSceneFile:',1)[1]
 extracted = output/'RenderedSceneFile.swift'
-extracted.write_text('import SwiftUI\nimport UniformTypeIdentifiers\nimport ImageIO\nstruct RenderedSceneFile:'+body)
+extracted.write_text('import SwiftUI\nimport UniformTypeIdentifiers\nimport ImageIO\nimport CoreText\nstruct RenderedSceneFile:'+body)
 inputs = [source,root/'iOSClient/CanvasBridge/CanvasWorkspace.swift',Path(__file__),Path(__file__).with_name('main.swift')]
 hashes = {str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 env = dict(os.environ,DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
