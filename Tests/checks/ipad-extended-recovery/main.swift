@@ -44,7 +44,17 @@ import Foundation
   check(!ack.extendedDesktopRequestPending && ack.extendedDesktopAttempts==0,"fresh revision and video epoch acknowledge and reset budget")
   for _ in 0..<10 { ack.prepareAutomaticTicketCatalog(accepted) }
   check(requests(ack)==1,"success catalogs do not reallocate")
+  let stableRequests=requests(ack);let stableSelections=selections(ack)
+  ack.selectIPadExtendedDesktop();await settle()
+  check(requests(ack)==stableRequests && selections(ack)==stableSelections && !ack.extendedDesktopRequestPending,
+        "already active extended display reselection is idempotent without a fresh epoch")
   ack.resumeExtendedDesktopIntent();check(!ack.extendedDesktopRetryScheduled,"foreground keeps active extended display")
+  _ = ack.link.hold(ack.connection!)
+  ack.selectDisplay(main)
+  ack.selectIPadExtendedDesktop()
+  check(ack.extendedDesktopRequestPending && ack.wantsExtendedDesktop,
+        "extended reselection supersedes an outstanding alternate display choice")
+  _ = ack.link.unhold(ack.connection!);await settle()
   let fg=Client();fg.extendedDesktopAttempts=3;fg.resumeExtendedDesktopIntent()
   check(fg.extendedDesktopAttempts==0 && fg.extendedDesktopRetryScheduled,"foreground with nil IDs resets exhausted budget")
   fg.select(.none);await settle()

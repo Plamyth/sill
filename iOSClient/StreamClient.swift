@@ -601,9 +601,16 @@ final class StreamClient: ObservableObject {
     func selectIPadExtendedDesktop(recovering: Bool = false) {
         guard !extendedDesktopRequestPending else { return }
         if !recovering {
+            let alreadySelected = extendedDesktopRequestReady && pendingDisplaySelection == nil &&
+                expectedSourceIntent == nil && active == .desktop &&
+                extendedDesktopCandidate.map { $0.id == activeDisplayID } == true
             noteSourceIntent()
             wantsExtendedDesktop = true
             extendedDesktopAttempts = 0
+            if alreadySelected {
+                extendedDesktopProblem = nil
+                return
+            }
         }
         guard wantsExtendedDesktop, extendedDesktopAttempts < 3 else { return }
         if extendedDesktopControl != 1, let display = extendedDesktopCandidate {
