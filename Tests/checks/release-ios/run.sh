@@ -214,6 +214,49 @@ for name, text in cases.items():
                              key, "78", "79"], capture_output=True)
     check(f"{name} 쓰기 거부·원본 보존", result.returncode != 0 and fixture.read_text() == text)
 
+import runpy
+from unittest.mock import patch
+
+fixture.write_text(base)
+module = runpy.run_path(str(helper))
+namespace = module["main"].__globals__
+original_parse = namespace["parse"]
+concurrent = base.replace("ENABLE_PREVIEWS = YES;", "ENABLE_PREVIEWS = NO;", 1)
+injected = False
+
+def parse_with_concurrent_edit(data):
+    global injected
+    result = original_parse(data)
+    if not injected:
+        fixture.write_text(concurrent)
+        injected = True
+    return result
+
+namespace["parse"] = parse_with_concurrent_edit
+rejected = False
+with patch.object(sys, "argv", [str(helper), str(fixture), "Sill",
+                               "com.ambrion.sillcanvas.ipad", "ZPTXHJ866D",
+                               "CURRENT_PROJECT_VERSION", "78", "79"]):
+    try:
+        module["main"]()
+    except ValueError:
+        rejected = True
+check("최초 읽기 이후 동시 편집은 거부하고 현재 원문 보존", rejected and fixture.read_text() == concurrent)
+
+fixture.write_text(base)
+result = run('''git() {
+    case "$1" in
+        status) python3 -c 'import os;from pathlib import Path;p=Path(os.environ["PBX_FIXTURE"]);p.write_text(p.read_text().replace("name = Sill;", "name = ConcurrentSill;", 1))' ;;
+        checkout) printf unexpected-checkout > "$BUMP_RECEIPT"; return 99 ;;
+        *) return 99 ;;
+    esac
+}
+bump_build 0.5.1 78''')
+check("갱신 후 getter 거부에도 다른 편집과 빌드 번호 보존",
+      result.returncode != 0 and "name = ConcurrentSill;" in fixture.read_text()
+      and fixture.read_text().count("CURRENT_PROJECT_VERSION = 79;") == 2
+      and (scratch / "bump-commit.txt").read_text() != "unexpected-checkout")
+
 print(f"추가 회귀 {passed}개 통과. 실제 archive/export/upload는 호출하지 않았다.")
 PY
 

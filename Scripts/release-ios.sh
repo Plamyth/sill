@@ -234,8 +234,7 @@ bump_build() {
         || fail "Sill 빌드 번호 갱신을 거부했다. 파일은 변경하지 않았다."
     others="$(git status --porcelain --untracked-files=no | grep -v -F " $pbxproj" || true)"
     if [ "$(project_setting CURRENT_PROJECT_VERSION)" != "$next" ] || [ -n "$others" ]; then
-        git checkout -- "$pbxproj"
-        fail "the build number didn't change to $next everywhere in $pbxproj; it is back as it was."
+        fail "빌드 번호 갱신 뒤 소스가 바뀌었거나 확인에 실패했다. 현재 파일을 보존하고 커밋·빌드를 중단한다."
     fi
     git commit -q -m "iOS: build $next of version $version" \
         -m "The next build for App Store Connect (Scripts/release-ios.sh --bump)." -- "$pbxproj"

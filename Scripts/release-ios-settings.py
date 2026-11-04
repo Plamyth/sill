@@ -122,6 +122,8 @@ def main():
             os.fchmod(pending.fileno(), path.stat().st_mode)
             pending.write(output)
             pending.flush()
+            if path.read_bytes() != source:
+                raise ValueError("읽은 뒤 프로젝트가 바뀌어 현재 변경을 보존한다.")
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
