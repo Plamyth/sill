@@ -39,10 +39,21 @@ struct ProviderPeerAnchor {
         return withUnsafeBytes(of: value) { Data($0) }
     }
     private static func requireLiveSocket(_ fd: Int32) throws {
-        var byte: UInt8 = 0
-        let received = recv(fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT)
-        guard received > 0 || received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) else {
-            throw Failure.peerUnavailable
+        guard fd >= 0 else { throw Failure.peerUnavailable }
+        // recv(MSG_PEEK) and poll read filters change an inherited socket's last_pid.
+        // With no read filter, LOCAL_PEERPID must also detect a disconnected peer.
+        var descriptor = pollfd(fd: fd, events: 0, revents: 0)
+        while true {
+            let result = poll(&descriptor, 1, 0)
+            if result < 0 && errno == EINTR { continue }
+            guard result >= 0, descriptor.revents & Int16(POLLHUP | POLLERR | POLLNVAL) == 0 else {
+                throw Failure.peerUnavailable
+            }
+            var pid: pid_t = 0
+            var size = socklen_t(MemoryLayout<pid_t>.size)
+            guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0,
+                  size == MemoryLayout<pid_t>.size, pid > 0 else { throw Failure.peerUnavailable }
+            return
         }
     }
     private static func information(_ code: SecStaticCode) throws -> [String: Any] {
