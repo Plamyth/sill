@@ -14,7 +14,7 @@ here = Path(__file__).resolve().parent
 node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:3]]
 flags = sys.argv[3:]
 assert flags in [[], ['--observe-only'], ['--http-first'], ['--off-fresh'], ['--off-latched']]
-commit = 'd0df44d788574ee5393d846f03aeadffc1eee318'
+commit = '0f24a70707ded2926eaaefbc658d82be5f500cb1'
 names = ['LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract', 'AudioForwardingCoordinator',
          'AudioForwardingParticipants', 'AudioForwardingProtection', 'HostAudioForwardingRuntime']
 sources = [root / 'Sources/SillHost' / (name + '.swift') for name in names]
