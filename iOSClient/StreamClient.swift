@@ -529,6 +529,9 @@ final class StreamClient: ObservableObject {
         var revision: String?
         var epoch: UUID?
         var selection: SessionLink.Submission?
+        var selectionID: UUID?
+        var selectionInventory: UUID?
+        var selectionDisplay: DisplayInfo?
     }
     @Published private var pendingExtendedDesktop: PendingExtendedDesktop? { didSet { refreshExtendedDesktopAdmission() } }
     var extendedDesktopRequestPending: Bool { pendingExtendedDesktop != nil }
@@ -756,6 +759,14 @@ final class StreamClient: ObservableObject {
             extendedDesktopAttempts = 0
             extendedDesktopProblem = nil
             return
+        }
+        if let selection = pending.selection,
+           pending.selectionInventory != displayInventoryID || pending.selectionDisplay != extendedDesktopCandidate {
+            pendingExtendedDesktop?.selection = nil
+            pendingExtendedDesktop?.selectionID = nil
+            pendingExtendedDesktop?.selectionInventory = nil
+            pendingExtendedDesktop?.selectionDisplay = nil
+            link.cancel(selection)
         }
         expireExtendedDesktopRequest()
         finishExtendedDesktopSelection()
@@ -4797,11 +4808,13 @@ final class StreamClient: ObservableObject {
         if origin == .human { noteAction() }
         #if os(iOS)
         let extendedRequestID = pendingExtendedDesktop?.requestID
+        let extendedSelectionID = UUID()
         #endif
         let submission = SessionLink.Submission { [weak self] outcome in
             #if os(iOS)
             if let self, let intent = extendedDesktopIntent, self.pendingExtendedDesktop?.intent == intent,
-               self.pendingExtendedDesktop?.requestID == extendedRequestID {
+               self.pendingExtendedDesktop?.requestID == extendedRequestID,
+               self.pendingExtendedDesktop?.selectionID == extendedSelectionID {
                 if outcome != .submitted {
                     self.cancelExtendedDesktopRequest(problem: "확장 화면 선택을 다시 시도합니다.")
                     self.scheduleExtendedDesktopRecovery()
@@ -4818,6 +4831,9 @@ final class StreamClient: ObservableObject {
             pendingExtendedDesktop?.revision = selectionRevision
             pendingExtendedDesktop?.epoch = sourceCatalogEpoch
             pendingExtendedDesktop?.selection = submission
+            pendingExtendedDesktop?.selectionID = extendedSelectionID
+            pendingExtendedDesktop?.selectionInventory = displayInventoryID
+            pendingExtendedDesktop?.selectionDisplay = display
         }
         #endif
         if origin == .automatic {

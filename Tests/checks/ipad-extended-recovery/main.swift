@@ -6,8 +6,9 @@ import Foundation
   func settle() async { for _ in 0..<100 { await Task.yield() } }
   let main = DisplayInfo(id:1,name:"main",width:1920,height:1080,isMain:true)
   let owned = DisplayInfo(id:42,name:"owned",width:1366,height:1024,isMain:false,role:"ipadExtendedDesktop")
-  func catalog(_ ds:[DisplayInfo], active:StreamSource = .none, id:UInt32? = nil, revision:String = "r0", epoch:VideoEpoch? = nil) -> WindowList {
-   WindowList(macName:"test",windows:[],active:active,launchID:"host",selectionRevision:revision,inputGeneration:epoch?.generation,videoEpoch:epoch,displaySelection:1,displays:ds,displayInventoryID:UUID(),activeDisplayID:id,sourceSelectionAdmission:.init(generation:1,ready:true),extendedDesktopControl:1)
+  let stableInventory=UUID()
+  func catalog(_ ds:[DisplayInfo], active:StreamSource = .none, id:UInt32? = nil, revision:String = "r0", epoch:VideoEpoch? = nil, inventory:UUID? = nil) -> WindowList {
+   WindowList(macName:"test",windows:[],active:active,launchID:"host",selectionRevision:revision,inputGeneration:epoch?.generation,videoEpoch:epoch,displaySelection:1,displays:ds,displayInventoryID:inventory ?? stableInventory,activeDisplayID:id,sourceSelectionAdmission:.init(generation:1,ready:true),extendedDesktopControl:1)
   }
   func viewports(_ c:Client) -> [Viewport] { c.allSent.compactMap { kind,data in kind == .viewport ? Wire.decode(Viewport.self,from:data) : nil } }
   func requests(_ c:Client) -> Int { viewports(c).filter { $0.extendedDesktopIntent == .request }.count }
@@ -160,6 +161,47 @@ import Foundation
         "third in-flight attempt is rebound without granting another attempt")
   exhausted.expireExtendedDesktopRequest(now:exhaustedDeadline);await settle()
   check(!exhausted.extendedDesktopRequestPending && !exhausted.extendedDesktopRetryScheduled,"new peer failure respects exhausted retry budget")
+  let retained=Client();retained.prepareAutomaticTicketCatalog(catalog([main]));retained.sendViewport(viewport())
+  retained.extendedDesktopAttempts=3
+  let retainedDeadline=retained.pendingExtendedDesktop!.deadline
+  let (retainedOld,retainedNew)=move(retained)
+  retained.prepareAutomaticTicketCatalog(catalog([main,owned]));await settle()
+  let oldInventorySelection=retained.pendingExtendedDesktop!.selection!
+  let oldSelectionID=retained.pendingExtendedDesktop!.selectionID
+  _ = retained.link.release(retainedOld);await settle()
+  let newInventory=UUID()
+  retained.prepareAutomaticTicketCatalog(catalog([main,recreated],revision:"recreated-after-fence",inventory:newInventory));await settle()
+  let reboundChoices=messages(retainedNew,kind:.selectDisplay,type:DisplaySelection.self)
+  check(reboundChoices.map(\.displayID)==[42,71] && reboundChoices.last?.inventoryID==newInventory,
+        "retained stale catalog selection is replaced by recreated current inventory")
+  check(retained.extendedDesktopAttempts==3 && retained.pendingExtendedDesktop?.deadline==retainedDeadline,
+        "inventory replacement preserves exhausted in-flight attempt and deadline")
+  check(retained.pendingExtendedDesktop?.selectionID != oldSelectionID && ownRequests(retainedNew)==1,
+        "selection replacement uses a fresh selection token without another requester attempt")
+  retained.link.cancel(oldInventorySelection);await settle()
+  check(retained.extendedDesktopRequestPending && messages(retainedNew,kind:.viewport,type:Viewport.self).allSatisfy { $0.extendedDesktopIntent != .release },
+        "retired selection callback cannot release current requester")
+  retained.prepareAutomaticTicketCatalog(catalog([main,recreated],active:.desktop,id:71,revision:"recreated-selected",epoch:newEpoch,inventory:newInventory))
+  check(!retained.extendedDesktopRequestPending,"recreated identity requires and accepts its fresh epoch acknowledgement")
+  let sameID=Client();sameID.prepareAutomaticTicketCatalog(catalog([main]));sameID.sendViewport(viewport())
+  sameID.prepareAutomaticTicketCatalog(catalog([main,owned]));await settle()
+  let changedInventory=UUID()
+  sameID.prepareAutomaticTicketCatalog(catalog([main,owned],revision:"inventory-replaced",inventory:changedInventory));await settle()
+  check(selections(sameID)==2 && sameID.pendingExtendedDesktop?.selectionInventory==changedInventory,
+        "same display ID with replaced inventory also rebinds selection")
+  let queued=Client();queued.prepareAutomaticTicketCatalog(catalog([main]));queued.sendViewport(viewport())
+  let (queuedOld,queuedNew)=move(queued)
+  queued.prepareAutomaticTicketCatalog(catalog([main,owned]))
+  let queuedOldSelection=queued.pendingExtendedDesktop!.selection!
+  queued.prepareAutomaticTicketCatalog(catalog([main,recreated],revision:"recreated-before-fence",inventory:UUID()))
+  let queuedCurrentSelectionID=queued.pendingExtendedDesktop!.selectionID
+  await settle()
+  check(queued.extendedDesktopRequestPending && queued.pendingExtendedDesktop?.selectionID==queuedCurrentSelectionID,
+        "cancelled queued selection callback cannot cancel its current replacement")
+  _ = queued.link.release(queuedOld);queued.link.cancel(queuedOldSelection);await settle()
+  let queuedChoices=messages(queuedNew,kind:.selectDisplay,type:DisplaySelection.self)
+  check(queuedChoices.map(\.displayID)==[71] && ownRequests(queuedNew)==1,
+        "fence sends only the latest inventory selection and one requester")
   let stale=Client();stale.prepareAutomaticTicketCatalog(catalog([main]));stale.sendViewport(viewport())
   let stalePending=stale.pendingExtendedDesktop!
   stale.pendingExtendedDesktop = .init(peer:stalePending.peer,macID:stalePending.macID,host:stalePending.host,
