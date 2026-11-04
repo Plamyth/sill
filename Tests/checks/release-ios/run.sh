@@ -3,6 +3,67 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$root"
 source Scripts/release-ios.sh
+python3 - <<'PY'
+import copy
+import plistlib
+
+# 앱 내부 상태와 사용자가 Files에서 선택한 문서 폴더의 실제 용도만 허용한다.
+expected = {
+    "NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1"},
+    "NSPrivacyAccessedAPICategorySystemBootTime": {"35F9.1"},
+    "NSPrivacyAccessedAPICategoryFileTimestamp": {"C617.1", "3B52.1"},
+}
+
+
+def validate(entries):
+    assert isinstance(entries, list), "required-reason API 배열 누락"
+    observed = {}
+    for entry in entries:
+        assert isinstance(entry, dict), "API 항목은 사전이어야 함"
+        assert set(entry) == {"NSPrivacyAccessedAPIType", "NSPrivacyAccessedAPITypeReasons"}, "API 항목 키 불일치"
+        category = entry["NSPrivacyAccessedAPIType"]
+        assert isinstance(category, str) and category in expected, "미확인 API 범주"
+        assert category not in observed, "API 범주 중복"
+        reasons = entry["NSPrivacyAccessedAPITypeReasons"]
+        assert isinstance(reasons, list) and all(isinstance(reason, str) for reason in reasons), "사유 배열 형식 불일치"
+        assert len(reasons) == len(set(reasons)), "API 사유 중복"
+        assert set(reasons) == expected[category], "실제 사용 목적과 API 사유 불일치"
+        observed[category] = set(reasons)
+    assert observed == expected, "필수 API 범주 누락"
+
+
+valid = [{"NSPrivacyAccessedAPIType": category, "NSPrivacyAccessedAPITypeReasons": sorted(reasons)}
+         for category, reasons in expected.items()]
+validate(valid)
+rejected = 0
+cases = [None, {}, [], valid + [valid[0]], [dict(valid[0], unexpected=True)]]
+for index, entry in enumerate(valid):
+    cases.append(valid[:index] + valid[index + 1:])
+    for reasons in ([], None, "CA92.1", [1], ["CA92.1", "35F9.1"],
+                    entry["NSPrivacyAccessedAPITypeReasons"] * 2,
+                    entry["NSPrivacyAccessedAPITypeReasons"] + ["0A2A.1"]):
+        mutated = copy.deepcopy(valid)
+        mutated[index]["NSPrivacyAccessedAPITypeReasons"] = reasons
+        cases.append(mutated)
+for reason in expected["NSPrivacyAccessedAPICategoryFileTimestamp"]:
+    mutated = copy.deepcopy(valid)
+    mutated[-1]["NSPrivacyAccessedAPITypeReasons"].remove(reason)
+    cases.append(mutated)
+for entries in cases:
+    try:
+        validate(entries)
+    except AssertionError:
+        rejected += 1
+    else:
+        raise AssertionError(f"잘못된 privacy 선언을 허용함: {entries}")
+with open("iOSClient/PrivacyInfo.xcprivacy", "rb") as source:
+    manifest = plistlib.load(source)
+validate(manifest.get("NSPrivacyAccessedAPITypes"))
+assert manifest.get("NSPrivacyTracking") is False, "추적 선언 변경"
+assert manifest.get("NSPrivacyCollectedDataTypes") == [], "수집 선언 변경"
+assert manifest.get("NSPrivacyTrackingDomains") == [], "추적 도메인 변경"
+print(f"PASS privacy manifest 의미 검사 · 정상 1개, 잘못된 선언 {rejected}개 거부")
+PY
 mkdir -p .build/checks/release-ios
 scratch="$(mktemp -d "$root/.build/checks/release-ios/fixture.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
