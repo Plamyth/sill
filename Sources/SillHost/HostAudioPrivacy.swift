@@ -22,6 +22,7 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         let object: AudioObjectID
         var address: AudioObjectPropertyAddress
         let block: AudioObjectPropertyListenerBlock
+        let retireWhenObjectMissing: Bool
     }
     private let ops: HostAudioPrivacyOperations
     private var listeners: [Listener] = []
@@ -292,7 +293,7 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         var retained: [Listener] = []
         for var listener in listeners {
             let status = ops.removeListener(listener.object, &listener.address, .main, listener.block)
-            if status != noErr {
+            if status != noErr && !(status == kAudioHardwareBadObjectError && listener.retireWhenObjectMissing) {
                 print("[로컬 HAL 감시] listener 제거 거부 selector=\(listener.address.mSelector) status=\(status)")
                 retained.append(listener)
             }
@@ -304,23 +305,23 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         self.observationID = observationID
         var properties = [kAudioHardwarePropertyDevices, kAudioHardwarePropertyDefaultInputDevice,
             kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDefaultSystemOutputDevice]
-            .map { (system, address($0)) }
+            .map { (system, address($0), false) }
         for device in snapshot?.devices ?? [] {
             properties += [kAudioDevicePropertyDeviceIsAlive, kAudioDevicePropertyDeviceUID,
                 kAudioDevicePropertyTransportType, kAudioDevicePropertyNominalSampleRate]
-                .map { (device.id, address($0)) }
+                .map { (device.id, address($0), true) }
             for scope in [kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput] {
-                properties.append((device.id, address(kAudioDevicePropertyStreamConfiguration, scope)))
-                properties.append((device.id, address(kAudioDevicePropertyStreams, scope)))
+                properties.append((device.id, address(kAudioDevicePropertyStreamConfiguration, scope), true))
+                properties.append((device.id, address(kAudioDevicePropertyStreams, scope), true))
                 if (scope == kAudioObjectPropertyScopeInput ? device.inputMuted : device.outputMuted) != nil,
                    (scope == kAudioObjectPropertyScopeInput ? device.inputChannels : device.outputChannels) > 0 {
-                    properties.append((device.id, address(kAudioDevicePropertyMute, scope)))
+                    properties.append((device.id, address(kAudioDevicePropertyMute, scope), true))
                 }
             }
             for stream in device.streams ?? [] {
                 properties += [kAudioObjectPropertyClass, kAudioObjectPropertyOwner, kAudioStreamPropertyIsActive, kAudioStreamPropertyDirection,
                     kAudioStreamPropertyStartingChannel, kAudioStreamPropertyVirtualFormat, kAudioStreamPropertyPhysicalFormat]
-                    .map { (stream.id, address($0)) }
+                    .map { (stream.id, address($0), true) }
             }
         }
         for channels in [2, 16] {
@@ -332,11 +333,11 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
                 ops.read.objectGet(system, &property, UInt32(MemoryLayout<CFString>.size), $0, &size, &plugin)
             }
             if status == noErr, size == MemoryLayout<AudioObjectID>.size, plugin != kAudioObjectUnknown {
-                properties.append((plugin, address(kAudioPlugInPropertyDeviceList)))
-                properties.append((plugin, address(kAudioPlugInPropertyBundleID)))
+                properties.append((plugin, address(kAudioPlugInPropertyDeviceList), false))
+                properties.append((plugin, address(kAudioPlugInPropertyBundleID), false))
             }
         }
-        for (object, originalProperty) in properties {
+        for (object, originalProperty, retireWhenObjectMissing) in properties {
             var property = originalProperty
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 Task { @MainActor [weak self] in
@@ -345,7 +346,8 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
                 }
             }
             guard ops.addListener(object, &property, .main, block) == noErr else { return false }
-            listeners.append(Listener(object: object, address: property, block: block))
+            listeners.append(Listener(object: object, address: property, block: block,
+                                      retireWhenObjectMissing: retireWhenObjectMissing))
         }
         return true
     }
