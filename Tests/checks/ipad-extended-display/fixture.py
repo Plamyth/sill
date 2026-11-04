@@ -12,7 +12,7 @@ def bind_client(client, root, block, ios=True):
     members = '\n'.join(block(source, marker) for marker in markers).replace('private ', '')
     fields = '\n'.join(line.strip().replace('@Published private(set) ', '').replace('@Published private ', '').replace('private ', '')
                        for line in source.splitlines() if any(marker in line for marker in [
-                           'var wantsExtendedDesktop =', 'var extendedDesktopForeground =', 'var extendedDesktopAttempts =', 'var extendedDesktopRetryScheduled =', 'var extendedDesktopControl:', 'var extendedDesktopProblem:', 'var pendingExtendedDesktop:']))
+                           'var wantsExtendedDesktop =', 'var extendedDesktopForeground =', 'var extendedDesktopAttempts =', 'var extendedDesktopRetryScheduled =', 'var extendedDesktopHandoff:', 'var extendedDesktopControl:', 'var extendedDesktopProblem:', 'var pendingExtendedDesktop:']))
     members += '\n' + fields + '\n    let extendedDesktopAdmission = ExtendedDesktopAdmission()\n' + '''
     var lastViewport: Viewport?
     let localCursorState = LocalCursorState()
