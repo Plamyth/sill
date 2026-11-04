@@ -41,7 +41,7 @@ struct ProviderPeerAnchor {
     private static func requireLiveSocket(_ fd: Int32) throws {
         guard fd >= 0 else { throw Failure.peerUnavailable }
         // recv(MSG_PEEK) and poll read filters change an inherited socket's last_pid.
-        // With no read filter, LOCAL_PEERPID must also detect a disconnected peer.
+        // Read our socket state without attaching a read filter, including shutdown/EOF.
         var descriptor = pollfd(fd: fd, events: 0, revents: 0)
         while true {
             let result = poll(&descriptor, 1, 0)
@@ -49,10 +49,13 @@ struct ProviderPeerAnchor {
             guard result >= 0, descriptor.revents & Int16(POLLHUP | POLLERR | POLLNVAL) == 0 else {
                 throw Failure.peerUnavailable
             }
-            var pid: pid_t = 0
-            var size = socklen_t(MemoryLayout<pid_t>.size)
-            guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0,
-                  size == MemoryLayout<pid_t>.size, pid > 0 else { throw Failure.peerUnavailable }
+            var info = socket_fdinfo()
+            let size = Int32(MemoryLayout<socket_fdinfo>.size)
+            guard proc_pidfdinfo(getpid(), fd, PROC_PIDFDSOCKETINFO, &info, size) == size,
+                  info.psi.soi_family == AF_UNIX, info.psi.soi_type == SOCK_STREAM,
+                  info.psi.soi_state & Int16(SOI_S_ISCONNECTED) != 0,
+                  info.psi.soi_state & Int16(SOI_S_CANTRCVMORE | SOI_S_ISDISCONNECTING |
+                    SOI_S_ISDISCONNECTED | SOI_S_DRAINING) == 0 else { throw Failure.peerUnavailable }
             return
         }
     }

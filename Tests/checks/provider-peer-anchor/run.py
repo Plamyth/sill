@@ -23,7 +23,9 @@ extension ProviderPeerAnchor {
     subprocess.run(['/usr/bin/xcrun', 'swiftc', str(instrumented), str(root/'liveness.swift'),
                     '-o', str(binary)], check=True)
     for mode in ['idle', 'data', 'peer-closed', 'data-peer-closed', 'closed-fd', 'negative-fd',
-                 'eintr-idle', 'eintr-peer-closed', 'poll-error', 'pollerr']:
+                 'eintr-idle', 'eintr-peer-closed', 'poll-error', 'pollerr',
+                 'shutdown-write', 'shutdown-both', 'local-shutdown-read',
+                 'local-shutdown-both', 'data-shutdown-write']:
         with tempfile.TemporaryDirectory(prefix='ppl-', dir='/tmp') as endpoint_dir:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server, \
                     socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
@@ -36,10 +38,18 @@ extension ProviderPeerAnchor {
                     before_pid = struct.unpack('i', client.getsockopt(0, 2, 4))[0]
                     before_token = client.getsockopt(0, 4, 32)
                     assert before_pid == os.getpid(), (mode, before_pid, os.getpid())
-                    if mode in ['data', 'data-peer-closed']:
+                    if mode in ['data', 'data-peer-closed', 'data-shutdown-write']:
                         client.sendall(b'pending enrollment frame')
                     if mode.endswith('peer-closed'):
                         client.close()
+                    if mode in ['shutdown-write', 'data-shutdown-write']:
+                        client.shutdown(socket.SHUT_WR)
+                    if mode == 'shutdown-both':
+                        client.shutdown(socket.SHUT_RDWR)
+                    if mode == 'local-shutdown-read':
+                        accepted.shutdown(socket.SHUT_RD)
+                    if mode == 'local-shutdown-both':
+                        accepted.shutdown(socket.SHUT_RDWR)
                     descriptor = -1 if mode == 'negative-fd' else accepted.fileno()
                     child = subprocess.Popen([str(binary), str(descriptor), mode],
                         pass_fds=(accepted.fileno(),), stdin=subprocess.PIPE,
@@ -66,7 +76,7 @@ extension ProviderPeerAnchor {
                     finally:
                         _, error = child.communicate('\n', timeout=5)
                     assert child.returncode == 0, (mode, child.returncode, error)
-    print('PASS 10 liveness cases using production source; peer identity and pending data preserved', flush=True)
+    print('PASS 15 liveness cases using production source; peer identity and pending data preserved', flush=True)
 
 
 with tempfile.TemporaryDirectory(prefix='provider-peer-anchor-') as temporary:
