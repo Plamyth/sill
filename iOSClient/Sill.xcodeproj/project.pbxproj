@@ -1108,7 +1108,7 @@
 				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/CCR-Source-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "CCR Sill";
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIStatusBarHidden = YES;
@@ -1144,7 +1144,7 @@
 				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/CCR-Source-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "CCR Sill";
 				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIStatusBarHidden = YES;
