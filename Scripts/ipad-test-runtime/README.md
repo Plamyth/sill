@@ -1,5 +1,54 @@
 # iPad 단일 정상 앱 테스트 경로 준비
 
+## 내부 TestFlight 후보 사전검사
+
+`testflight.py`는 서명·export가 끝난 기존 정상 앱 IPA를 읽는 독립 CLI다. JSON 영수증의 `kind`는 `test-candidate-preflight`이며 성공은 내부 시험 후보의 사전조건에만 해당한다. `testAccepted`·`productionEligible`을 생성하거나 registry를 변경하지 않는다. 기존 `productionEnabled=false`는 운영 승격 상태이며, 이 값을 내부 TestFlight 시험 채널 자체의 금지로 해석하지 않는다. 아래 경로는 기존 Debug deploy/accept·runner·필수 7 checks를 변경하거나 대체하지 않는다.
+
+```sh
+python3 -B Scripts/ipad-test-runtime/testflight.py \
+  --config /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/testflight-rollout-20261105/candidate-gate-evidence/config.json \
+  --scratch-root /Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/testflight-rollout-20261105/candidate-gate-evidence
+```
+
+종료 코드는 통과 0, held 2다. JSON은 stdout으로 반환한다. scratch-root는 미리 storage-route로 확인한 작업별 디렉터리여야 한다. IPA의 안전한 압축 해제, 공개 서명 인증서 추출, 검사 로그만 그 아래의 임시 디렉터리를 사용하고 종료 때 정리한다. 원본 자료는 수정하지 않는다. 서명 생성·업로드·Apple 계정 호출·기기 조회/설치·Host 조작·새 앱/runner·전역 상태 쓰기는 없다. `codesign`의 verify/display, 공개 provisioning CMS decode, 공개 인증서 만료 검사, 기존 source-guard verify만 호출한다. 비밀키·키체인 내용을 조회하거나 Apple 로그·entitlements·보존 파일 본문을 출력하지 않는다. source-guard는 기존 공식 Git 인증 경로로 원격 ref를 읽는다.
+
+입력 JSON은 `schema="ccr.ipad-testflight-preflight-input/v1"`, `externalTestersAllowed=false`, `repo`(공식 clean `integration/ccr-ipad` 작업공간), `preservedRoot`, `restoredRoot`를 가진다. 아래 각 키의 값은 `{ "path": "절대경로", "sha256": "전체 SHA-256" }`다. 누락·해시 변경·중복 JSON 키·링크 입력은 거부한다. 새 receipt 형식을 강요하지 않고 2026-11-05 기존 export·보존 영수증을 읽는다.
+
+| 입력 키 | 기존 자료 또는 의미 |
+| --- | --- |
+| `ipa` | `Export78Internal/Sill.ipa` |
+| `sourceCapture` | `source-capture78.json`; 기존 `codex.source-identity/v1` capture |
+| `buildReceipt` | `archive78-live-result.json`; exit·commit/tree·build·Host profile SHA |
+| `hostProfile` | 승인된 공식 공개 Host profile, SHA `df7a4b0242b43fa8a7c8a8004bfa1c30305cf86543118ef36fa1beeb7cdd6af3` |
+| `installedIdentity`, `installedMetadata` | `signed77-identity-continuity.json`, `apps-before.json` |
+| `preservationManifest`, `preservationBefore` | `full-preservation-readback.json`, `preservation-before.json` |
+| `preservationArchive` | `private-before.tar.gz` |
+| `originalScene`, `originalPreferences` | `CanvasScene-before.json`, `Preferences-before.plist` |
+| `exportOptions` | 실행 입력 `ExportOptions78Internal.plist` |
+| `exportedOptions` | Xcode 출력 `Export78Internal/ExportOptions.plist` |
+| `exportIntent`, `exportResult`, `exportReadback` | `export78-intent.json`, `export78-result.json`, `export78-readback.json` |
+| `exportLog`, `packagingLog`, `distributionSummary` | `export78.log`, Xcode 출력 `Export78Internal/Packaging.log`, `DistributionSummary.plist` |
+
+`preservedRoot`는 기존 `private-before`, `restoredRoot`는 별도 `independent-restore/private-before`다. 원본 55개 파일의 전체 manifest와 크기, tar 전체 SHA와 각 member SHA, 별도 복원본 전체 SHA, 원래 scene·Preferences 바이트를 실제 재대조한다. `independentRestoreMatches=true`만 믿고 통과시키지 않는다. 이 결과는 build77의 기존 로컬 보존 자료 재검사이며 새 설치나 현재 기기 데이터의 보존 완료가 아니다.
+
+IPA는 Apple anchor·Team `ZPTXHJ866D`·정상 bundle·application-id를 strict로 검증한다. build78 이상, 공식 capture/실제 clean 소스/Info.plist/build receipt 일치, 승인 공개 Host profile SHA, App Store provisioning 종류·만료·정확한 app-id/prefix·실제 leaf 인증서 포함·인증서 유효기간, `get-task-allow=false`, `beta-reports-active=true`가 필수다. source-guard verify와 소스 readback은 통과 전 다시 확인한다.
+
+profile의 `keychain-access-groups`는 앱에 허용된 패턴 목록이다. Apple의 `ZPTXHJ866D.*`와 `com.apple.token`은 실제 앱의 entitlement가 아니다. signed77과 후보 앱에 명시 그룹이 없으면 application-id가 기본 그룹이다. 앱의 실효 그룹은 그 기본 그룹 하나와 같아야 하며 `com.apple.token`·다른 prefix·wildcard·추가 그룹 요청은 거부한다. 설치 metadata와 signed77 공개 서명 영수증·실제 artifact도 읽기 재검사하며 기기를 새로 조회하지 않는다.
+
+내부 전용 설정은 요청 옵션 하나나 `internalTestingOnly=true` 자가선언으로 통과하지 않는다. 실제 Xcode 출력 옵션이 IPA 옆에 있어야 하며 입력·출력 모두 `testFlightInternalTestingOnly=true`, `destination=export`, App Store Connect method와 고정 Team을 요구한다. 두 옵션, export intent/result, 성공 로그, DistributionSummary의 cert/profile/entitlements/version, 서명 IPA 전체 SHA와 app manifest, archive Info.plist·source를 연결한다. IPA 안의 내부 전용 표지를 증명했다고 주장하지 않으며 영수증은 `ipaEmbeddedInternalOnlyFlagVerified=false`와 export 근거 범위를 명시한다. 외부 testers 허용 입력은 검사 시작 전에 실패한다.
+
+privacy는 **실제 IPA에서 꺼낸 바이너리와 내장 manifest**를 검사한다. 공식 소스의 `release-ios.sh`를 함수 정의로만 source하고 기존 `check_required_reasons`를 재사용한다. release 실행 진입점은 호출하지 않는다. 기존 함수가 nm/otool 오류를 `|| true`로 가리므로 두 도구의 실제 실행 성공을 먼저 확인한다. 경고는 실패로 바꾸며 exit0이어도 누락 category나 경고가 있으면 held다. manifest의 reason 배열도 비어 있으면 실패한다. 별도 API 표나 Apple reason 의미 판정기를 만들지 않는다. 기존 분석 표의 범위와 reason의 실제 사용 목적·Apple 심사는 별개다.
+
+```sh
+python3 -B Scripts/ipad-test-runtime/test_testflight.py
+```
+
+unittest는 native 명령 경계만 mock하고 실제 JSON/plist/zip/tar/hash 검증을 실행한다. 정상 Apple profile의 넓은 허용 범위와 앱 그룹 확대 거부, 누락·변조·다른 bundle/team/prefix·debug 서명·구버전·내부 전용 export 근거 누락·privacy 경고 exit0·도구 실패를 확인한다. 기존 로컬 보존 자료가 있으면 55개 파일·tar·독립 복원본을 mock 없이 읽는다. fixture의 정상 예시는 단위검사이며 실제 IPA의 통과로 해석하지 않는다.
+
+2026-11-05 실제 검사 대상은 공식 `71091dfc01d909bb365973539940bdd4b3de4dd4` / tree `91c4a7eb68ba48456171e4c84e98976f1a0c8b35`, build78 IPA SHA `9ebf02e98f415398174166340476614df7704bb7ecadbaa0b43cebbf2a5c8bf6`다. 최종 결과는 `privacy_required_reason_missing:FileTimestamp`로 **held**다. 프로파일 `30a6314d-1aaa-4bfc-b8b0-a9a346be5cee`의 공개 서명·export 검사와 보존 재검사는 수행했으나 후보 전체 통과가 아니다. privacy 추가 전 중간 통과 영수증은 `pre-privacy-superseded.json`으로 보존했고 최종 통과 근거로 사용하지 않는다. 최종 CLI 영수증은 같은 증거 디렉터리의 `actual-ipa-preflight.json`이다.
+
+Pstack Feature의 기존 구조 조사와 직접 위임 범위를 적용하고 Ponytail로 adapter·source identity·release 분석을 재사용했다. 부모는 공식 profile/서명/export, 별도 worker는 StreamClient와 privacy 수정을 소유한다. 이 worker는 독점 worktree에서 이 CLI·unittest·본 절만 변경한다. 공유 기기/Host/원장 쓰기는 없고 ARENA·순정 Goal은 사용하지 않는다. 부모의 독립 검수·통합은 남아 있다. 실제 TestFlight 설치는 후속 test-deployment와 runtime readback 후 기존 `runtime-source`, `native-canvas-ui`, `vault-roundtrip`, `isolation`, `error-contract`, `fixture-reset`, `user-data-preserved` 7 checks 및 별도 accept를 모두 거쳐야 한다. 이 IPA는 후속 handoff 수정 전 개체다.
+
 legacy **deploy와 저수준 install은 계속 held**다. 부모가 준비한 정상 서명 Debug artifact에 한정한 `deploy-prepared`는 실제 사전조건을 검사하고 통과하면 같은 정상 bundle 설치와 격리 실행까지 진행한다. `accept`와 harness는 이 배포의 exact artifact·source·시도 영수증·최신 runtime/PID/metadata 및 기존 runner 이력이 확인될 때 기존 수용 core에 진입한다. 누락·불일치는 구체 사유와 종료 코드 2로 반환한다. 임의 override나 새 runner/app을 설치하는 fallback은 없다. 기존 진단 앱이나 XCTest runner를 삭제하지 않는다.
 
 이번 구현·검사는 소스와 mock 경계에 한정한다. 실제 기기 조회·설치·실행은 수행하지 않았다. 정상 앱 설치나 실제 제품 기능 수용을 완료했다고 표시하지 않는다.
