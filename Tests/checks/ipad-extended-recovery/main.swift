@@ -7,7 +7,7 @@ import Foundation
   let main = DisplayInfo(id:1,name:"main",width:1920,height:1080,isMain:true)
   let owned = DisplayInfo(id:42,name:"owned",width:1366,height:1024,isMain:false,role:"ipadExtendedDesktop")
   func catalog(_ ds:[DisplayInfo], active:StreamSource = .none, id:UInt32? = nil, revision:String = "r0", epoch:VideoEpoch? = nil) -> WindowList {
-   WindowList(macName:"test",windows:[],active:active,launchID:"host",selectionRevision:revision,inputGeneration:epoch?.generation,videoEpoch:epoch,displaySelection:1,displays:ds,displayInventoryID:UUID(),activeDisplayID:id,extendedDesktopControl:1)
+   WindowList(macName:"test",windows:[],active:active,launchID:"host",selectionRevision:revision,inputGeneration:epoch?.generation,videoEpoch:epoch,displaySelection:1,displays:ds,displayInventoryID:UUID(),activeDisplayID:id,sourceSelectionAdmission:.init(generation:1,ready:true),extendedDesktopControl:1)
   }
   func viewports(_ c:Client) -> [Viewport] { c.allSent.compactMap { kind,data in kind == .viewport ? Wire.decode(Viewport.self,from:data) : nil } }
   func requests(_ c:Client) -> Int { viewports(c).filter { $0.extendedDesktopIntent == .request }.count }
@@ -87,6 +87,123 @@ import Foundation
   check(requests(bg)==2,"foreground resumes desired extended request")
   bg.select(.none);bg.suspendExtendedDesktopIntent();bg.resumeExtendedDesktopIntent()
   check(!bg.extendedDesktopRetryScheduled,"foreground preserves explicit stop")
+  func move(_ client: Client, kind: Client.MoveKind = .toCable) -> (NWConnection, NWConnection) {
+   let old=client.connection!, next=NWConnection()
+   client.finishMoveAfterInputDrain(next,kind:kind,kept:[])
+   return (old,next)
+  }
+  func messages<T: Decodable>(_ peer: NWConnection, kind: StreamMessageKind, type: T.Type) -> [T] {
+   peer.packets.compactMap { packet in
+    guard let header=StreamMessage.parseHeader(Data(packet.prefix(StreamMessage.headerLength))),header.kind==kind else { return nil }
+    return Wire.decode(type,from:Data(packet.dropFirst(StreamMessage.headerLength)))
+   }
+  }
+  func ownRequests(_ peer: NWConnection) -> Int {
+   messages(peer,kind:.viewport,type:Viewport.self).filter { $0.extendedDesktopIntent == .request }.count
+  }
+  let moving=Client();moving.prepareAutomaticTicketCatalog(catalog([main,owned]));moving.sendViewport(viewport())
+  let oldRequest=moving.pendingExtendedDesktop!, oldSelection=oldRequest.selection!
+  let (oldPeer,newPeer)=move(moving)
+  check(moving.connection === newPeer && moving.sourceSelectionObservation == nil && !moving.automaticDisplayCatalogObserved,
+        "fenced finishMove clears old peer admission and catalog opportunity")
+  check(moving.selectionRevision == nil && moving.sourceCatalogEpoch == nil && moving.displays.isEmpty && moving.displayCatalogPeer == nil,
+        "fenced move invalidates old display inventory and epoch")
+  check(ownRequests(newPeer)==0,"new peer waits for its admitted catalog before requesting")
+  _ = moving.link.release(oldPeer);await settle()
+  moving.prepareAutomaticTicketCatalog(catalog([main]));await settle()
+  check(ownRequests(newPeer)==1 && moving.pendingExtendedDesktop?.peer === newPeer,
+        "new peer submits its own request after old requester retirement")
+  check(moving.pendingExtendedDesktop?.deadline==oldRequest.deadline && moving.extendedDesktopAttempts==1,
+        "fenced pending move preserves original deadline and attempt budget")
+  let newRequest=moving.pendingExtendedDesktop!.requestID
+  moving.link.cancel(oldRequest.request);moving.link.cancel(oldSelection);await settle()
+  moving.expireExtendedDesktopRequest(now:oldRequest.deadline-1)
+  check(moving.pendingExtendedDesktop?.requestID==newRequest && !viewports(moving).contains { $0.extendedDesktopIntent == .release },
+        "late old request and selection callbacks cannot release new requester")
+  let recreated=DisplayInfo(id:71,name:"recreated",width:1366,height:1024,isMain:false,role:"ipadExtendedDesktop")
+  moving.prepareAutomaticTicketCatalog(catalog([main,recreated],revision:"new-created"));await settle()
+  let picked=messages(newPeer,kind:.selectDisplay,type:DisplaySelection.self)
+  check(picked.count==1 && picked.first?.displayID==71 && picked.first?.inventoryID==moving.displayInventoryID,
+        "new inventory selects recreated extended identity with changed display ID")
+  let beforeRevision=moving.selectionRevision
+  moving.observeSourceSelectionAdmission(catalog([owned],revision:"late-old"),peer:oldPeer)
+  moving.observeExtendedDesktopCatalog(catalog([owned],revision:"late-old"),peer:oldPeer)
+  check(moving.selectionRevision==beforeRevision && moving.pendingExtendedDesktop?.requestID==newRequest,
+        "late old catalog cannot rebind selection or epoch")
+  let newEpoch=VideoEpoch(generation:"g2",source:.desktop,geometry:.init(x:0,y:0,width:1366,height:1024),width:1366,height:1024)
+  moving.prepareAutomaticTicketCatalog(catalog([main,recreated],active:.desktop,id:71,revision:"new-selected",epoch:newEpoch))
+  check(!moving.extendedDesktopRequestPending,"new selection still requires fresh revision and video epoch acknowledgement")
+  let video=Client();video.prepareAutomaticTicketCatalog(catalog([main,owned]));video.sendViewport(viewport())
+  video.prepareAutomaticTicketCatalog(catalog([main,owned],active:.desktop,id:42,revision:"old-selected",epoch:epoch))
+  video.startupVideoRecorded=true
+  let (videoOld,videoNew)=move(video);_ = video.link.release(videoOld)
+  check(!video.startupVideoRecorded,"old video success cannot satisfy new peer startup observation")
+  video.prepareAutomaticTicketCatalog(catalog([main,owned],active:.desktop,id:42,revision:"same-active",epoch:epoch));await settle()
+  check(ownRequests(videoNew)==1,"old successful display does not confer requester ownership to new peer")
+  video.prepareAutomaticTicketCatalog(catalog([main,owned],active:.desktop,id:42,revision:"same-epoch",epoch:epoch))
+  check(video.extendedDesktopRequestPending,"old video epoch cannot acknowledge the rebound selection")
+  video.prepareAutomaticTicketCatalog(catalog([main,owned],active:.desktop,id:42,revision:"fresh-epoch",epoch:newEpoch))
+  check(!video.extendedDesktopRequestPending,"fresh current-peer epoch acknowledges after old video success")
+  let heldMove=Client();heldMove.prepareAutomaticTicketCatalog(catalog([main,owned]));_ = heldMove.link.hold(heldMove.connection!)
+  heldMove.sendViewport(viewport())
+  let (_,heldNew)=move(heldMove,kind:.toWifi)
+  check(heldMove.connection === heldNew && ownRequests(heldNew)==0,"nonfenced adopt drops old peer queued request and release")
+  heldMove.prepareAutomaticTicketCatalog(catalog([main,recreated]));await settle()
+  check(ownRequests(heldNew)==1 && heldMove.pendingExtendedDesktop?.peer === heldNew,"nonfenced move also rebinds through new catalog")
+  check(messages(heldNew,kind:.viewport,type:Viewport.self).allSatisfy { $0.extendedDesktopIntent != .release },
+        "old requester release never migrates across SessionLink adopt")
+  let exhausted=Client();exhausted.prepareAutomaticTicketCatalog(catalog([main]));exhausted.sendViewport(viewport())
+  exhausted.extendedDesktopAttempts=3;let exhaustedDeadline=exhausted.pendingExtendedDesktop!.deadline
+  let (exhaustedOld,exhaustedNew)=move(exhausted);_ = exhausted.link.release(exhaustedOld)
+  exhausted.prepareAutomaticTicketCatalog(catalog([main]));await settle()
+  check(ownRequests(exhaustedNew)==1 && exhausted.extendedDesktopAttempts==3 && exhausted.pendingExtendedDesktop?.deadline==exhaustedDeadline,
+        "third in-flight attempt is rebound without granting another attempt")
+  exhausted.expireExtendedDesktopRequest(now:exhaustedDeadline);await settle()
+  check(!exhausted.extendedDesktopRequestPending && !exhausted.extendedDesktopRetryScheduled,"new peer failure respects exhausted retry budget")
+  let stale=Client();stale.prepareAutomaticTicketCatalog(catalog([main]));stale.sendViewport(viewport())
+  let stalePending=stale.pendingExtendedDesktop!
+  stale.pendingExtendedDesktop = .init(peer:stalePending.peer,macID:stalePending.macID,host:stalePending.host,
+      intent:stalePending.intent,deadline:ProcessInfo.processInfo.systemUptime-1,request:stalePending.request,
+      requestID:stalePending.requestID,revision:stalePending.revision,epoch:stalePending.epoch)
+  stale.extendedDesktopAttempts=3
+  let (staleOld,staleNew)=move(stale);_ = stale.link.release(staleOld)
+  stale.prepareAutomaticTicketCatalog(catalog([main]));await settle()
+  check(ownRequests(staleNew)==0 && !stale.extendedDesktopRequestPending && !stale.extendedDesktopRetryScheduled,
+        "deadline elapsed while awaiting new catalog cannot create a fresh attempt")
+  let trusted=Client();trusted.prepareAutomaticTicketCatalog(catalog([main]));trusted.sendViewport(viewport())
+  let (trustedOld,trustedNew)=move(trusted);_ = trusted.link.release(trustedOld)
+  trusted.session?.home = .plain
+  trusted.prepareAutomaticTicketCatalog(catalog([main,recreated]));await settle()
+  check(ownRequests(trustedNew)==0 && selections(trusted)==0,"new catalog without saved trust cannot request or select")
+  trusted.session?.home = .saved(pin:Data([1]))
+  trusted.prepareAutomaticTicketCatalog(catalog([main,recreated]));await settle()
+  check(ownRequests(trustedNew)==1 && selections(trusted)==1,"retained trust and fresh catalog admit own request before selection")
+  for chooseDisplay in [false,true] {
+   let explicit=Client();explicit.prepareAutomaticTicketCatalog(catalog([main,owned]));explicit.sendViewport(viewport())
+   if chooseDisplay { explicit.selectDisplay(main) } else { explicit.select(.none) }
+   let intent=explicit.explicitSourceIntent
+   let (explicitOld,explicitNew)=move(explicit);_ = explicit.link.release(explicitOld)
+   explicit.prepareAutomaticTicketCatalog(catalog([main,recreated]));await settle()
+   check(!explicit.wantsExtendedDesktop && ownRequests(explicitNew)==0 && explicit.explicitSourceIntent==intent,
+         chooseDisplay ? "handoff preserves explicit alternate display choice" : "handoff cannot revive explicit stop")
+   let waiting=Client();waiting.prepareAutomaticTicketCatalog(catalog([main,owned]));waiting.sendViewport(viewport())
+   let (waitingOld,waitingNew)=move(waiting)
+   if chooseDisplay { waiting.selectDisplay(main) } else { waiting.select(.none) }
+   _ = waiting.link.release(waitingOld)
+   waiting.prepareAutomaticTicketCatalog(catalog([main,recreated]));await settle()
+   check(!waiting.wantsExtendedDesktop && ownRequests(waitingNew)==0,
+         chooseDisplay ? "alternate display chosen during handoff cancels rebind" : "stop during handoff cancels rebind")
+  }
+  let chained=Client();chained.prepareAutomaticTicketCatalog(catalog([main]));chained.sendViewport(viewport())
+  let chainedDeadline=chained.pendingExtendedDesktop!.deadline
+  let (firstPeer,middlePeer)=move(chained)
+  let (_,lastPeer)=move(chained)
+  chained.prepareAutomaticTicketCatalog(catalog([main,recreated]));await settle()
+  check(chained.pendingExtendedDesktop?.deadline==chainedDeadline && chained.extendedDesktopAttempts==1,
+        "back-to-back handoffs retain the first pending deadline and attempt")
+  _ = chained.link.release(firstPeer);_ = chained.link.release(middlePeer);await settle()
+  check(ownRequests(lastPeer)==1 && ownRequests(middlePeer)==0,
+        "only final peer owns the request after both transport fences drain")
   print("TOTAL \(count)")
  }
 }

@@ -517,6 +517,7 @@ final class StreamClient: ObservableObject {
     private var extendedDesktopForeground = UIApplication.shared.applicationState == .active
     private var extendedDesktopAttempts = 0
     private var extendedDesktopRetryScheduled = false
+    private var extendedDesktopHandoff: (intent: UInt64, deadline: TimeInterval?)?
     private struct PendingExtendedDesktop {
         let peer: NWConnection
         let macID: String
@@ -612,7 +613,8 @@ final class StreamClient: ObservableObject {
                 return
             }
         }
-        guard wantsExtendedDesktop, extendedDesktopAttempts < 3 else { return }
+        guard wantsExtendedDesktop, extendedDesktopHandoff == nil || extendedDesktopHandoff?.intent == explicitSourceIntent,
+              extendedDesktopAttempts < 3 || extendedDesktopHandoff?.deadline != nil else { return }
         if extendedDesktopControl != 1, let display = extendedDesktopCandidate {
             selectDisplay(display)
             wantsExtendedDesktop = true
@@ -624,7 +626,14 @@ final class StreamClient: ObservableObject {
             extendedDesktopProblem = "현재 Mac에서 iPad 확장 화면을 요청할 수 없습니다."
             return
         }
-        extendedDesktopAttempts += 1
+        let deadline = extendedDesktopHandoff?.deadline ?? ProcessInfo.processInfo.systemUptime + 15
+        guard ProcessInfo.processInfo.systemUptime < deadline else {
+            extendedDesktopHandoff = nil
+            scheduleExtendedDesktopRecovery()
+            return
+        }
+        if extendedDesktopHandoff?.deadline == nil { extendedDesktopAttempts += 1 }
+        extendedDesktopHandoff = nil
         let intent = explicitSourceIntent
         let requestID = UUID()
         let submission = SessionLink.Submission { [weak self, weak peer] outcome in
@@ -635,7 +644,7 @@ final class StreamClient: ObservableObject {
             self.scheduleExtendedDesktopRecovery()
         }
         let pending = PendingExtendedDesktop(peer: peer, macID: macID, host: host,
-            intent: intent, deadline: ProcessInfo.processInfo.systemUptime + 15, request: submission, requestID: requestID,
+            intent: intent, deadline: deadline, request: submission, requestID: requestID,
             revision: selectionRevision, epoch: sourceCatalogEpoch)
         pendingExtendedDesktop = pending
         viewport.extendedDesktopIntent = .request
@@ -650,7 +659,7 @@ final class StreamClient: ObservableObject {
             scheduleExtendedDesktopRecovery()
             return
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self, weak peer] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, deadline - ProcessInfo.processInfo.systemUptime)) { [weak self, weak peer] in
             guard let self, let peer, self.pendingExtendedDesktop?.peer === peer,
                   self.pendingExtendedDesktop?.intent == intent,
                   self.pendingExtendedDesktop?.requestID == requestID else { return }
@@ -683,9 +692,9 @@ final class StreamClient: ObservableObject {
 
     func reconcileExtendedDesktopIntent() {
         guard extendedDesktopForeground, wantsExtendedDesktop, pendingExtendedDesktop == nil,
-              !extendedDesktopRetryScheduled, extendedDesktopAttempts < 3,
+              !extendedDesktopRetryScheduled, extendedDesktopAttempts < 3 || extendedDesktopHandoff?.deadline != nil,
               extendedDesktopRequestReady else { return }
-        if let candidate = extendedDesktopCandidate, active == .desktop,
+        if extendedDesktopHandoff == nil, let candidate = extendedDesktopCandidate, active == .desktop,
            activeDisplayID == candidate.id { return }
         selectIPadExtendedDesktop(recovering: true)
     }
@@ -705,6 +714,7 @@ final class StreamClient: ObservableObject {
     }
 
     private func cancelExtendedDesktopRequest(release: Bool = true, problem: String? = nil) {
+        extendedDesktopHandoff = nil
         extendedDesktopProblem = problem
         guard let pending = pendingExtendedDesktop else { return }
         pendingExtendedDesktop = nil
@@ -1500,11 +1510,26 @@ final class StreamClient: ObservableObject {
         pendingAutomaticSourceTicket = nil
     }
 
-    private func beginAutomaticConnectionOpportunity(peer: NWConnection? = nil) {
+    private func beginAutomaticConnectionOpportunity(peer: NWConnection? = nil, preservingExtendedDesktop: Bool = false) {
         #if os(iOS)
-        cancelExtendedDesktopRequest(release: false)
+        let handoff: (intent: UInt64, deadline: TimeInterval?)? = preservingExtendedDesktop && wantsExtendedDesktop ?
+            (explicitSourceIntent, pendingExtendedDesktop?.deadline ?? extendedDesktopHandoff?.deadline) : nil
+        cancelExtendedDesktopRequest(release: preservingExtendedDesktop)
+        extendedDesktopHandoff = handoff
         extendedDesktopControl = nil
-        extendedDesktopAttempts = 0
+        if !preservingExtendedDesktop { extendedDesktopAttempts = 0 }
+        if handoff != nil { expectedSourceIntent = nil }
+        if preservingExtendedDesktop {
+            selectionRevision = nil
+            sourceCatalogEpoch = nil
+            displays = []
+            activeDisplayID = nil
+            supportsDisplaySelection = false
+            automaticDisplaySelection = nil
+            displayInventoryID = nil
+            desktopSelectionRequired = false
+            displayCatalogPeer = nil
+        }
         #endif
         if let automaticSubmission { link.cancel(automaticSubmission) }
         automaticSubmission = nil
@@ -3778,8 +3803,7 @@ final class StreamClient: ObservableObject {
         guard connected, let old = connection, connectedDirectly == (kind == .fromDirect),
               kind != .fromRemote || session?.route.isRemote == true else { c.cancel(); return }
         #if os(iOS)
-        cancelExtendedDesktopRequest()
-        extendedDesktopControl = nil
+        beginAutomaticConnectionOpportunity(peer: c, preservingExtendedDesktop: true)
         invalidateIPadSentryReturn()
         sentryReturn.bind(ObjectIdentifier(c))
         #endif
@@ -3813,7 +3837,9 @@ final class StreamClient: ObservableObject {
             let released = link.adopt(c)
             old.forceCancel()
             closeSoon(released?.close ?? [])
+            #if !os(iOS)
             beginAutomaticConnectionOpportunity(peer: c)
+            #endif
             resumeSource = automaticSourceIntent == explicitSourceIntent && active != .none ? active : nil
             #if DEBUG
             let waiting = (released?.waiting ?? 0) > 0 ? " (\(released!.waiting) wait for an earlier hand-over's fence)" : ""
