@@ -1,5 +1,5 @@
 #!/bin/bash
-# Makes the build of Sill for iPhone and iPad that goes to App Store Connect (TestFlight, then the
+# Makes the build of CCR Sill for iPad that goes to App Store Connect (TestFlight, then the
 # App Store): a Release archive of iOSClient/Sill.xcodeproj, signed for App Store Connect and
 # exported as an .ipa on this Mac, or uploaded.
 #
@@ -44,12 +44,10 @@
 # Apple Account, Xcode holds the sign-in, as it does for Product › Archive.
 #
 # Why each step:
-# - Xcode 27.1 or a later Xcode 27, or nothing: App Store Connect takes builds made with a current
-#   SDK only, the project, CI and Sill for Mac are all built with Xcode 27, and the app needs the iOS
-#   27.1 SDK (`xcode_minimum`): its iPhone Duo layouts read the hinge and the fold through it, and an
-#   app built with the 27.0 SDK runs on the Duo in a compatibility window (871×669, sideways only;
-#   docs/iphone-duo-plan.md). The .ipa's app must say it was built with that SDK (DTPlatformVersion).
-#   Raise `xcode_major` and `xcode_minimum` with them.
+# - Xcode 27.0 or a later Xcode 27: this CCR target is iPad-only (device family 2, minimum iOS
+#   27.0). DuoPostureReader.swift uses a 27.0-compatible shim without physical hinge APIs, so the
+#   upstream iPhone Duo's 27.1 requirement does not apply. The .ipa's app must also report an SDK
+#   of at least `xcode_minimum` in DTPlatformVersion.
 # - --bump and --upload refuse a working tree with changes (a build that stays on this Mac only
 #   gets a warning): --bump commits the new number alone, and an uploaded build then names exactly
 #   one commit. New files count where the build takes files the project doesn't list: the asset
@@ -81,7 +79,7 @@ usage: Scripts/release-ios.sh [--bump] [--upload] [--sign-at-export] [--api-key 
        Scripts/release-ios.sh --privacy-report [ARCHIVE]
 
   (no option)
-      archives Sill for iPhone and iPad (Release, generic/platform=iOS) into .build/ios/Sill.xcarchive,
+      archives CCR Sill for iPad (Release, generic/platform=iOS) into .build/ios/Sill.xcarchive,
       exports it for App Store Connect into .build/ios/export/Sill.ipa and checks the .ipa.
       Nothing goes to App Store Connect.
   --upload
@@ -114,7 +112,7 @@ usage: Scripts/release-ios.sh [--bump] [--upload] [--sign-at-export] [--api-key 
   -v, --verbose
       also shows xcodebuild's own output (it always goes to .build/ios/*.log).
 
-Every mode that builds refuses to start unless Xcode 27.1 or a later Xcode 27 is selected.
+Every mode that builds refuses to start unless Xcode 27.0 or a later Xcode 27 is selected.
 Signing requires existing resources for team ZPTXHJ866D; provisioning updates are disabled.
 docs/release-checklist.md, "TestFlight", has the App Store Connect side.
 USAGE
@@ -126,7 +124,7 @@ scheme=Sill
 bundle_id=com.ambrion.sillcanvas.ipad
 team=ZPTXHJ866D
 xcode_major=27
-xcode_minimum=27.1   # the iOS 27.1 SDK: the iPhone Duo's hinge and fold (docs/iphone-duo-plan.md)
+xcode_minimum=27.0
 export_options=Packaging/ExportOptions-appstore.plist
 links=iOSClient/SillLinks.swift
 out=.build/ios
@@ -183,7 +181,7 @@ xcode_problem() {
     if [ -z "$info" ]; then
         echo "xcodebuild doesn't answer (the developer directory is $dir). Select Xcode $xcode_minimum or later: sudo xcode-select -s /Applications/Xcode.app"
     elif [ "${version%%.*}" != "$xcode_major" ] || ! version_at_least "$version" "$xcode_minimum"; then
-        echo "The selected Xcode is $version ($dir), and Sill for iPhone and iPad is built for App Store Connect with Xcode $xcode_minimum or a later Xcode $xcode_major (the iOS $xcode_minimum SDK, which the iPhone Duo's layouts need). Select it with sudo xcode-select -s /Applications/Xcode.app, or for one run: DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer Scripts/release-ios.sh"
+        echo "The selected Xcode is $version ($dir), and CCR Sill for iPad is built for App Store Connect with Xcode $xcode_minimum or a later Xcode $xcode_major (minimum iOS SDK $xcode_minimum). Select it with sudo xcode-select -s /Applications/Xcode.app, or for one run: DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer Scripts/release-ios.sh"
     fi
 }
 
@@ -350,7 +348,7 @@ check_app() {
     plutil -lint -s "$app/PrivacyInfo.xcprivacy" || fail "$app/PrivacyInfo.xcprivacy is not a valid property list."
     value="$(plist_value DTPlatformVersion "$plist")" || value=""
     [ -n "$value" ] && version_at_least "$value" "$xcode_minimum" \
-        || fail "$app was built with the iOS ${value:-(unknown)} SDK, and the iPhone Duo's layouts need the iOS $xcode_minimum SDK (Xcode $xcode_minimum; docs/iphone-duo-plan.md)."
+        || fail "$app was built with the iOS ${value:-(unknown)} SDK, and CCR Sill for iPad requires at least the iOS $xcode_minimum SDK (Xcode $xcode_minimum)."
     if [ "$quiet" = 0 ]; then
         say "Checked its Sill.app: $version ($build), $bundle_id, the iOS $value SDK, ITSAppUsesNonExemptEncryption NO, the Local Network, Bonjour (_sill._tcp) and camera entries, PrivacyInfo.xcprivacy"
     fi
@@ -675,7 +673,7 @@ main() {
 
     local info
     info="$(xcode_version)"
-    say "Sill for iPhone and iPad $version ($build), $bundle_id, team $team, Xcode ${info%% *} (${info#* })"
+    say "CCR Sill for iPad $version ($build), $bundle_id, team $team, Xcode ${info%% *} (${info#* })"
     mkdir -p "$out"
     rm -rf "$archive"
 
