@@ -20,6 +20,7 @@ from xml.parsers.expat import ExpatError
 import adapter
 
 HOST_PROFILE_SHA256 = 'df7a4b0242b43fa8a7c8a8004bfa1c30305cf86543118ef36fa1beeb7cdd6af3'
+DISTRIBUTION_CERTIFICATE_SHA1 = '16FDE5521909C5581EE9B83AEF36CE36B534FD7F'
 APPLICATION_ID = adapter.NORMAL_TEAM + '.' + adapter.USER_BUNDLE
 SOURCE_REF = 'integration/ccr-ipad'
 SOURCE_REPOSITORY = 'github.com/plamyth/sill'
@@ -180,6 +181,12 @@ def installed_baseline(config, work):
     matches = [row for row in json_bytes(raw)['result']['apps']
                if row.get('bundleIdentifier') == adapter.USER_BUNDLE]
     require(len(matches) == 1 and matches[0].get('bundleVersion') == '77', 'installed77_metadata_mismatch')
+    _, raw = pinned(config, 'preservationBefore')
+    before = json_bytes(raw)
+    version = info.get('CFBundleShortVersionString')
+    require(isinstance(version, str) and version and
+            matches[0].get('version') == before.get('installedVersion') == version and
+            before.get('installedBuild') == info['CFBundleVersion'], 'installed77_metadata_version_mismatch')
     return entitlements
 
 
@@ -206,7 +213,9 @@ def profile_checks(profile, entitlements, baseline, leaf, now):
     require(isinstance(patterns, list) and patterns and all(isinstance(p, str) for p in patterns) and
             all(any(fnmatch.fnmatchcase(group, pattern) for pattern in patterns)
                 for group in effective_groups(entitlements)), 'profile_keychain_not_authorized')
-    require(isinstance(profile.get('DeveloperCertificates'), list) and leaf and
+    require(leaf and hashlib.sha1(leaf).hexdigest().upper() == DISTRIBUTION_CERTIFICATE_SHA1,
+            'approved_distribution_certificate_required')
+    require(isinstance(profile.get('DeveloperCertificates'), list) and
             leaf in profile['DeveloperCertificates'], 'profile_signing_certificate_mismatch')
     return {'uuid': profile['UUID'], 'expiresAt': expiry.isoformat(),
             'signingCertificateSHA256': adapter.sha(leaf), 'type': 'app-store'}

@@ -47,6 +47,10 @@ class CandidateTests(unittest.TestCase):
                                    'get-task-allow': True}
         self.entitlements = {**self.debug_entitlements, 'get-task-allow': False, 'beta-reports-active': True}
         self.leaf = b'public-distribution-certificate-fixture'
+        certificate_pin = patch.object(tf, 'DISTRIBUTION_CERTIFICATE_SHA1',
+                                       tf.hashlib.sha1(self.leaf).hexdigest().upper())
+        certificate_pin.start()
+        self.addCleanup(certificate_pin.stop)
         self.profile = {'UUID': '30a6314d-1aaa-4bfc-b8b0-a9a346be5cee',
                         'TeamIdentifier': [adapter.NORMAL_TEAM],
                         'ApplicationIdentifierPrefix': [adapter.NORMAL_TEAM],
@@ -63,7 +67,7 @@ class CandidateTests(unittest.TestCase):
                     'teamIdentifier': adapter.NORMAL_TEAM, 'keychainAccessGroups': None, 'getTaskAllow': True,
                     'rawEntitlementsSHA256': adapter.sha(plistlib.dumps(self.debug_entitlements))})
         self.record('installedMetadata', {'result': {'apps': [
-            {'bundleIdentifier': adapter.USER_BUNDLE, 'bundleVersion': '77'},
+            {'bundleIdentifier': adapter.USER_BUNDLE, 'bundleVersion': '77', 'version': '0.5.1'},
             {'bundleIdentifier': 'unrelated.app', 'bundleVersion': '1'}]}})
         self.record('sourceCapture', {'schema': 'codex.source-identity/v1', 'repository': tf.SOURCE_REPOSITORY,
                     'ref': tf.SOURCE_REF, 'remote': 'origin', 'commit': COMMIT, 'tree': TREE,
@@ -169,7 +173,7 @@ class CandidateTests(unittest.TestCase):
         scene, prefs = list(data.values())[:2]
         self.record('originalScene', scene)
         self.record('originalPreferences', prefs)
-        self.record('preservationBefore', {'bundle': adapter.USER_BUNDLE, 'installedBuild': '77',
+        self.record('preservationBefore', {'bundle': adapter.USER_BUNDLE, 'installedBuild': '77', 'installedVersion': '0.5.1',
                     'deletionPerformed': False, 'sceneSHA256': adapter.sha(scene), 'preferencesSHA256': adapter.sha(prefs)})
 
     def native_boundary(self, args, **kwargs):
@@ -266,6 +270,25 @@ class CandidateTests(unittest.TestCase):
             p = {**self.profile, 'Entitlements': {**self.profile['Entitlements'], key: value}}
             with self.subTest(key=key), self.assertRaises(adapter.Held):
                 tf.profile_checks(p, self.entitlements, self.debug_entitlements, self.leaf, dt.datetime.now(dt.timezone.utc))
+
+    def test_consistent_unapproved_distribution_certificate_is_rejected(self):
+        leaf = b'other-same-team-distribution-certificate'
+        profile = {**self.profile, 'DeveloperCertificates': [leaf]}
+        with self.assertRaisesRegex(adapter.Held, 'approved_distribution_certificate_required'):
+            tf.profile_checks(profile, self.entitlements, self.debug_entitlements, leaf,
+                              dt.datetime.now(dt.timezone.utc))
+
+    def test_installed_metadata_version_must_match_preserved_app(self):
+        for version in ['99.99', None]:
+            self.record('installedMetadata', {'result': {'apps': [
+                {'bundleIdentifier': adapter.USER_BUNDLE, 'bundleVersion': '77', 'version': version}]}})
+            with self.subTest(version=version), self.assertRaisesRegex(adapter.Held, 'metadata_version_mismatch'):
+                self.check()
+
+    def test_preservation_version_must_match_installed_metadata(self):
+        self.edit('preservationBefore', installedVersion='99.99')
+        with self.assertRaisesRegex(adapter.Held, 'metadata_version_mismatch'):
+            self.check()
 
     def test_missing_and_changed_inputs_fail(self):
         for key in list(self.config):
