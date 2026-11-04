@@ -8,6 +8,11 @@ struct SillApp: App {
     @State private var runtimeReceiptError: String?
     #endif
 
+    private var isOfficialApp: Bool {
+        ["com.ambrion.sillcanvas.ipad", "com.ambrion.sillcanvas.iphone"]
+            .contains(Bundle.main.bundleIdentifier ?? "")
+    }
+
     var body: some Scene {
         WindowGroup {
             #if DEBUG
@@ -34,14 +39,26 @@ struct SillApp: App {
                     .padding()
                     .accessibilityIdentifier("canvasTestRuntimeError")
             case .normal:
-                ContentView()
-                    .readsDuoPosture()
+                if isOfficialApp {
+                    ContentView()
+                        .readsDuoPosture()
+                } else {
+                    Text("이 앱에서는 Mac에 연결할 수 없습니다. 기존 정식 CCR Sill 앱을 열어 주세요.")
+                        .padding()
+                        .accessibilityIdentifier("sillAppIdentityError")
+                }
             }
             #else
             // iOS 27.1 on the iPhone Duo: the hinge for the layouts (DuoPostureReader); nothing
             // before iOS 27.1 or on a device without a hinge.
-            ContentView()
-                .readsDuoPosture()
+            if isOfficialApp {
+                ContentView()
+                    .readsDuoPosture()
+            } else {
+                Text("이 앱에서는 Mac에 연결할 수 없습니다. 기존 정식 CCR Sill 앱을 열어 주세요.")
+                    .padding()
+                    .accessibilityIdentifier("sillAppIdentityError")
+            }
             #endif
         }
     }

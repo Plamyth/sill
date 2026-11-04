@@ -31,7 +31,9 @@ public extension App {
         let actual = EntryProbe.content == 1 ? "normal" : EntryProbe.workspace == 1 ? "isolated" : "blocked"
         precondition(actual == expected, "expected \(expected), got \(actual)")
         precondition(EntryProbe.content + EntryProbe.workspace <= 1, "multiple entry paths")
-        precondition(!EntryProbe.errors.contains("canvasTestRuntimeReceiptError"), "receipt failed")
+        let receiptError = ProcessInfo.processInfo.environment["ENTRY_RECEIPT_ERROR"] == "1"
+        precondition(EntryProbe.errors.contains("canvasTestRuntimeReceiptError") == receiptError,
+                     "unexpected receipt result")
         if actual == "blocked" {
             precondition(EntryProbe.errors.contains("sillAppIdentityError") ||
                          EntryProbe.errors.contains("canvasTestRuntimeError"), "missing error")

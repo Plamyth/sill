@@ -66,6 +66,8 @@ def main():
         info.update(CCRSourceCommit=expected[0], CCRSourceTree=expected[1], CCRSourceIdentityVerified=True)
         if identity(args.repo) != expected:
             raise ValueError("소스 식별값 작성 중 Git 소스가 바뀌었습니다.")
+    # Only the iPad target uses this generator; the iPhone shares the base plists.
+    info.setdefault("UIApplicationSceneManifest", {})["UIApplicationSupportsMultipleScenes"] = False
     args.output.parent.mkdir(parents=True, exist_ok=True)
     temporary = args.output.with_suffix(".pending.plist")
     with temporary.open("wb") as stream:

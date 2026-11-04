@@ -27,7 +27,8 @@ inputs = [root / "iOSClient/SillApp.swift", root / "Scripts/ipad-source-identity
           root / "iOSClient/Info.plist", root / "iOSClient/Info-Debug.plist",
           root / "iOSClient/Sill.xcodeproj/project.pbxproj", *sorted(here.glob("*.*"))]
 hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
-commands, cases = [], []
+commands, cases, scene_cases = [], [], []
+passed = False
 
 
 def run(label, command, extra_env=None):
@@ -115,13 +116,16 @@ try:
                     expected = "normal" if name in ["ipad", "iphone"] else "blocked"
                     if debug and trigger != "normal":
                         expected = "isolated" if trigger == "valid" else "blocked"
-                    case_env = dict(env, HOME=str(home), CFFIXED_USER_HOME=str(home), ENTRY_EXPECTED=expected)
+                    receipt_error = expected == "isolated" and name == "missing"
+                    case_env = dict(env, HOME=str(home), CFFIXED_USER_HOME=str(home), ENTRY_EXPECTED=expected,
+                                    ENTRY_RECEIPT_ERROR="1" if receipt_error else "0")
                     label = "-".join([mode, name, trigger])
                     observed = run(label, [binary, *arguments], case_env).strip()
                     assert all(p.read_bytes() == data for p, data in sentinels.items()), label
                     receipt = context / "state/runtime.json"
-                    assert receipt.exists() == (expected == "isolated"), label
-                    cases.append(dict(label=label, expected=expected, observed=observed, sentinelUnchanged=True))
+                    assert receipt.exists() == (expected == "isolated" and not receipt_error), label
+                    cases.append(dict(label=label, expected=expected, observed=observed, sentinelUnchanged=True,
+                                      receiptErrorExpected=receipt_error))
         if not args.entry_only:
             for configuration, base in [("Debug", "Info-Debug.plist"), ("Release", "Info.plist")]:
                 generated = work / (configuration + "-Info.plist")
@@ -132,9 +136,25 @@ try:
                 assert metadata["CCRSourceIdentityVerified"] is True
                 run(configuration + "-verify", ["/usr/bin/python3", inputs[1], "--repo", root, "--verify-built", generated])
                 (out / generated.name).write_bytes(generated.read_bytes())
+                custom = work / (configuration + "-custom.plist")
+                scenes = {"UIWindowSceneSessionRoleApplication": [{"UISceneConfigurationName": "preserved"}]}
+                metadata["UIApplicationSceneManifest"].update(UIApplicationSupportsMultipleScenes=True,
+                                                              UISceneConfigurations=scenes)
+                custom.write_bytes(plistlib.dumps(metadata))
+                custom_before = custom.read_bytes()
+                run(configuration + "-custom-metadata", ["/usr/bin/python3", inputs[1], "--repo", root,
+                    "--base", root / "iOSClient" / base, "--output", generated, "--selected-info", custom,
+                    "--configuration", configuration])
+                manifest = plistlib.loads(generated.read_bytes())["UIApplicationSceneManifest"]
+                assert manifest["UIApplicationSupportsMultipleScenes"] is False
+                assert manifest["UISceneConfigurations"] == scenes and custom.read_bytes() == custom_before
+                scene_cases.append(dict(configuration=configuration, multipleScenes=False,
+                    customSceneConfigurationPreserved=True, selectedInfoUnchanged=True))
         assert all(hashlib.sha256((root / name).read_bytes()).hexdigest() == digest for name, digest in hashes.items())
+        passed = True
 finally:
-    (out / "result.json").write_text(json.dumps(dict(commands=commands, cases=cases, sourceSHA256=hashes,
+    (out / "result.json").write_text(json.dumps(dict(passed=passed, commands=commands, cases=cases,
+        sceneCases=scene_cases, sourceSHA256=hashes,
         sourceUnchanged=all(hashlib.sha256((root / n).read_bytes()).hexdigest() == h for n, h in hashes.items()),
         scope="실제 App 소스의 import만 교체한 경계 실행. UI dependency는 계수용 대역. 실제 CanvasRuntime와 로컬 파일 경로. iOS SDK typecheck. 실 UI·실기·Host 연결 수용 아님."),
         ensure_ascii=False, indent=2) + "\n")
