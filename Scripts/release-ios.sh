@@ -24,14 +24,13 @@
 #                                             required-reason APIs its binary uses; how to make
 #                                             Xcode's privacy report
 #
-# Signing is Xcode's automatic signing on team 9B2KKVM937, as the project sets it. The archive is
+# Signing is Xcode's automatic signing on team ZPTXHJ866D, as the CCR iPad project sets it. The archive is
 # signed for development (Apple Development), as Product › Archive signs it; the export signs it
 # again for App Store Connect with an Apple Distribution certificate and an App Store provisioning
-# profile. -allowProvisioningUpdates lets xcodebuild make or renew those through the Apple Account
-# in Xcode › Settings › Accounts, or through the API key. The first export (2026-09-26, this
-# script's rehearsal) made a cloud-managed Apple Distribution certificate, whose private key stays
-# with Apple (nothing went into the keychain), and the profile "iOS Team Store Provisioning
-# Profile: me.saffer.sill"; later exports reuse both, and Xcode renews them. An archive made
+# profile. This CCR path uses existing signing resources only; provisioning updates are disabled.
+# The upstream rehearsal (2026-09-26, team 9B2KKVM937) made a cloud-managed Apple Distribution
+# certificate and the profile "iOS Team Store Provisioning Profile: me.saffer.sill".
+# Those are historical upstream resources, not this CCR iPad's signing identity. An archive made
 # without signing exports the same way, with the same entitlements: --sign-at-export.
 #
 # Uploading needs the app's record in App Store Connect (docs/release-checklist.md, TestFlight) and
@@ -87,7 +86,7 @@ usage: Scripts/release-ios.sh [--bump] [--upload] [--sign-at-export] [--api-key 
       Nothing goes to App Store Connect.
   --upload
       then uploads the archive to App Store Connect, where it becomes a TestFlight build. It needs
-      the app's record there (bundle ID me.saffer.sill) and a build number not uploaded before.
+      the existing app's record there (bundle ID com.ambrion.sillcanvas.ipad) and a build number not uploaded before.
       Refuses when the working tree has changes.
   --bump
       first adds 1 to CURRENT_PROJECT_VERSION in iOSClient/Sill.xcodeproj and commits that alone
@@ -116,6 +115,7 @@ usage: Scripts/release-ios.sh [--bump] [--upload] [--sign-at-export] [--api-key 
       also shows xcodebuild's own output (it always goes to .build/ios/*.log).
 
 Every mode that builds refuses to start unless Xcode 27.1 or a later Xcode 27 is selected.
+Signing requires existing resources for team ZPTXHJ866D; provisioning updates are disabled.
 docs/release-checklist.md, "TestFlight", has the App Store Connect side.
 USAGE
 }
@@ -123,8 +123,8 @@ USAGE
 project=iOSClient/Sill.xcodeproj
 pbxproj="$project/project.pbxproj"
 scheme=Sill
-bundle_id=me.saffer.sill
-team=9B2KKVM937
+bundle_id=com.ambrion.sillcanvas.ipad
+team=ZPTXHJ866D
 xcode_major=27
 xcode_minimum=27.1   # the iOS 27.1 SDK: the iPhone Duo's hinge and fold (docs/iphone-duo-plan.md)
 export_options=Packaging/ExportOptions-appstore.plist
@@ -303,7 +303,7 @@ explain_failure() {
         echo "error: $what failed. Its errors, from $log:"
         if [ -n "$lines" ]; then printf '%s\n' "$lines" | sed 's/^/  /'; else tail -n 15 "$log" | sed 's/^/  /'; fi
         if grep -q -i -E 'No Accounts|No account for team|Sign in with your Apple ID|requires a development team|No signing certificate|No profiles for|No provisioning profile' "$log"; then
-            echo "Xcode has no way to sign for team $team here: add its Apple Account in Xcode › Settings › Accounts (it makes and renews the certificates and profiles), or give --api-key and --api-issuer."
+            echo "Xcode has no way to sign for team $team here: verify the existing account or API key, certificate and provisioning profile for $bundle_id. Provisioning updates are disabled."
         fi
         if grep -q -i 'Cloud signing permission error' "$log"; then
             if [ "$signer" = "the Apple Account in Xcode" ]; then
@@ -319,7 +319,7 @@ explain_failure() {
             echo "Xcode's sign-in to the Apple Account has expired: open Xcode › Settings › Accounts (sign in again if it asks), then run this again."
         fi
         if grep -q -i 'No suitable application records' "$log"; then
-            echo "App Store Connect has no app with the bundle ID $bundle_id yet: create its record (docs/release-checklist.md, TestFlight, step 1), then run this again."
+            echo "App Store Connect found no suitable existing record for $bundle_id: verify the existing app record and account access before retrying. Do not create a duplicate app."
         fi
         if grep -q -i -E 'Redundant Binary Upload|must be higher than the previously uploaded|already uploaded a build' "$log"; then
             echo "App Store Connect already has this build number for this version: run again with --bump."
@@ -564,7 +564,7 @@ make_archive() {
     if [ "$signed" = 1 ]; then
         say "Archiving (Release, generic/platform=iOS) into $archive with automatic signing through $signer (log: $out/archive.log)"
         run_logged "$out/archive.log" xcodebuild -project "$project" -scheme "$scheme" -destination 'generic/platform=iOS' \
-            -configuration Release -archivePath "$archive" archive -allowProvisioningUpdates ${auth[@]+"${auth[@]}"} \
+            -configuration Release -archivePath "$archive" archive ${auth[@]+"${auth[@]}"} \
             || { explain_failure "$out/archive.log" "The archive"; exit 1; }
     else
         say "Archiving without signing (Release, generic/platform=iOS) into $archive (log: $out/archive.log)"
@@ -705,7 +705,7 @@ main() {
     say "Exporting for App Store Connect ($export_options, destination export) into $export_dir (log: $out/export.log)"
     rm -rf "$export_dir"
     run_logged "$out/export.log" xcodebuild -exportArchive -archivePath "$archive" -exportPath "$export_dir" \
-        -exportOptionsPlist "$export_options" -allowProvisioningUpdates ${auth[@]+"${auth[@]}"} \
+        -exportOptionsPlist "$export_options" ${auth[@]+"${auth[@]}"} \
         || { explain_failure "$out/export.log" "The export"; exit 1; }
     [ -f "$export_dir/Sill.ipa" ] || fail "the export succeeded but left no $export_dir/Sill.ipa (see $out/export.log)."
     check_ipa "$export_dir/Sill.ipa" "$version" "$build"
@@ -726,7 +726,7 @@ NEXT
     say "Uploading Sill $version ($build) to App Store Connect with $signer (log: $out/upload.log)"
     rm -rf "$out/upload"
     run_logged "$out/upload.log" xcodebuild -exportArchive -archivePath "$archive" -exportPath "$out/upload" \
-        -exportOptionsPlist "$options" -allowProvisioningUpdates ${auth[@]+"${auth[@]}"} \
+        -exportOptionsPlist "$options" ${auth[@]+"${auth[@]}"} \
         || { explain_failure "$out/upload.log" "The upload"; exit 1; }
     say "Uploaded Sill $version ($build). App Store Connect processes it (usually 5 to 30 minutes, then an email), and it shows under TestFlight"
     cat <<NEXT

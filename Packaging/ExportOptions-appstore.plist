@@ -12,9 +12,9 @@
 	<key>destination</key>
 	<string>export</string>
 	<key>teamID</key>
-	<string>9B2KKVM937</string>
-	<!-- Xcode picks the Apple Distribution certificate and makes or renews the App Store profile
-	     for me.saffer.sill (release-ios.sh passes -allowProvisioningUpdates). -->
+	<string>ZPTXHJ866D</string>
+	<!-- Xcode selects existing signing resources for com.ambrion.sillcanvas.ipad.
+	     release-ios.sh does not allow provisioning updates. -->
 	<key>signingStyle</key>
 	<string>automatic</string>
 	<!-- The build number App Store Connect gets is the project's CURRENT_PROJECT_VERSION, never one
