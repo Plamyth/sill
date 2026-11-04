@@ -17,6 +17,7 @@ struct HostAudioPrivacyChecks {
     }
 
     @MainActor static func main() async {
+        await listenerRemovalChecks()
         journalRollbackChecks()
         let untouched = PrivacyFakeHAL(), unarmed = guardFor(untouched)
         expect(!unarmed.verify() && untouched.reads == 0 && untouched.writes.isEmpty, "legacy guard has no automatic HAL effects")
@@ -348,5 +349,92 @@ struct HostAudioPrivacyChecks {
         expect(Wire.decode(WindowList.self, from: Wire.encode(old))?.audioPrivacy == nil, "old catalog decodes with absent privacy field")
         let new = WindowList(macName: "시험", windows: [], active: .none, audioPrivacy: status)
         expect(Wire.decode(WindowList.self, from: Wire.encode(new))?.audioPrivacy == status, "optional version two catalog status")
+    }
+}
+
+@MainActor
+private func listenerRemovalChecks() async {
+    let fake = PrivacyFakeHAL()
+    let format = PrivacyAudioStream.Format(sampleRate: 48_000, formatID: 0x6c70636d,
+        flags: 12, bytesPerPacket: 8, framesPerPacket: 1, bytesPerFrame: 8, channels: 2,
+        bitsPerChannel: 32, reserved: 0)
+    let stream = PrivacyAudioStream(id: 11, ownerID: 10, direction: .input, startingChannel: 1,
+        virtualFormat: format, physicalFormat: format, active: true, activeSettable: true)
+    fake.snapshot.devices[0].streams = [stream]
+    let base = fake.operations
+    var status = noErr
+    var removals = 0
+    var operations = base
+    operations.removeListener = { object, address, queue, block in
+        if object == 10 || object == 11 {
+            removals += 1
+            if status != noErr { return status }
+        }
+        return base.removeListener(object, address, queue, block)
+    }
+    let hal = CoreAudioPrivacyHAL(ops: operations)
+    var oldEvents = 0, newEvents = 0
+    expect(hal.observe(fake.snapshot, changed: { oldEvents += 1 }), "무효 객체 감시의 이전 세대 등록")
+    fake.fire(kAudioDevicePropertyDeviceIsAlive, object: 10)
+    fake.fire(kAudioStreamPropertyIsActive, object: 11)
+    fake.snapshot.devices.removeAll { $0.id == 10 }
+    fake.snapshot.input = 20; fake.snapshot.output = 30; fake.snapshot.systemOutput = 30
+    status = kAudioHardwareBadObjectError
+    expect(hal.observe(nil, changed: nil), "사라진 AudioObject의 listener는 퇴역 완료로 처리")
+    let retiredRemovals = removals
+    expect(hal.observe(fake.snapshot, changed: { newEvents += 1 }) && removals == retiredRemovals,
+           "퇴역 객체의 제거를 재시도하지 않고 현재 topology 감시 재개")
+    fake.fire(kAudioDevicePropertyDeviceIsAlive, object: 10)
+    fake.fire(kAudioStreamPropertyIsActive, object: 11)
+    fake.fire(kAudioHardwarePropertyDevices, object: AudioObjectID(kAudioObjectSystemObject))
+    try? await Task.sleep(nanoseconds: 150_000_000)
+    expect(oldEvents == 0 && newEvents == 1 && fake.writes.isEmpty,
+           "사라진 객체의 대기·늦은 callback은 무효화하고 물리 setter는 호출하지 않음")
+    expect(hal.observe(nil, changed: nil), "현재 topology 감시는 정상 제거")
+
+    for failure in [OSStatus(-1), kAudioHardwareIllegalOperationError, kAudioHardwareUnknownPropertyError,
+                    kAudioHardwareBadDeviceError, kAudioHardwareBadStreamError] {
+        let failed = PrivacyFakeHAL()
+        failed.snapshot.devices[0].streams = [stream]
+        let original = failed.operations
+        var rejection = failure
+        var attempts = 0
+        var ops = original
+        ops.removeListener = { object, address, queue, block in
+            if object == 10 { return kAudioHardwareBadObjectError }
+            if object == 11 {
+                attempts += 1
+                if rejection != noErr { return rejection }
+            }
+            return original.removeListener(object, address, queue, block)
+        }
+        let subject = CoreAudioPrivacyHAL(ops: ops)
+        var events = 0
+        expect(subject.observe(failed.snapshot, changed: { events += 1 }), "제거 거부 반례 감시 등록 \(failure)")
+        expect(!subject.observe(nil, changed: nil), "일반·장치·stream 제거 오류는 보호를 유지하며 거부 \(failure)")
+        failed.fire(kAudioDevicePropertyDeviceIsAlive, object: 10)
+        failed.fire(kAudioStreamPropertyIsActive, object: 11)
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let rejectedAttempts = attempts
+        rejection = noErr
+        expect(events == 0 && subject.observe(nil, changed: nil) && attempts > rejectedAttempts && failed.writes.isEmpty,
+               "거부 항목은 보존해 재정리하고 이전 callback과 setter를 차단 \(failure)")
+    }
+
+    for criticalObject in [AudioObjectID(kAudioObjectSystemObject), AudioObjectID(1002)] {
+        let system = PrivacyFakeHAL()
+        let original = system.operations
+        var systemError = kAudioHardwareBadObjectError
+        var ops = original
+        ops.removeListener = { object, address, queue, block in
+            if object == criticalObject && systemError != noErr { return systemError }
+            return original.removeListener(object, address, queue, block)
+        }
+        let subject = CoreAudioPrivacyHAL(ops: ops)
+        expect(subject.observe(system.snapshot, changed: {}), "시스템·플러그인 객체 거부 반례 감시 등록 \(criticalObject)")
+        expect(!subject.observe(nil, changed: nil), "시스템·플러그인의 badObject는 정상 퇴역으로 수용하지 않음 \(criticalObject)")
+        systemError = noErr
+        expect(subject.observe(nil, changed: nil) && system.writes.isEmpty,
+               "시스템·플러그인 실패 항목은 정상 제거 성공 전까지 보존 \(criticalObject)")
     }
 }
