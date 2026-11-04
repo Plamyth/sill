@@ -189,6 +189,16 @@ import Foundation
   sameID.prepareAutomaticTicketCatalog(catalog([main,owned],revision:"inventory-replaced",inventory:changedInventory));await settle()
   check(selections(sameID)==2 && sameID.pendingExtendedDesktop?.selectionInventory==changedInventory,
         "same display ID with replaced inventory also rebinds selection")
+  let sameInventory=Client();sameInventory.prepareAutomaticTicketCatalog(catalog([main]));sameInventory.sendViewport(viewport())
+  sameInventory.prepareAutomaticTicketCatalog(catalog([main,owned]));await settle()
+  sameInventory.prepareAutomaticTicketCatalog(catalog([main,recreated],revision:"identity-only-change"));await settle()
+  check(selections(sameInventory)==2 && sameInventory.pendingExtendedDesktop?.selectionDisplay?.id==71,
+        "display identity replacement rebinds even if inventory token is unchanged")
+  let acknowledgement=Client();acknowledgement.prepareAutomaticTicketCatalog(catalog([main]));acknowledgement.sendViewport(viewport())
+  acknowledgement.prepareAutomaticTicketCatalog(catalog([main,owned]));await settle()
+  acknowledgement.prepareAutomaticTicketCatalog(catalog([main,owned],active:.desktop,id:42,revision:"accepted-with-new-inventory",epoch:newEpoch,inventory:UUID()))
+  check(!acknowledgement.extendedDesktopRequestPending && selections(acknowledgement)==1,
+        "valid current acknowledgement wins over an unrelated inventory replacement")
   let queued=Client();queued.prepareAutomaticTicketCatalog(catalog([main]));queued.sendViewport(viewport())
   let (queuedOld,queuedNew)=move(queued)
   queued.prepareAutomaticTicketCatalog(catalog([main,owned]))
