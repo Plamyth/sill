@@ -18,7 +18,7 @@
 #   Scripts/release-ios.sh --unsigned         archive without signing, zip the app and check it: no
 #                                             Apple Account, no certificate, nothing to install or
 #                                             upload (the TestFlight workflow without its key)
-#   Scripts/release-ios.sh --print-version    the version and build the next archive gets: 0.5 (1)
+#   Scripts/release-ios.sh --print-version    다음 후보 버전과 빌드 번호: 0.5.1 (78)
 #   Scripts/release-ios.sh --privacy-report [archive]
 #                                             what an archive's privacy manifests declare and which
 #                                             required-reason APIs its binary uses; how to make
@@ -87,8 +87,8 @@ usage: Scripts/release-ios.sh [--bump] [--upload] [--sign-at-export] [--api-key 
       the existing app's record there (bundle ID com.ambrion.sillcanvas.ipad) and a build number not uploaded before.
       Refuses when the working tree has changes.
   --bump
-      first adds 1 to CURRENT_PROJECT_VERSION in iOSClient/Sill.xcodeproj and commits that alone
-      ("iOS: build N of version V"). Refuses when the working tree has changes.
+      Sill 타깃의 Debug/Release CURRENT_PROJECT_VERSION만 1 올리고 해당 파일만 커밋한다.
+      SillPhone·프로젝트 전역 값은 보존한다. 미커밋 소스가 있으면 거부한다.
   --api-key PATH --api-issuer ID [--api-key-id ID]
       an App Store Connect API key (App Store Connect › Users and Access › Integrations › App Store
       Connect API) for signing and uploading, instead of the Apple Account in Xcode › Settings ›
@@ -185,26 +185,10 @@ xcode_problem() {
     fi
 }
 
-# Every value the project gives the build setting $1, one per line, without quotes: the Sill
-# target's Debug and Release configurations set MARKETING_VERSION and CURRENT_PROJECT_VERSION.
-setting_values() {
-    sed -n -E "s/^[[:space:]]*$1 = \"?([^\";]*)\"?;[[:space:]]*\$/\1/p" "$pbxproj" | sort -u
-}
-
-# The one value of the build setting $1, or a message and a failure when there is none or the
-# configurations disagree.
+# Sill의 Debug/Release 객체만 읽고 일치 여부를 확인한다. iPhone·프로젝트 전역 값은 제외한다.
 project_setting() {
-    local key="$1" values
-    values="$(setting_values "$key")"
-    if [ -z "$values" ]; then
-        echo "$pbxproj sets no $key." >&2
-        return 1
-    fi
-    if [ "$(printf '%s\n' "$values" | wc -l | tr -d ' ')" != 1 ]; then
-        echo "$pbxproj sets $key to $(printf '%s\n' "$values" | paste -s -d ',' - | sed 's/,/ and /g') in different configurations; give Debug and Release of the target Sill the same value (General › Identity)." >&2
-        return 1
-    fi
-    printf '%s\n' "$values"
+    python3 "$(dirname "${BASH_SOURCE[0]}")/release-ios-settings.py" \
+        "$pbxproj" "$scheme" "$bundle_id" "$team" "$1"
 }
 
 # What would make a build no commit's, as `git status --porcelain` lines: every change to a tracked
@@ -238,17 +222,18 @@ check_committed() {
     exit 2
 }
 
-# --bump: CURRENT_PROJECT_VERSION + 1 in every configuration, committed alone, on a tree that
-# check_committed found clean.
+# --bump는 깨끗한 소스에서 Sill의 Debug/Release 빌드 번호만 올리고 커밋한다.
 bump_build() {
     local version="$1" build="$2" next others
     if ! [[ "$build" =~ ^[0-9]+$ ]]; then
         fail "--bump adds 1 to a whole number, and CURRENT_PROJECT_VERSION is '$build'. Set the next number in Xcode (target Sill › General › Build) and commit it. Nothing was changed."
     fi
     next=$((10#$build + 1))
-    sed -i '' -E "s/^([[:space:]]*CURRENT_PROJECT_VERSION = )\"?$build\"?;[[:space:]]*\$/\1$next;/" "$pbxproj"
+    python3 "$(dirname "${BASH_SOURCE[0]}")/release-ios-settings.py" \
+        "$pbxproj" "$scheme" "$bundle_id" "$team" CURRENT_PROJECT_VERSION "$build" "$next" \
+        || fail "Sill 빌드 번호 갱신을 거부했다. 파일은 변경하지 않았다."
     others="$(git status --porcelain --untracked-files=no | grep -v -F " $pbxproj" || true)"
-    if [ "$(setting_values CURRENT_PROJECT_VERSION)" != "$next" ] || [ -n "$others" ]; then
+    if [ "$(project_setting CURRENT_PROJECT_VERSION)" != "$next" ] || [ -n "$others" ]; then
         git checkout -- "$pbxproj"
         fail "the build number didn't change to $next everywhere in $pbxproj; it is back as it was."
     fi
