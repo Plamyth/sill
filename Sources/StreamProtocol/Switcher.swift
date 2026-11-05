@@ -60,10 +60,13 @@ public struct DisplayInfo: Codable, Equatable, Identifiable {
     public var height: Int
     public var isMain: Bool
     public var role: String?
+    /// Host-supplied OS identity. Absent when persistence or uniqueness is unverified.
+    public var stableIdentity: String?
 
-    public init(id: UInt32, name: String, width: Int, height: Int, isMain: Bool, role: String? = nil) {
+    public init(id: UInt32, name: String, width: Int, height: Int, isMain: Bool, role: String? = nil, stableIdentity: String? = nil) {
         self.id = id; self.name = name; self.width = width; self.height = height; self.isMain = isMain
         self.role = role
+        self.stableIdentity = stableIdentity
     }
 }
 

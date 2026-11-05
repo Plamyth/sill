@@ -324,13 +324,18 @@ final class WindowCatalog {
                 sillVirtual: CGDisplayVendorNumber(id) == VirtualStage.vendorID,
                 physical: physical.contains(id), ownedID: extendedDesktopID)
         }.sorted { $0.displayID < $1.displayID }
-        let infos = displays.enumerated().map { index, display in
+        let infos = DisplayInventory.uniqueStableIdentities(displays.enumerated().map { index, display in
             let id = display.displayID
             let screen = NSScreen.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == id }
+            // Virtual displays can recreate their OS UUID. They require explicit selection.
+            let uuid = physical.contains(id) && id != extendedDesktopID && CGDisplayVendorNumber(id) != VirtualStage.vendorID
+                ? CGDisplayCreateUUIDFromDisplayID(id)?.takeRetainedValue() : nil
+            let stableIdentity = uuid.map { "cgdisplay:" + (CFUUIDCreateString(nil, $0) as String).lowercased() }
             return DisplayInfo(id: id, name: id == extendedDesktopID ? ExtendedDesktop.name : screen?.localizedName ?? "모니터 \(index + 1)",
                                width: display.width, height: display.height, isMain: id == CGMainDisplayID(),
-                               role: id != 0 && id == extendedDesktopID ? "ipadExtendedDesktop" : nil)
-        }
+                               role: id != 0 && id == extendedDesktopID ? "ipadExtendedDesktop" : nil,
+                               stableIdentity: stableIdentity)
+        })
         let signatures = displays.map { display in
             let uuid = CGDisplayCreateUUIDFromDisplayID(display.displayID)?.takeRetainedValue()
             return "\(uuid.map { CFUUIDCreateString(nil, $0) as String } ?? "")/\(display.frame)"

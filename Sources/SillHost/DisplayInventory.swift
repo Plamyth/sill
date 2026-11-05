@@ -2,6 +2,15 @@ import Foundation
 import StreamProtocol
 
 struct DisplayInventory {
+    static func uniqueStableIdentities(_ infos: [DisplayInfo]) -> [DisplayInfo] {
+        let counts = Dictionary(grouping: infos.compactMap(\.stableIdentity), by: { $0 }).mapValues(\.count)
+        return infos.map { info in
+            var info = info
+            if let identity = info.stableIdentity, identity.isEmpty || counts[identity] != 1 { info.stableIdentity = nil }
+            return info
+        }
+    }
+
     private(set) var infos: [DisplayInfo] = []
     private(set) var revision: UUID?
     private(set) var selectedID: UInt32?
