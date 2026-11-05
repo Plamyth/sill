@@ -371,6 +371,15 @@ package final class StreamCoordinator {
     private var independentStreamsEnabled: Bool { !synthetic || peerDriverFactory != nil }
     #if PEER_STREAM_CONTRACT
     private(set) var contractPeerInputs: [StreamSource] = []
+    private(set) var contractPeerInputRects: [CGRect] = []
+    private var contractInventory: DisplayInventory?
+    func contractRequestExtendedDesktop(epoch: UUID, viewport: Viewport) {
+        precondition(synthetic && server.isTestHost && server.loopbackOnly)
+        guard let id = peerStreams.first(where: { $0.value.epoch?.id == epoch })?.key,
+              let dimensions = ExtendedDesktop.Dimensions(viewport: viewport) else { return }
+        extendedDesktop.request(id)
+        extendedDesktop.updateViewport(dimensions, for: id)
+    }
     func contractSentryProtection(verified: Bool) {
         precondition(synthetic && server.isTestHost && server.loopbackOnly)
         server.sentryAdmission.configure(latched: true, persistenceHealthy: true)
@@ -381,9 +390,12 @@ package final class StreamCoordinator {
         server.sentryAdmission.update(verified: verified, persistenceHealthy: true,
             reason: verified ? nil : "격리 검사에서 보호를 거부했습니다.")
     }
-    func startPeerContract(_ factory: @escaping @MainActor () -> any PeerCaptureDriver) {
+    func startPeerContract(_ factory: @escaping @MainActor () -> any PeerCaptureDriver,
+                          inventory: DisplayInventory? = nil, desktop: ExtendedDesktop? = nil) {
         precondition(synthetic && server.isTestHost && server.loopbackOnly)
         peerDriverFactory = factory
+        contractInventory = inventory
+        if let desktop { extendedDesktop = desktop }
         server.start()
     }
     #endif
@@ -3600,6 +3612,13 @@ extension ClientRoute {
 }
 
 extension StreamCoordinator {
+    private var peerDisplayInventory: DisplayInventory {
+        #if PEER_STREAM_CONTRACT
+        if let contractInventory { return contractInventory }
+        #endif
+        return catalog.displayInventory
+    }
+
     private func peerAudioDisplay(_ id: ObjectIdentifier) -> SCDisplay? {
         guard let lane = peerStreams[id] else { return catalog.display }
         guard lane.epoch != nil else { return nil }
@@ -3619,7 +3638,7 @@ extension StreamCoordinator {
             value.bitrate = quality.bitrate
             value.virtualDisplay = false
             return value
-        }, inventory: { [weak self] in self?.catalog.displayInventory ?? DisplayInventory() })
+        }, inventory: { [weak self] in self?.peerDisplayInventory ?? DisplayInventory() })
         lane.supportsScopedInput = peerHelloCaps[id] == true
         peerStreams[id] = lane
         let mirror = MenuMirror(server: server, reader: peerMenuReader)
@@ -3769,6 +3788,7 @@ extension StreamCoordinator {
                       let rect = lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) else { return }
                 #if PEER_STREAM_CONTRACT
                 self.contractPeerInputs.append(lane.source)
+                self.contractPeerInputRects.append(rect)
                 #endif
                 self.logClick(scoped.event, in: rect)
                 self.injector.apply(scoped.event, in: rect, from: id,
