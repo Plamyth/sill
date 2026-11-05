@@ -524,5 +524,49 @@ check("scene retirement cancels both browsers and the path monitor", closedBrows
 closedClient.transport.retireVisionWindow()
 check("scene retirement is idempotent", closedClient.transport.measurementStops == 1)
 check("discarding a different window does not retire a survivor", !concurrentOwner.client.retired && concurrentOwner.owns(concurrentLease))
+let targetOwner = FixtureAppOwner()
+targetOwner.client.transport.savedMacs = paired.savedMacs
+targetOwner.client.transport.macs = []
+targetOwner.client.visionDisplaySelection.windowTarget = FixtureWindowTarget(macID: result.macID!)
+targetOwner.claim(UUID()); targetOwner.start(foreground: true)
+check("P2 target window arms saved automatic path rather than one tap", targetOwner.client.calls == ["startRemote", "armTargetMacAutoConnect", "startBrowsing"])
+let targetClient = targetOwner.client.transport
+if targetOwner.client.calls.contains("armTargetMacAutoConnect"), let firstDialDeadline = DispatchQueue.main.timers.last?.1 {
+    firstDialDeadline.performEvenIfCancelled()
+}
+check("P2 first offline dial retains exact target reconnect intent", targetClient.reconnect?.macID == result.macID && targetClient.remoteAttempts.count == 1)
+targetClient.remoteDial = nil; targetClient.connection = nil; targetClient.session = nil
+targetClient.remoteDialFailed(macID: result.macID!, why: .automatic, failure: .noAnswer, candidate: nil, retry: .transport)
+check("P2 production first dial failure keeps reconnect with existing backoff", targetClient.reconnect?.macID == result.macID && targetClient.reconnect?.remoteFailures == 1)
+targetClient.macs = [row(macID: MacID.make(fingerprint: otherPin), tagged: true)]
+targetClient.discoveryChanged()
+_ = targetClient.reconnectIfListed()
+check("P2 unrelated discovered Mac never replaces requested target", targetClient.sessionRows.isEmpty)
+targetClient.macs = [row(macID: result.macID, tagged: true)]
+targetClient.discoveryChanged()
+_ = targetClient.reconnectIfListed()
+check("P2 production reconnect discovery dials same returned Host", targetClient.sessionRows.count == 1 && targetClient.sessionPins == [pin])
+let previousPreference = UserDefaults.standard.strings
+targetClient.rememberPreferredMac(result.macID!)
+check("P2 target authentication leaves global preferred Mac unchanged", UserDefaults.standard.strings == previousPreference)
+for mutation in 0..<5 {
+    let scoped = savedStartup()
+    scoped.visionDisplaySelection.windowTarget = FixtureWindowTarget(macID: result.macID!)
+    scoped.armSavedMacAutoConnect(targetMacID: result.macID)
+    DispatchQueue.main.timers.last!.1.performEvenIfCancelled()
+    scoped.remoteDial = nil; scoped.connection = nil; scoped.session = nil
+    switch mutation {
+    case 0: scoped.savedMacs[0].recognitionKey = Base64URL.encode(Data(repeating: 0x77, count: 32))
+    case 1: scoped.savedMacs[0].revoked = true
+    case 2: scoped.savedMacs.append(scoped.savedMacs[0])
+    case 3: DeviceIdentity.fingerprint = Data(repeating: 0x66, count: 32)
+    default: scoped.savedMacs[0].fingerprint = Base64URL.encode(otherPin)
+    }
+    scoped.macs = [row(macID: result.macID, tagged: true)]
+    scoped.discoveryChanged()
+    _ = scoped.reconnectIfListed()
+    check("P2 changed target trust cannot reconnect \(mutation)", scoped.reconnect == nil && scoped.sessionRows.isEmpty)
+}
+
 print("RESULT_ASSERTIONS \(assertions) FAILURES \(failures)")
 exit(failures == 0 ? 0 : 1)

@@ -122,7 +122,7 @@ final class StreamClient {
     enum PairingPhase: Equatable { case idle, working }
     enum HomeExchange { case answer(PairResult, SymmetricKey?), noAnswer }
     enum Route { case network, remote; var isRemote: Bool { self == .remote } }
-    struct Session { var macID: String?; var route: Route; var home: DiscoveryPolicy.HomeTrust?; var bonjourName: String? = nil }
+    struct Session { var macID: String?; var route: Route; var home: DiscoveryPolicy.HomeTrust?; var bonjourName: String? = nil; var why: DialReason = .automatic }
     /* REAL_RECONNECT */
     static let preferredTrustedMacKey = "Sill.preferredTrustedMacID"
     static let deviceWord = "Apple Vision Pro"
@@ -131,6 +131,7 @@ final class StreamClient {
     static let lookingOnNetwork = "looking"
     private var startupAutoConnection: StartupAutoConnection = .unarmed
     private var startupRemoteCheck: DispatchWorkItem?
+    private var visionWindowReconnectTarget: VisionStartupTarget?
     var visionCableBootstrap: VisionCableBootstrap<FoundMac>
     var savedMacs: [SavedMac] = []
     var macs: [FoundMac] = []
@@ -159,6 +160,14 @@ final class StreamClient {
     var lingerRender: DispatchWorkItem?
     var pathSignature = "fixture"
     var directWirelessMacs: Set<String> = []
+    var moveUnderWay = false
+    struct Sightings { var since: [String: Double] = [:]; var leftAt: [String: Double] = [:] }
+    var sightings = Sightings(), savedSightings = Sightings()
+    var directSince: [String: Double] = [:]
+    func dial(_ row: FoundMac, macID: String?, tap: Bool) -> Bool {
+        guard let id = macID, let pin = savedMac(id)?.fingerprintData else { return false }
+        return dialRow(row, macID: id, trust: .saved(pin: pin), tagNamed: true, tap: tap)
+    }
     var measurementStops = 0
     func stopMeasuring() { measurementStops += 1 }
     func admitVisionDisplays(lease: VisionWindowLease?, foreground: Bool) {}
@@ -191,7 +200,7 @@ final class StreamClient {
     var sentCable: [Bool?] = []
     var sessionPins: [Data] = []
     var sessionRows: [FoundMac] = []
-    enum DialReason { case launchArgument, automatic }
+    enum DialReason { case launchArgument, automatic, afterPairing, tap, connectRemotely }
     var remoteAttempts: [(String, DialReason)] = []
     var writes = 0
     var identityCalls = 0
@@ -238,10 +247,17 @@ final class StreamClient {
 }
 
 enum PairRequest { static let ask = "ask" }
+enum RemoteCopy {
+    static func vpnLabel(_ candidate: RemoteDialPolicy.Candidate) -> String? { nil }
+    static func dialFailure(_ failure: RemoteDialPolicy.Failure, mac: String, candidate: RemoteDialPolicy.Candidate?, vpnName: String?, device: String) -> String { "inert failure copy" }
+}
 enum HostConfigDefaults { static let remotePort = 5318 }
 
 enum RemoteTLS { static let dialTimeout = 5 }
 final class FixtureLaunchClient {
+    var visionDisplaySelection = FixtureSelection()
+    func savedMac(_ id: String) -> SavedMac? { transport.savedMac(id) }
+    func connectVisionTrustedMac(_ id: String) { calls.append("oneShotTap") }
     var retired = false
     let transport = StreamClient(.ordinary)
     func retireVisionWindow() { transport.retireVisionWindow(); retired = true }
@@ -255,7 +271,11 @@ final class FixtureLaunchClient {
     var visionExpectedMacPin: Data? = nil
     var calls: [String] = []
     func startRemote() { calls.append("startRemote") }
-    func armSavedMacAutoConnect() { calls.append("armSavedMacAutoConnect"); transport.armSavedMacAutoConnect() }
+    func armSavedMacAutoConnect(targetMacID: String? = nil) {
+        calls.append(targetMacID == nil ? "armSavedMacAutoConnect" : "armTargetMacAutoConnect")
+        transport.visionDisplaySelection = visionDisplaySelection
+        transport.armSavedMacAutoConnect(targetMacID: targetMacID)
+    }
     func stopSavedMacAutoConnect() { transport.stopSavedMacAutoConnect() }
     func startBrowsing() { calls.append("startBrowsing") }
     func setVisionPresentationForeground(_ active: Bool) { transport.setVisionPresentationForeground(active) }
@@ -265,7 +285,8 @@ final class FixtureLaunchClient {
     }
     func stopVisionCableBootstrap(_ reason: VisionCableBootstrapReason) { bootstrap.stop(reason) }
 }
-struct FixtureSelection { var lease: VisionWindowLease? }
+struct FixtureWindowTarget { let macID: String }
+struct FixtureSelection { var lease: VisionWindowLease?; var windowTarget: FixtureWindowTarget? }
 final class FixtureDisplay { func setPresentationForeground(_ active: Bool) {} }
 final class FixtureAudio { func setForeground(_ active: Bool) {} }
 enum VisionMicrophoneAdmission { enum Scene { case active, inactive, background } }

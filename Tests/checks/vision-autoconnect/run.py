@@ -44,9 +44,9 @@ def emit(root, output):
     app = block(view, 'struct SillVisionApp: App')
     window = block(view, 'private struct SillVisionWindow: View')
     if '@StateObject private var session = VisionAppSession()' in app or \
-       '@StateObject private var session = VisionAppSession()' not in window:
+       '@StateObject private var session: VisionAppSession' not in window:
         raise AssertionError('Each native window must own its session, stream view and input')
-    if 'openWindow(id: "mac")' not in view or 'WindowGroup(id: "mac")' not in app:
+    if 'openWindow(id: "mac", value: target)' not in view or 'WindowGroup(id: "mac", for:' not in app:
         raise AssertionError('Native concurrent Mac window action missing')
     stream = (root / 'iOSClient/StreamClient.swift').read_text()
     home = (root / 'iOSClient/StreamClient+Home.swift').read_text()
@@ -69,10 +69,12 @@ def emit(root, output):
                    'func rememberAuthenticatedMac(', 'private func trySavedMacAutoConnect(',
                    'private func tryVisionSavedMacAutoConnect(', 'func homeDecision(', 'func wiredDial(']:
         pieces[marker] = vision(block(stream, marker))
+    for marker in ['func visionWindowReconnectIsCurrent(']:
+        pieces[marker] = vision(block(stream, marker))
     for marker in ['func retireVisionWindow()', 'func disconnect()', 'func setVisionPresentationForeground(',
                    'private func cameForward()', 'private func wentToBackground(']:
         pieces[marker] = vision(block(stream, marker))
-    for marker in ['func beginVisionSavedMacReconnect(', 'private func lostReconnect(', 'func cancelPairing()', 'func cancelRemoteDial()']:
+    for marker in ['func beginVisionSavedMacReconnect(', 'private func lostReconnect(', 'func cancelPairing()', 'func cancelRemoteDial()', 'func reconnectIfListed()', 'func remoteDialFailed(']:
         pieces[marker] = vision(block(remote, marker))
     adapter = (root / 'visionOSClient/StreamClient+VisionAutoConnect.swift').read_text()
     pieces['considerVisionCableBootstrap'] = block(adapter, 'func considerVisionCableBootstrap(')
@@ -80,7 +82,15 @@ def emit(root, output):
     body = (root / 'Tests/checks/vision-autoconnect/Standins.swift').read_text()
     body = body.replace('/* REAL_CLIENT_METHODS */', '\n'.join(pieces.values()))
     route = (root / 'iOSClient/RemoteDialPolicy.swift').read_text()
-    body += '\nenum RemoteDialPolicy {\n' + block(route, 'static func ownerTailnetScope(') + '\n}\n'
+    body += '\nenum RemoteDialPolicy {\n' + '\n'.join(block(route, marker) for marker in [
+        'static func ownerTailnetScope(', 'enum Failure:', 'enum RetryDisposition']) + '\n' + \
+        'struct Candidate { let host: String; let port: Int; let kind: String; let via: String; var key: String { host } }\n}\n'
+    if 'reconnectIfListed()' not in vision(block(stream, 'func discoveryChanged()')):
+        raise AssertionError('discovery must drive the production reconnect coordinator')
+    remote_dial = vision(block(remote, 'func dialSaved('))
+    if 'if visionDisplaySelection.windowTarget != nil { continue }' not in remote_dial or \
+       'self.visionWindowReconnectIsCurrent(macID)' not in remote_dial:
+        raise AssertionError('target windows cannot accept saved-key successors or stale trust winners')
     owner_profile = (root / 'Sources/StreamProtocol/OwnerMacBootstrap.swift').read_text()
     method = next(line.strip() for line in owner_profile.splitlines() if line.strip().startswith('public static let method ='))
     body += '\nenum OwnerMacBootstrap {\n' + method + '\n}\n'

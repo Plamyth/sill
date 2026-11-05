@@ -723,7 +723,16 @@ check(replacementCommand != nil && lateInvalidation.visionDisplaySelection.pendi
       "이전 연결의 늦은 실패 처리가 새 연결의 선택을 취소하지 않는다")
 
 
-var independentCatalog = automaticCatalog()
+func stableCatalog(_ catalog: WindowList, identities: [String?]) -> WindowList {
+    var object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(catalog)) as! [String: Any]
+    var displays = object["displays"] as! [[String: Any]]
+    for index in displays.indices { displays[index]["stableIdentity"] = identities[index] }
+    object["displays"] = displays
+    return try! JSONDecoder().decode(WindowList.self, from: JSONSerialization.data(withJSONObject: object))
+}
+let physicalA = "cgdisplay:11111111-1111-1111-1111-111111111111"
+let physicalB = "cgdisplay:22222222-2222-2222-2222-222222222222"
+var independentCatalog = stableCatalog(automaticCatalog(), identities: [physicalA, physicalB])
 independentCatalog.independentStreams = 1
 independentCatalog.sourceSelectionEffects = 0
 var chooserModel = model()
@@ -735,9 +744,9 @@ let restoredB = try! JSONDecoder().decode(VisionDisplaySelection.WindowTarget.se
 check(restoredB == targetB, "close and reopen retains exact target identity")
 check(!targetB.matches(macID: "mac-B", catalog: .init(independentCatalog)), "same display number on another Mac never matches")
 var newerHost = independentCatalog; newerHost.launchID = "replacement-host"
-check(!targetB.matches(macID: "mac-A", catalog: .init(newerHost)), "host restart cannot silently rebind a window")
+check(targetB.matches(macID: "mac-A", catalog: .init(newerHost)), "host restart revalidates the unique physical identity")
 var newerInventory = independentCatalog; newerInventory.displayInventoryID = UUID()
-check(!targetB.matches(macID: "mac-A", catalog: .init(newerInventory)), "changed inventory cannot reuse a numeric display ID")
+check(targetB.matches(macID: "mac-A", catalog: .init(newerInventory)), "changed inventory revalidates the unique physical identity")
 var noIndependence = independentCatalog; noIndependence.independentStreams = nil
 chooserModel.observe(.init(noIndependence))
 check(chooserModel.windowTarget(macID: "mac-A", displayID: 22) == nil, "displaySelection alone cannot offer independent windows")
@@ -792,15 +801,6 @@ reopenedB.connection = nil
 check(reopenedB.visionDisplaySelection.windowTarget == targetB && reopenedB.visionDisplaySelection.catalog == nil,
       "disconnect clears catalog and preserves only explicit target intent")
 
-func stableCatalog(_ catalog: WindowList, identities: [String?]) -> WindowList {
-    var object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(catalog)) as! [String: Any]
-    var displays = object["displays"] as! [[String: Any]]
-    for index in displays.indices { displays[index]["stableIdentity"] = identities[index] }
-    object["displays"] = displays
-    return try! JSONDecoder().decode(WindowList.self, from: JSONSerialization.data(withJSONObject: object))
-}
-let physicalA = "cgdisplay:11111111-1111-1111-1111-111111111111"
-let physicalB = "cgdisplay:22222222-2222-2222-2222-222222222222"
 var physicalCatalog = stableCatalog(independentCatalog, identities: [physicalA, physicalB])
 var recovery = model(); recovery.observe(.init(physicalCatalog))
 let persistentB = recovery.windowTarget(macID: "mac-A", displayID: 22)!
@@ -824,11 +824,59 @@ check(!persistentB.matches(macID: "mac-A", catalog: .init(removed)), "P1 removed
 var duplicate = restart; duplicate.displayInventoryID = UUID(); duplicate.displays![0].id = 333
 duplicate = stableCatalog(duplicate, identities: [physicalB, physicalB])
 check(!persistentB.matches(macID: "mac-A", catalog: .init(duplicate)), "P1 duplicate stable identity cannot auto-restore")
-var legacyRecovery = model(); legacyRecovery.windowTarget = targetB; legacyRecovery.observe(.init(newerInventory))
+var legacyCatalog = stableCatalog(independentCatalog, identities: [nil, nil])
+var legacyRecovery = model(); legacyRecovery.observe(.init(legacyCatalog))
+let legacyTarget = legacyRecovery.windowTarget(macID: "mac-A", displayID: 22)!
+legacyRecovery.windowTarget = legacyTarget
+check(legacyRecovery.automaticCommand(macID: "mac-A") == nil, "P1 legacy target has no automatic restoration authority")
+legacyCatalog.displayInventoryID = UUID()
+legacyRecovery.observe(.init(legacyCatalog))
 let freshLegacy = command(legacyRecovery)
 check(legacyRecovery.begin(freshLegacy, macID: "mac-A").code == .releasing, "P1 legacy fresh explicit selection recovers existing window")
 var foreign = model(); foreign.windowTarget = targetB; foreign.observe(.init(newerInventory))
 check(foreign.begin(command(foreign), macID: "mac-B").code == .staleScope, "P1 explicit recovery cannot switch authenticated Mac")
+
+let (recoveringClient, recoveringPeer) = client()
+recoveringClient.session = .init(macID: "mac-A"); recoveringClient.trustedDisplayPeer = true
+recoveringClient.visionDisplaySelection.windowTarget = persistentB
+recoveringClient.observeVisionDisplays(physicalCatalog, from: recoveringPeer)
+recoveringClient.releaseCallbacks.last!(true); drain()
+let originalEpoch = epoch("original-B")
+var currentB = physicalCatalog; currentB.active = .desktop; currentB.activeDisplayID = 22
+currentB.desktopSelectionRequired = false; currentB.inputGeneration = "original-B"; currentB.videoEpoch = originalEpoch
+recoveringClient.observeVisionDisplays(currentB, from: recoveringPeer)
+recoveringClient.visionInputBinding = .presented(originalEpoch); recoveringClient.confirmVisionDisplayPresentation()
+check(!recoveringClient.visionDisplaySelection.inputBlocked, "P1 original B request completes through production adapter")
+recoveringClient.observeVisionDisplays(changedC, from: recoveringPeer)
+recoveringClient.visionInputBinding = .presented(keptEpoch); recoveringClient.confirmVisionDisplayPresentation()
+check(recoveringClient.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: keptEpoch) &&
+      !recoveringClient.visionDisplaySelection.inputBlocked, "P1 unrelated C preserves B video and input through production adapter")
+recoveringClient.observeVisionDisplays(restart, from: recoveringPeer)
+check(recoveringClient.visionDisplaySelection.pending?.command.displayID == 222, "P1 same window automatically requests reassigned B after restart")
+recoveringClient.releaseCallbacks.last!(true); drain()
+let restartedEpoch = epoch("restarted-B")
+restart.active = .desktop; restart.activeDisplayID = 222; restart.desktopSelectionRequired = false
+restart.inputGeneration = "restarted-B"; restart.videoEpoch = restartedEpoch
+recoveringClient.observeVisionDisplays(restart, from: recoveringPeer)
+check(!recoveringClient.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: keptEpoch), "P1 old epoch never admits restarted B")
+recoveringClient.visionInputBinding = .presented(restartedEpoch); recoveringClient.confirmVisionDisplayPresentation()
+check(recoveringClient.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: restartedEpoch) &&
+      !recoveringClient.visionDisplaySelection.inputBlocked, "P1 same adapter converges recovered B on current epoch")
+recoveringClient.observeVisionDisplays(legacyCatalog, from: recoveringPeer)
+check(!recoveringClient.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: restartedEpoch), "P1 absent stable B stays blocked")
+let explicitLegacy = command(recoveringClient.visionDisplaySelection)
+check(recoveringClient.selectVisionDisplay(explicitLegacy).code == .releasing, "P1 latest explicit choice recovers same existing window")
+recoveringClient.releaseCallbacks.last!(true); drain()
+var legacyPresented = legacyCatalog; let legacyEpoch = epoch("legacy-fresh")
+legacyPresented.active = .desktop; legacyPresented.activeDisplayID = 22; legacyPresented.desktopSelectionRequired = false
+legacyPresented.inputGeneration = "legacy-fresh"; legacyPresented.videoEpoch = legacyEpoch
+recoveringClient.observeVisionDisplays(legacyPresented, from: recoveringPeer)
+recoveringClient.visionInputBinding = .presented(legacyEpoch); recoveringClient.confirmVisionDisplayPresentation()
+check(recoveringClient.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: legacyEpoch) &&
+      !recoveringClient.visionDisplaySelection.inputBlocked, "P1 explicit legacy recovery completes without reopening a window")
+recoveringClient.bindVisionDisplays(to: nil)
+recoveringClient.observeVisionDisplays(legacyPresented, from: recoveringPeer)
+check(!recoveringClient.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: legacyEpoch), "P1 legacy manual admission never survives peer replacement")
 
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
