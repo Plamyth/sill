@@ -113,6 +113,7 @@ struct IPadProviderCall {
         guard let pending, incoming == connection, pending.connection == incoming,
               state.requestDigest == pending.control.request.digest,
               state.result.requestId == pending.control.request.requestId,
+              state.result.provider == "chatgpt-dots-webguest",
               now.isFinite, now >= pending.sentAt, now < pending.expiresAt else { return false }
         guard state.result.status != .started || pending.control.request.action == .start,
               state.result.status != .stopped || pending.control.request.action == .stop else { return false }
