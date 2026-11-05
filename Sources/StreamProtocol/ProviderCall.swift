@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-public enum ProviderCallWireFailure: Error { case invalidFields, invalidRequest, invalidResult }
+public enum ProviderCallWireFailure: Error { case invalidFields, invalidRequest, invalidResult, invalidTarget }
 
 private struct ProviderCallFieldKey: CodingKey {
     let stringValue: String
@@ -12,6 +12,45 @@ private struct ProviderCallFieldKey: CodingKey {
 private func providerCallKeys(_ decoder: Decoder, required: Set<String>) throws {
     guard Set(try decoder.container(keyedBy: ProviderCallFieldKey.self).allKeys.map(\.stringValue)) == required else {
         throw ProviderCallWireFailure.invalidFields
+    }
+}
+
+/// Prepared target from the Core/Host contract at Host 8a59b524. A matching hash only
+/// validates the target's bytes; it does not attest a started call, authority, or media.
+public struct CodexRealtimePreparedTarget: Decodable, Equatable, Sendable {
+    public let schema: String
+    public let providerKind: String
+    public let providerInstanceId: String
+    public let threadId: String
+    public let voiceSessionId: String
+    public let targetHash: String
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema, providerKind, providerInstanceId, threadId, voiceSessionId, targetHash
+    }
+    public init(from decoder: Decoder) throws {
+        try providerCallKeys(decoder, required: Set(CodingKeys.allCases.map(\.rawValue)))
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try c.decode(String.self, forKey: .schema)
+        providerKind = try c.decode(String.self, forKey: .providerKind)
+        providerInstanceId = try c.decode(String.self, forKey: .providerInstanceId)
+        threadId = try c.decode(String.self, forKey: .threadId)
+        voiceSessionId = try c.decode(String.self, forKey: .voiceSessionId)
+        targetHash = try c.decode(String.self, forKey: .targetHash)
+        _ = try hash()
+    }
+    public func hash() throws -> String {
+        guard schema == "ccr-codex-realtime-target-v1", providerKind == "codex-app-server",
+              [providerInstanceId, threadId, voiceSessionId].allSatisfy({ raw in
+                  guard let id = UUID(uuidString: raw) else { return false }
+                  return id.uuidString.lowercased() == raw.lowercased()
+              }) else { throw ProviderCallWireFailure.invalidTarget }
+        // Preserve UUID source case. This is JSON.stringify of the five strings, not
+        // the Dots target hash or the length-prefixed ProviderCallRequest digest.
+        let bytes = try JSONSerialization.data(withJSONObject:
+            [schema, providerKind, providerInstanceId, threadId, voiceSessionId], options: [.withoutEscapingSlashes])
+        let computed = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        guard targetHash == computed else { throw ProviderCallWireFailure.invalidTarget }
+        return computed
     }
 }
 
@@ -123,9 +162,10 @@ public struct ProviderCallResult: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case requestId, status, reason, callSessionId, provider, mediaProtection
     }
-    public init(requestId: UUID, status: Status, reason: String, callSessionId: String? = nil) throws {
+    public init(requestId: UUID, status: Status, reason: String, callSessionId: String? = nil,
+                provider: String = "chatgpt-dots-webguest") throws {
         self.requestId = requestId; self.status = status; self.reason = reason; self.callSessionId = callSessionId
-        provider = "chatgpt-dots-webguest"; mediaProtection = "not_attested"
+        self.provider = provider; mediaProtection = "not_attested"
         try validate()
     }
     public init(from decoder: Decoder) throws {
@@ -140,7 +180,7 @@ public struct ProviderCallResult: Codable, Sendable {
         try validate()
     }
     private func validate() throws {
-        guard provider == "chatgpt-dots-webguest", mediaProtection == "not_attested",
+        guard ["chatgpt-dots-webguest", "codex-app-server"].contains(provider), mediaProtection == "not_attested",
               reason.range(of: "^[a-z_]{1,80}$", options: .regularExpression) != nil,
               callSessionId.map({ !$0.isEmpty && $0.utf16.count <= 128 }) ?? true else {
             throw ProviderCallWireFailure.invalidResult

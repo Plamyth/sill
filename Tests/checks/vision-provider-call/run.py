@@ -5,6 +5,10 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[3]
+microphone = (root / 'visionOSClient/StreamClient+VisionMicrophone.swift').read_text()
+assert 'if control.operation == .start {\n                    DispatchQueue.main.asyncAfter(deadline: .now() + 12)' in microphone
+assert 'else if control.operation == .stop {\n                    DispatchQueue.main.asyncAfter(deadline: .now() + 6)' in microphone
+
 sources = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
 client = root / 'visionOSClient/VisionProviderCall.swift'
 test = Path(__file__).with_name('main.swift')
@@ -19,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='vision-provider-call-') as temporary:
     subprocess.run(swift + ['-emit-module', '-emit-library', '-module-name', 'StreamProtocol',
         *map(str, sources), '-o', str(out/'libStreamProtocol.dylib'),
         '-emit-module-path', str(out/'StreamProtocol.swiftmodule')], check=True)
-    subprocess.run(swift + ['-I', str(out), '-L', str(out), '-lStreamProtocol', str(client), str(test),
+    subprocess.run(swift + ['-I', str(out), '-L', str(out), '-lStreamProtocol', str(client), str(forwarding), str(intent), str(test),
         '-o', str(out/'checks')], check=True)
     subprocess.run([str(out/'checks')], env={**os.environ, 'DYLD_LIBRARY_PATH': str(out)}, check=True)
     source = client.read_text()
@@ -33,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='vision-provider-call-') as temporary:
             end += 1
         return source[start:end]
     adapter = '\n'.join(member(marker) for marker in [
-        '    var visionProviderCanStart:', '    var visionProviderCanStop:',
+        '    func consumeVisionNativePreparedTarget(', '    var visionProviderCanStart:', '    var visionProviderCanStop:',
         '    func performVisionProviderCall('])
     (out/'Adapter.swift').write_text('import Foundation\nimport StreamProtocol\nextension StreamClient {\n' + adapter + '\n}\n')
     (out/'main.swift').write_text(stop_test.read_text())

@@ -13,6 +13,56 @@ enum VisionCallTarget: String, CaseIterable {
     }
 }
 
+// This consumes an authenticated producer observation. It cannot create a challenge,
+// grant media authority, or select a provider on the existing seven-field wire.
+struct VisionNativePreparedCall {
+    struct Fence: Equatable {
+        let connection: UUID
+        let hostKey: String
+        let scope: VisionRemoteAudioIntent.Scope
+        let coreGeneration: UUID
+        let revision: AudioForwardingRevision
+        let intentGeneration: UUID
+        let bindingEpoch: UUID
+        let transport: UUID
+
+        init?(connection: UUID, context: VisionRemoteAudioIntent.Context,
+              snapshot: AudioForwardingSnapshot, device: AudioForwardingDeviceID,
+              coreGeneration: UUID, ownsAudio: Bool) {
+            guard ownsAudio, context.admitted, context.protected,
+                  let scope = context.scope, scope.connection == connection,
+                  let key = context.hostKey,
+                  key.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                  let intent = snapshot.intent, let binding = snapshot.binding,
+                  intent.pairedDeviceId == device, binding.pairedDeviceId == device,
+                  intent.intentGeneration == binding.intentGeneration,
+                  binding.transportKind == .native,
+                  binding.phase == .active || binding.phase == .off else { return nil }
+            self.connection = connection; hostKey = key; self.scope = scope
+            self.coreGeneration = coreGeneration; revision = snapshot.revision
+            intentGeneration = intent.intentGeneration; bindingEpoch = binding.bindingEpoch
+            transport = binding.transportId
+        }
+    }
+    let target: CodexRealtimePreparedTarget
+    let fence: Fence
+    let observedAt: TimeInterval
+    let expiresAt: TimeInterval
+
+    init?(target: CodexRealtimePreparedTarget, challengeTargetHash: String,
+          coreGeneration: UUID, fence: Fence, observedAt: TimeInterval, expiresAt: TimeInterval) {
+        guard (try? target.hash()) == challengeTargetHash,
+              coreGeneration == fence.coreGeneration,
+              observedAt.isFinite, observedAt >= 0, expiresAt.isFinite,
+              expiresAt > observedAt, expiresAt - observedAt <= VisionAudioForwarding.freshness else { return nil }
+        self.target = target; self.fence = fence
+        self.observedAt = observedAt; self.expiresAt = expiresAt
+    }
+    func isCurrent(_ current: Fence, now: TimeInterval) -> Bool {
+        fence == current && now.isFinite && now >= observedAt && now < expiresAt
+    }
+}
+
 struct VisionProviderCall {
     struct Pending {
         let control: ProviderCallControl
@@ -28,6 +78,7 @@ struct VisionProviderCall {
     private(set) var request: ProviderCallRequest?
     private(set) var result: ProviderCallResult?
     private(set) var firstSentAt: TimeInterval?
+    private(set) var nativePreparation: VisionNativePreparedCall?
     private(set) var queries = 0
     private var lastQueryAt: TimeInterval?
     private let clock: () -> TimeInterval
@@ -43,6 +94,7 @@ struct VisionProviderCall {
     mutating func selectTarget(_ next: VisionCallTarget) -> Bool {
         guard next != target else { return true }
         guard canChangeTarget else { return false }
+        nativePreparation = nil
         target = next
         return true
     }
@@ -54,6 +106,7 @@ struct VisionProviderCall {
         let trusted = hostKey.flatMap { $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil ? $0 : nil }
         guard let trusted else {
             supported = false
+            nativePreparation = nil
             if connection != next { disconnected(); connection = next }
             return
         }
@@ -66,6 +119,7 @@ struct VisionProviderCall {
         supported = capability == 1
     }
     mutating func disconnected() {
+        nativePreparation = nil
         supported = false
         pending = nil
         if let request, result == nil || result?.status == .pending {
@@ -101,6 +155,7 @@ struct VisionProviderCall {
         guard let pending, incoming == connection, pending.connection == incoming,
               state.requestDigest == pending.control.request.digest,
               state.result.requestId == pending.control.request.requestId,
+              state.result.provider == "chatgpt-dots-webguest",
               now.isFinite, now >= pending.sentAt, now < pending.expiresAt else { return false }
         guard state.result.status != .started || pending.control.request.action == .start,
               state.result.status != .stopped || pending.control.request.action == .stop else { return false }
@@ -124,9 +179,25 @@ struct VisionProviderCall {
         result = try? .init(requestId: pending.control.request.requestId, status: .unknown, reason: "provider_response_timeout")
         return true
     }
+    mutating func discardNativePreparation() { nativePreparation = nil }
+
+    @discardableResult
+    mutating func consumeNativePreparation(_ preparation: VisionNativePreparedCall,
+                                          fence: VisionNativePreparedCall.Fence) -> Bool {
+        guard target == .nativeCodex, supported, pending == nil,
+              preparation.isCurrent(fence, now: clock()),
+              fence.connection == connection, fence.hostKey == hostKey else {
+            nativePreparation = nil
+            return false
+        }
+        nativePreparation = preparation
+        return true
+    }
     var message: String {
         switch target {
-        case .nativeCodex: return "Mac Codex 음성의 원격 시작·종료는 미확인입니다."
+        case .nativeCodex:
+            return nativePreparation == nil ? "Mac Codex 음성의 원격 시작·종료는 미확인입니다." :
+                "Mac Codex 음성 대상은 확인했지만 대상 지정 전송 계약은 아직 준비되지 않았습니다."
         case .grok: return "Grok 통화의 원격 시작·종료는 미확인입니다."
         case .chatgptDots: break
         }
@@ -147,6 +218,26 @@ struct VisionProviderCall {
 import Network
 
 extension StreamClient {
+    // Called only by the eventual authenticated Host prepared-target producer. No
+    // endpoint is inferred from the Host's private command socket.
+    @discardableResult
+    func consumeVisionNativePreparedTarget(_ data: Data, challengeTargetHash: String,
+        coreGeneration: UUID, currentCoreGeneration: UUID, observedAt: TimeInterval,
+        expiresAt: TimeInterval, from peer: NWConnection) -> Bool {
+        visionProviderCall.discardNativePreparation()
+        guard connection === peer, authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
+              data.count <= 4096, let model = visionForwarding,
+              let snapshot = model.providerCallSnapshot,
+              let fence = VisionNativePreparedCall.Fence(connection: visionAudioIntentConnection,
+                context: visionAudioIntentContext, snapshot: snapshot, device: model.device,
+                coreGeneration: currentCoreGeneration,
+                ownsAudio: VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID),
+              let target = try? JSONDecoder().decode(CodexRealtimePreparedTarget.self, from: data),
+              let prepared = VisionNativePreparedCall(target: target, challengeTargetHash: challengeTargetHash,
+                coreGeneration: coreGeneration, fence: fence, observedAt: observedAt, expiresAt: expiresAt) else { return false }
+        return visionProviderCall.consumeNativePreparation(prepared, fence: fence)
+    }
+
     var visionProviderCanStart: Bool {
         visionProviderCall.target == .chatgptDots &&
             visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status != .started &&

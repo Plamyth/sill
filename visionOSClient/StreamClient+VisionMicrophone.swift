@@ -243,7 +243,7 @@ extension StreamClient {
                     sendMicrophoneControl(control, to: peer)
                 }
                 if control.operation == .start {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
                         guard let self else { return }
                         self.applyMicrophone(self.microphonePolicy.startTimedOut(control.requestID, from: peer))
                     }

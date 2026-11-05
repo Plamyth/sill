@@ -6,6 +6,8 @@ func check(_ condition: Bool, _ label: String) {
 }
 final class NWConnection {}
 final class StreamClient {
+    var visionAudioIntentConnection = UUID()
+    var visionAudioOwnerID = UUID()
     var connection: NWConnection? = NWConnection()
     var authenticatedVisionMacAudioPeer: ObjectIdentifier? { connection.map(ObjectIdentifier.init) }
     var visionAudioTrustedHostKey: String? = String(repeating: "c", count: 64)
@@ -25,6 +27,11 @@ final class StreamClient {
         visionAudioIntentContext.cleanupReady = true
     }
     func sendVisionProviderCall(_ control: ProviderCallControl, to peer: NWConnection) { sent.append(control) }
+}
+final class VisionRemoteAudioStore {
+    static let shared = VisionRemoteAudioStore()
+    struct Model { var owner: UUID? }
+    var model = Model()
 }
 var now = 100.0
 let connection = UUID()
@@ -99,3 +106,103 @@ check(!expired.visionProviderCanStop, "오래된 OFF 원장은 종료를 허용�
 expired.performVisionProviderCall(.stop)
 check(expired.sent.isEmpty, "오래된 원장은 실제 송신도 차단함")
 print("PASS: 실제 Vision 통화 버튼·송신 메서드의 양방향 OFF 종료 회귀; 네트워크·통화·오디오 효과 0")
+
+// The Core target producer is absent. These checks consume its exact data shape only.
+import CryptoKit
+let tuple = ["ccr-codex-realtime-target-v1", "codex-app-server",
+    "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC"]
+let hash = SHA256.hash(data: try JSONSerialization.data(withJSONObject: tuple, options: [.withoutEscapingSlashes]))
+    .map { String(format: "%02x", $0) }.joined()
+var object = Dictionary(uniqueKeysWithValues: zip(
+    ["schema", "providerKind", "providerInstanceId", "threadId", "voiceSessionId"], tuple))
+object["targetHash"] = hash
+func target(_ fields: [String: String]) throws -> CodexRealtimePreparedTarget {
+    try JSONDecoder().decode(CodexRealtimePreparedTarget.self,
+        from: JSONSerialization.data(withJSONObject: fields))
+}
+let exact = try target(object)
+check(hash == "bbbeec5e117c5c78893bd7e0500dcf17276f3f553b23a509f64450ec1781e7a5", "별도 Python UTF8 JSON 해시 벡터와 일치함")
+let exactHash = try exact.hash()
+check(exact.voiceSessionId == tuple[4] && exactHash == hash, "native UUID 문자 대소문자를 보존함")
+for (key, value) in [("extra", "x"), ("providerKind", "chatgpt-dots-webguest"),
+    ("targetHash", hash.uppercased()), ("voiceSessionId", tuple[4].lowercased()), ("threadId", "not-a-uuid")] {
+    var invalid = object; invalid[key] = value
+    check((try? target(invalid)) == nil, "다른 키·주체·해시·식별자를 거절함")
+}
+var context = client.visionAudioIntentContext
+context.scope = .init(connection: connection, window: UUID(), admission: UUID(), video: UUID(), foreground: UUID(), privacy: 1)
+context.protected = true
+let core = UUID()
+let hostKey = String(repeating: "c", count: 64)
+func fence(_ c: VisionRemoteAudioIntent.Context, _ snapshot: AudioForwardingSnapshot = off,
+           coreGeneration: UUID = core, owner: Bool = true) -> VisionNativePreparedCall.Fence? {
+    .init(connection: connection, context: c, snapshot: snapshot, device: device,
+          coreGeneration: coreGeneration, ownsAudio: owner)
+}
+let originalFence = fence(context)!
+let preparation = VisionNativePreparedCall(target: exact, challengeTargetHash: hash,
+    coreGeneration: core, fence: originalFence, observedAt: 100, expiresAt: 103)!
+check(preparation.isCurrent(originalFence, now: 102.99), "현재 소유 창·native 원장·Core 세대에서만 준비 관측을 소비함")
+check(!preparation.isCurrent(originalFence, now: 103) && !preparation.isCurrent(originalFence, now: 99), "기한 경계와 역행 시각을 거절함")
+check(VisionNativePreparedCall(target: exact, challengeTargetHash: String(repeating: "0", count: 64),
+    coreGeneration: core, fence: originalFence, observedAt: 100, expiresAt: 103) == nil, "외부 challenge 해시 불일치를 거절함")
+check(VisionNativePreparedCall(target: exact, challengeTargetHash: hash,
+    coreGeneration: UUID(), fence: originalFence, observedAt: 100, expiresAt: 103) == nil, "Core 세대 불일치를 거절함")
+check(VisionNativePreparedCall(target: exact, challengeTargetHash: hash,
+    coreGeneration: core, fence: originalFence, observedAt: 100, expiresAt: 104) == nil, "포워딩 3초보다 긴 준비 권한을 만들지 않음")
+var otherWindow = context
+otherWindow.scope = .init(connection: connection, window: UUID(), admission: UUID(), video: UUID(), foreground: UUID(), privacy: 1)
+check(!preparation.isCurrent(fence(otherWindow)!, now: 101), "다른 창은 준비 대상을 가로채지 못함")
+check(!preparation.isCurrent(fence(context, coreGeneration: UUID())!, now: 101), "새 Core 세대에 준비 대상을 재사용하지 않음")
+check(fence(context, owner: false) == nil, "오디오 소유권 반납 뒤 준비 대상을 소비하지 않음")
+var unprotected = context; unprotected.protected = false
+check(fence(unprotected) == nil, "실제 미디어 보호 확인 없이 준비 대상을 소비하지 않음")
+var hidden = context; hidden.presented = false
+check(fence(hidden) == nil, "닫힌 창은 준비 대상을 소비하지 않음")
+now = 101
+var native = VisionProviderCall(connection: connection, clock: { now })
+native.observe(connection: connection, capability: 1, hostKey: hostKey)
+check(native.consumeNativePreparation(preparation, fence: originalFence), "native 준비 모델의 실제 소비 경로")
+check(!native.canPerform && native.perform(start) == nil, "대상 지정 wire producer 없이 Dots 실행기로 native 명령을 보내지 않음")
+check(!native.consumeNativePreparation(preparation, fence: fence(otherWindow)!), "창 전환은 이전 준비 대상을 폐기함")
+check(native.nativePreparation == nil, "실패한 소비가 이전 권한을 남기지 않음")
+_ = native.consumeNativePreparation(preparation, fence: originalFence)
+native.disconnected()
+check(native.nativePreparation == nil, "peer 교체는 준비 대상을 폐기함")
+let nativeResult = try ProviderCallResult(requestId: start.requestId, status: .started,
+    reason: "fixture_started", callSessionId: tuple[4], provider: "codex-app-server")
+check(nativeResult.mediaProtection == "not_attested", "native 결과로 미디어 보호를 성공 처리하지 않음")
+var dots = VisionProviderCall(connection: connection, target: .chatgptDots, clock: { now })
+dots.observe(connection: connection, capability: 1, hostKey: hostKey)
+_ = dots.perform(start)
+check(!dots.receive(try .init(request: start, result: nativeResult), from: connection), "Dots 요청에 native 성공 결과를 혼합하지 않음")
+print("PASS: native exact target/hash/provider/freshness/window/owner/Core 소비 회귀. 실제 연결·미디어 효과 0")
+
+var preparedCall = VisionProviderCall(connection: connection, clock: { now })
+preparedCall.observe(connection: connection, capability: 1, hostKey: hostKey)
+let consumer = StreamClient(preparedCall, forwarding)
+consumer.visionAudioIntentConnection = connection
+consumer.visionAudioIntentContext = context
+VisionRemoteAudioStore.shared.model.owner = consumer.visionAudioOwnerID
+let targetData = try JSONSerialization.data(withJSONObject: object)
+check(consumer.consumeVisionNativePreparedTarget(targetData, challengeTargetHash: hash,
+    coreGeneration: core, currentCoreGeneration: core, observedAt: 100, expiresAt: 103,
+    from: consumer.connection!), "production 소비 메서드가 현재 peer와 창·owner에 준비 대상을 결속함")
+check(consumer.visionProviderCall.nativePreparation?.target == exact, "production 소비 결과가 정확한 native 대상을 보존함")
+check(!consumer.consumeVisionNativePreparedTarget(targetData, challengeTargetHash: hash,
+    coreGeneration: core, currentCoreGeneration: core, observedAt: 100, expiresAt: 103,
+    from: NWConnection()), "다른 peer의 producer 응답을 거절함")
+check(consumer.visionProviderCall.nativePreparation == nil, "잘못된 peer 관측은 이전 준비 대상도 폐기함")
+VisionRemoteAudioStore.shared.model.owner = UUID()
+check(!consumer.consumeVisionNativePreparedTarget(targetData, challengeTargetHash: hash,
+    coreGeneration: core, currentCoreGeneration: core, observedAt: 100, expiresAt: 103,
+    from: consumer.connection!), "production 소비도 다른 창의 오디오 소유권을 가로채지 않음")
+let revised = try AudioForwardingSnapshot(revision: .init(4), intent: off.intent, binding: off.binding)
+check(!preparation.isCurrent(fence(context, revised)!, now: 101), "원장 revision 변경은 준비 대상을 무효화함")
+let changedBinding = try AudioForwardingBinding(pairedDeviceId: device, intentGeneration: generation,
+    bindingEpoch: UUID(), transportId: off.binding!.transportId, transportKind: .native,
+    operationId: off.binding!.operationId, phase: .off, configuration: configuration)
+let changedEpoch = try AudioForwardingSnapshot(revision: off.revision, intent: off.intent, binding: changedBinding)
+check(!preparation.isCurrent(fence(context, changedEpoch)!, now: 101), "같은 revision의 binding epoch 변경도 준비 대상을 무효화함")
+print("PASS: production native 소비 메서드·peer·owner·revision·binding epoch 회귀")
