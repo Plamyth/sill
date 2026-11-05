@@ -372,6 +372,8 @@ package final class StreamCoordinator {
     #if PEER_STREAM_CONTRACT
     private(set) var contractPeerInputs: [StreamSource] = []
     private(set) var contractPeerInputRects: [CGRect] = []
+    private(set) var contractPeerInputEvents: [InputEvent] = []
+    var contractPeerCount: Int { peerStreams.count }
     private var contractInventory: DisplayInventory?
     func contractRequestExtendedDesktop(epoch: UUID, viewport: Viewport) {
         precondition(synthetic && server.isTestHost && server.loopbackOnly)
@@ -680,6 +682,7 @@ package final class StreamCoordinator {
                 self.settingsIgnoredLineAt[ObjectIdentifier(connection)] = nil
                 let id = ObjectIdentifier(connection)
                 self.extendedDesktop.release(id)
+                self.extendedDesktop.retainDisplay(nil, for: id)
                 self.extendedDesktopEligible.remove(id)
                 self.extendedDesktopViewports[id] = nil
                 if let lane = self.peerStreams.removeValue(forKey: id) {
@@ -3704,6 +3707,10 @@ extension StreamCoordinator {
         }
         lane.onChanged = { [weak self, weak lane, weak connection] in
             guard let self, let lane, let connection, self.peerStreams[id] === lane else { return }
+            let displayID: UInt32?
+            if let pending = lane.state.pending { displayID = pending.display?.displayID }
+            else { displayID = lane.epoch == nil ? nil : lane.currentDisplayID }
+            self.extendedDesktop.retainDisplay(displayID, for: id)
             self.peerMenus[id]?.effectAdmission = lane.admission
             self.peerMenus[id]?.setTarget(self.peerMenuTarget(lane))
             self.server.setPeerPointerRect(lane.epoch == nil ? nil : lane.description?.bounds, for: connection)
@@ -3789,6 +3796,7 @@ extension StreamCoordinator {
                 #if PEER_STREAM_CONTRACT
                 self.contractPeerInputs.append(lane.source)
                 self.contractPeerInputRects.append(rect)
+                self.contractPeerInputEvents.append(scoped.event)
                 #endif
                 self.logClick(scoped.event, in: rect)
                 self.injector.apply(scoped.event, in: rect, from: id,

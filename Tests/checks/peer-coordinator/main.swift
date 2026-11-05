@@ -141,7 +141,7 @@ final class Client: @unchecked Sendable {
         let next = a.catalogs.last!.videoEpoch!
         a.send(.input, SourceInput(event: .text("stale"), generation: ea.generation, videoEpoch: ea.id))
         a.send(.input, SourceInput(event: .text("new"), generation: next.generation, videoEpoch: next.id))
-        try await wait("new input admitted") { host.contractPeerInputs.count >= 3 }
+        try await wait("new input admitted") { host.contractPeerInputEvents.last == .text("new") }
         check(Set(host.contractPeerInputs.prefix(2)) == Set([StreamSource.window(10), .window(20)]) && host.contractPeerInputs.count == 3 && host.contractPeerInputs.last == .window(11), "foreign and stale input dropped")
         func select(_ client: Client, _ display: UInt32) {
             client.send(.selectDisplay, DisplaySelection(displayID: display, inventoryID: inventory.revision!, origin: .human))
@@ -181,6 +181,32 @@ final class Client: @unchecked Sendable {
         try await wait("B retained virtual input") { host.contractPeerInputs.count == retainedInputs }
         check(host.contractPeerInputRects.last == ContractCapture.bounds(42) && b.catalogs.last?.videoEpoch == virtual,
               "B virtual epoch and input coordinates survive A disconnect")
+        let reconnected = Client(port: host.server.port!)
+        defer { reconnected.connection.cancel() }
+        try await reconnected.start()
+        try await wait("reconnect starts with its own idle scope") { reconnected.catalogs.last?.independentStreams == 1 }
+        check(reconnected.catalogs.last?.active == StreamSource.none && reconnected.catalogs.last?.videoEpoch == nil &&
+              b.catalogs.last?.videoEpoch == virtual, "new connection never inherits or clears another peer display")
+        select(reconnected, 1)
+        try await wait("reconnected peer captures MacBook") {
+            reconnected.catalogs.last?.activeDisplayID == 1 && reconnected.frames.last == reconnected.catalogs.last?.videoEpoch?.id
+        }
+        let fresh = reconnected.catalogs.last!.videoEpoch!
+        check(fresh.id != mac.id && fresh.generation != mac.generation && b.catalogs.last?.videoEpoch == virtual,
+              "reconnect has a new capture incarnation without restarting B")
+        let beforeForeign = host.contractPeerInputs.count
+        b.send(.input, SourceInput(event: .text("foreign reconnect"), generation: fresh.generation, videoEpoch: fresh.id))
+        b.send(.input, SourceInput(event: .text("own virtual"), generation: virtual.generation, videoEpoch: virtual.id))
+        try await wait("reconnect input fence") { host.contractPeerInputEvents.last == .text("own virtual") }
+        check(host.contractPeerInputs.count == beforeForeign + 1 && host.contractPeerInputRects.last == ContractCapture.bounds(42),
+              "a new connection epoch cannot steer the retained virtual monitor")
+        reconnected.connection.cancel()
+        try await wait("reconnected peer disconnect processed") { host.contractPeerCount == 1 }
+        b.send(.selectDisplay, DisplaySelection(displayID: 42, inventoryID: inventory.revision!, origin: .human))
+        let virtualRevision = b.catalogs.last!.selectionRevision
+        try await wait("B acknowledges retained virtual source") { b.catalogs.last?.selectionRevision != virtualRevision }
+        check(desktop.displayID == 42 && destroyed == 0 && b.catalogs.last?.videoEpoch == virtual,
+              "closing the reconnected peer preserves B resource and epoch")
         select(b, 2)
         try await wait("B returns to LG") { b.catalogs.last?.activeDisplayID == 2 && b.catalogs.last?.videoEpoch != nil }
         check(destroyed == 1 && desktop.displayID == nil, "last virtual capture release retires exactly its owned resource")

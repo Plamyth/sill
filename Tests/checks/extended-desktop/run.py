@@ -9,6 +9,8 @@ import sys
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
+source_head = (sys.argv[sys.argv.index('--source-head') + 1] if '--source-head' in sys.argv else
+               subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip())
 
 
 def block(source, signature):
@@ -105,7 +107,7 @@ if '--local-sdk' in sys.argv:
     code = checked.returncode if checked else compiled.returncode
     unchanged = all(sha((ROOT / name).read_bytes()) == digest for name, digest in before.items())
     (output / 'receipt.json').write_text(json.dumps({'scope': 'Extracted production pure checks with explicit macOS SDK; no app, device or service execution.',
-        'sourceHEAD': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+        'sourceHEAD': source_head,
         'sdk': sdk, 'sourceHashes': before, 'emittedHashes': hashes, 'sourceUnchanged': unchanged,
         'compileExit': compiled.returncode, 'checkExit': checked.returncode if checked else None}, indent=2) + '\n')
     print(log)
@@ -133,7 +135,7 @@ print(log)
 records = [json.loads(line.removeprefix('RESULT_JSON ')) for line in log.splitlines() if line.startswith('RESULT_JSON ')]
 receipt = {
     'scope': 'Independent pure checks via volatile RAM input. No source-guard transfer, SDK host build, running host or device validation.',
-    'sourceHEAD': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
+    'sourceHEAD': source_head,
     'senderReceiverMatch': 'INPUT_SHA256 ' + sha(payload) in log,
     'sourceUnchanged': all(sha((ROOT / name).read_bytes()) == digest for name, digest in before.items()),
     'sourceHashes': before, 'emittedHashes': hashes, 'exitCode': process.returncode,

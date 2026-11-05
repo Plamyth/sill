@@ -224,6 +224,39 @@ struct Checks {
                    "invalid intent or allocation fails decoding")
         }
 
+        let viewed = Rig(), viewedDesktop = viewed.desktop
+        viewedDesktop.request(aid)
+        viewedDesktop.updateViewport(native, for: aid)
+        await online(viewed.displays[0])
+        viewedDesktop.retainDisplay(100, for: bid)
+        viewedDesktop.retainDisplay(100, for: bid)
+        viewedDesktop.retainDisplay(100, for: cid)
+        viewedDesktop.release(aid)
+        expect(viewedDesktop.requesters.isEmpty && viewedDesktop.displayID == 100 && viewed.displays[0].destroys == 0,
+               "viewers keep an existing virtual display after its allocator disconnects")
+        viewedDesktop.retainDisplay(1, for: bid)
+        expect(viewedDesktop.displayID == 100 && viewed.displays[0].destroys == 0,
+               "switching one viewer to a physical monitor preserves another viewer")
+        viewedDesktop.retainDisplay(nil, for: cid)
+        viewedDesktop.retainDisplay(nil, for: cid)
+        expect(viewedDesktop.displayID == nil && viewed.displays[0].destroys == 1 && viewed.displays[0].recoveries == 1,
+               "last viewer release retires and recovers only the owned resource exactly once")
+        viewedDesktop.request(aid)
+        viewedDesktop.updateViewport(native, for: aid)
+        await online(viewed.displays[1])
+        viewedDesktop.retainDisplay(100, for: bid)
+        viewedDesktop.release(aid)
+        expect(viewed.displays[1].destroys == 1 && viewedDesktop.displayID == nil,
+               "a stale display ID cannot retain a replacement resource")
+        viewedDesktop.request(aid)
+        viewedDesktop.updateViewport(native, for: aid)
+        await online(viewed.displays[2])
+        viewedDesktop.retainDisplay(102, for: bid)
+        viewed.displays[2].lost()
+        expect(viewedDesktop.displayID == nil && viewed.displays[2].destroys == 1,
+               "an actual lost display still retires despite viewer holds")
+        viewedDesktop.shutdown()
+
         let rig = Rig(), desktop = rig.desktop
         desktop.request(aid)
         desktop.updateViewport(native, for: aid)

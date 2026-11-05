@@ -38,6 +38,7 @@ final class ExtendedDesktop {
     }
 
     private(set) var requesters: Set<ObjectIdentifier> = []
+    private var viewers: Set<ObjectIdentifier> = []
     private(set) var phase: Phase = .idle
     private(set) var dimensions: Dimensions?
     private var generation: UInt64 = 0
@@ -100,7 +101,20 @@ final class ExtendedDesktop {
     }
 
     func release(_ requester: ObjectIdentifier) {
-        guard requesters.remove(requester) != nil, requesters.isEmpty else { return }
+        guard requesters.remove(requester) != nil else { return }
+        retireIfUnused()
+    }
+
+    func retainDisplay(_ id: UInt32?, for viewer: ObjectIdentifier) {
+        if let id, id == displayID {
+            viewers.insert(viewer)
+        } else if viewers.remove(viewer) != nil {
+            retireIfUnused()
+        }
+    }
+
+    private func retireIfUnused() {
+        guard requesters.isEmpty, viewers.isEmpty else { return }
         dimensions = nil
         retire(to: .idle)
     }
@@ -130,6 +144,7 @@ final class ExtendedDesktop {
         creation = nil
         let old = resource
         resource = nil
+        viewers.removeAll()
         phase = next
         publishID(nil)
         old?.recoverWindows()
