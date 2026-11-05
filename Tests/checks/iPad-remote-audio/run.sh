@@ -2,7 +2,7 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 source "$here/../common.sh"
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 python3 "$here/fixture.py" "$root" "$out"
 python3 "$here/player-fixture.py" "$root" "$out"
 xcrun swiftc -emit-library -emit-module -module-name StreamProtocol \

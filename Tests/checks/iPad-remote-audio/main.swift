@@ -53,6 +53,7 @@ struct Check {
         await backgroundLifecycle()
         await localReadiness()
         await playback()
+        await nativePacketFormats()
         print("PASS \(checks) iPad audio behavior assertions")
     }
 
@@ -394,5 +395,28 @@ struct Check {
         expect(nextEngine.stopped && player.currentEngine != nil, "old queued stop cannot tear down a fresh engine")
         expect(player.buffered == 2400, "fresh lease contains only fresh samples")
         player.stop()
+    }
+
+    @MainActor static func nativePacketFormats() async {
+        // Host owns native PCM conversion. The existing kind-33 path accepts its final format.
+        let player = PlaybackProbe()
+        for (rate, channels) in [(24_000, 1), (48_000, 2)] {
+            let samples = (0..<(rate / 100 * channels)).map { Int16($0 % 2000 - 1000) }
+            let packet = samples.withUnsafeBufferPointer {
+                AudioPacket.pack(sampleRate: UInt32(rate), channels: UInt8(channels), samples: $0)
+            }
+            let decoded = AudioPacket.unpack(packet)
+            expect(decoded?.sampleRate == Double(rate) && decoded?.channels == channels,
+                   "native output format survives the existing kind-33 packet")
+            expect(decoded?.samples == samples, "10ms packet preserves every PCM sample")
+            expect(AudioPacket.unpack(packet.dropLast()) == nil, "partial PCM frame is rejected")
+            for _ in 0..<4 { player.receive(packet) }
+            player.drainDecode(); await drain()
+            expect(player.buffered == rate / 25 * channels && player.currentEngine != nil,
+                   "four 10ms packets reach the existing 40ms playback buffer")
+            player.stop()
+            expect(player.buffered == 0 && player.currentEngine == nil,
+                   "OFF clears native output before a subsequent format")
+        }
     }
 }
