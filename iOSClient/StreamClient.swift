@@ -1081,6 +1081,7 @@ final class StreamClient: ObservableObject {
     private struct Move {
         let connection: NWConnection
         let kind: MoveKind
+        var ownerWired: OwnerWiredTarget? = nil
     }
     /// What a move does: brings a session over AWDL to the network (`fromDirect`,
     /// `moveToNetworkIfListed`), or, `followBestPath`'s, one over Wi-Fi to the cable that came
@@ -1093,6 +1094,12 @@ final class StreamClient: ObservableObject {
     /// cannot dial beside the move. Main thread.
     var moveUnderWay: Bool { moving != nil || sessionDead }
     /// When this session's last move from AWDL started, so one that did not complete waits `moveRetry`.
+    // Owner USB remains a remote-door session, never legacy home trust.
+    var ownerWiredSession: OwnerWiredTarget?
+    var ownerWiredResolver: OwnerWiredResolver?
+    var ownerWiredToken: UUID?
+    private var ownerWiredBudget = OwnerWiredPolicy.Budget()
+    private var ownerWiredRecheck: DispatchWorkItem?
     private var lastMoveAttempt: Double?
     /// The move's look at the moment the network row has been listed for `moveAfter`.
     private var moveCheck: DispatchWorkItem?
@@ -2347,6 +2354,10 @@ final class StreamClient: ObservableObject {
               remoteDial == nil, pairing == .idle, pairingDial == nil, homeAsk == nil, pendingLink == nil,
               let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
               let pin = saved.fingerprintData else { return }
+        if preferCable, RemoteDialPolicy.ownerTailnetScope(saved), beginOwnerWired(macID, why: .automatic) {
+            startupAutoConnection = .attempted
+            return
+        }
         let row = macs.first {
             $0.route == .network && $0.macID == macID && $0.carriesTag && $0.endpoint != nil
                 && wiredDial(for: $0) != nil && homeDecision($0, macID: macID, tap: false) == .pinned
@@ -2382,6 +2393,131 @@ final class StreamClient: ObservableObject {
         }
         dialSavedAtStartup(macID)
         return true
+    }
+
+    func ownerWiredBinding(_ macID: String) -> OwnerWiredPolicy.Binding? {
+        guard UIDevice.current.userInterfaceIdiom == .pad,
+              let saved = savedMac(macID), RemoteDialPolicy.ownerTailnetScope(saved),
+              saved.revoked != true, saved.newKey != true, let pin = saved.fingerprintData,
+              MacID.make(fingerprint: pin) == macID else { return nil }
+        let binding = OwnerWiredPolicy.Binding(macID: macID, pin: pin, port: saved.remotePort)
+        return OwnerWiredPolicy.registered(binding, current: binding, hasIdentity: DeviceIdentity.existing() != nil) ? binding : nil
+    }
+
+    func ownerWiredValid(_ target: OwnerWiredTarget) -> Bool {
+        OwnerWiredPolicy.registered(target.binding, current: ownerWiredBinding(target.binding.macID),
+                                    hasIdentity: DeviceIdentity.existing() != nil) && target.current()
+    }
+
+    func cancelOwnerWiredResolution() {
+        ownerWiredToken = nil
+        ownerWiredResolver?.cancel()
+        ownerWiredResolver = nil
+        ownerWiredRecheck?.cancel()
+        ownerWiredRecheck = nil
+    }
+
+    private func ownerWiredKey(_ row: FoundMac) -> String? {
+        guard row.route == .network, let interface = row.wired, interface.type == .wiredEthernet,
+              if_nametoindex(interface.name) == UInt32(interface.index),
+              DiscoveryPolicy.carriesOnlyLinkLocal(interface.name, own: Self.ownAddresses()),
+              case .service(let name, let type, let domain, _)? = row.endpoint else { return nil }
+        return "\(name)|\(type)|\(domain)|\(interface.name)|\(interface.index)"
+    }
+
+    /// The row locates a cable, never an owner. Only the saved binding authenticates the peer.
+    @discardableResult
+    func beginOwnerWired(_ macID: String, why: DialReason, row: FoundMac? = nil) -> Bool {
+        guard appInForeground, let binding = ownerWiredBinding(macID), remoteDial == nil,
+              pairing == .idle, pairingDial == nil, homeAsk == nil, pendingLink == nil else { return false }
+        if ownerWiredResolver != nil { return true }
+        guard !connected || (session?.macID == macID && session?.route.isRemote == true
+                             && sessionListed && homeInfo.latest != nil && moving == nil && !sessionDead),
+              ownerWiredSession == nil else { return false }
+        let listed = macs.compactMap { candidate -> (FoundMac, String)? in
+            guard let key = ownerWiredKey(candidate) else { return nil }
+            return (candidate, key)
+        }
+        ownerWiredBudget.keep(Set(listed.map { $0.1 }))
+        let now = ProcessInfo.processInfo.systemUptime
+        for (candidate, key) in listed where row == nil || candidate.id == row?.id {
+            let budgetKey = key
+            guard ownerWiredBudget.begin(budgetKey, now: now) else {
+                if connected, let at = ownerWiredBudget.next(budgetKey, now: now), ownerWiredRecheck == nil {
+                    let work = DispatchWorkItem { [weak self] in self?.ownerWiredChanged() }
+                    ownerWiredRecheck = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + max(0.01, at - now), execute: work)
+                }
+                continue
+            }
+            guard let interface = candidate.wired, let endpoint = candidate.endpoint else { continue }
+            let token = UUID()
+            let oldPeer = connection
+            ownerWiredToken = token
+            let resolver = OwnerWiredResolver(binding: binding, key: key, interface: interface)
+            ownerWiredResolver = resolver
+            resolver.start(service: endpoint) { [weak self] target in
+                guard let self else { return }
+                let currentInterface = self.macs.contains { self.ownerWiredKey($0) == key }
+                guard OwnerWiredPolicy.callbackCurrent(token: token, currentToken: self.ownerWiredToken, binding: binding,
+                    current: self.ownerWiredBinding(macID), hasIdentity: DeviceIdentity.existing() != nil,
+                    samePeer: self.connection === oldPeer, interfaceCurrent: currentInterface) else {
+                    if self.ownerWiredToken == token {
+                        self.cancelOwnerWiredResolution()
+                        if !currentInterface, self.connection === oldPeer, !self.connected, self.appInForeground,
+                           OwnerWiredPolicy.registered(binding, current: self.ownerWiredBinding(macID), hasIdentity: DeviceIdentity.existing() != nil) {
+                            self.dialOwnerWiredOrTailnet(macID, why: why, target: nil)
+                        }
+                    }
+                    return
+                }
+                self.ownerWiredToken = nil
+                self.ownerWiredResolver = nil
+                guard self.appInForeground else {
+                    if !self.connected { self.startupAutoConnection = .waitingRemote(macID) }
+                    return
+                }
+                if let target, self.ownerWiredValid(target) {
+                    if self.connected {
+                        guard self.session?.macID == macID, self.moving == nil, !self.sessionDead else { return }
+                        self.homeInfo.moveStarted()
+                        self.startMove(to: target.endpoint, kind: .fromRemote, fallback: nil, ownerWired: target)
+                    } else {
+                        self.dialOwnerWiredOrTailnet(macID, why: why, target: target)
+                    }
+                } else if !self.connected {
+                    self.dialOwnerWiredOrTailnet(macID, why: why, target: nil)
+                } else {
+                    self.ownerWiredChanged()
+                }
+            }
+            return true
+        }
+        return false
+    }
+
+    private func dialOwnerWiredOrTailnet(_ macID: String, why: DialReason, target: OwnerWiredTarget?) {
+        if why == .automatic, reconnect == nil { dialSavedAtStartup(macID, ownerWired: target) }
+        else { dialSaved(macID, why: why, ownerWired: target) }
+    }
+
+    func ownerWiredChanged() {
+        ownerWiredBudget.keep(Set(macs.compactMap { ownerWiredKey($0) }))
+        ownerWiredRecheck?.cancel(); ownerWiredRecheck = nil
+        if let target = moving?.ownerWired, !ownerWiredValid(target) {
+            let candidate = moving!.connection
+            moveEnded(candidate)
+            candidate.cancel()
+        }
+        if let target = ownerWiredSession {
+            guard !ownerWiredValid(target), let peer = connection else { return }
+            // A removed physical path cannot carry a fence. Normal remote recovery uses only the
+            // saved Tailnet addresses, and its existing admission/backoff rules.
+            peer.cancel()
+            return
+        }
+        guard let id = session?.macID, connected, session?.route.isRemote == true else { return }
+        _ = beginOwnerWired(id, why: .automatic)
     }
     #endif
 
@@ -2836,6 +2972,9 @@ final class StreamClient: ObservableObject {
     /// (`dial`): a pinned session, the ask, a session on an open door, a plain one, or nothing.
     func connect(to mac: FoundMac) {
         #if os(iOS)
+        cancelOwnerWiredResolution()
+        #endif
+        #if os(iOS)
         cancelOwnerBootstrap()
         startupAutoConnection = .stopped
         #endif
@@ -2912,6 +3051,9 @@ final class StreamClient: ObservableObject {
         if let id = macID, let saved = savedMac(id), RemoteDialPolicy.ownerTailnetScope(saved) {
             guard saved.revoked != true, saved.newKey != true, saved.fingerprintData != nil else { return false }
             if !tap, reconnect?.macID == id, reconnect?.remoteAllowed == false { return false }
+            #if os(iOS)
+            if beginOwnerWired(id, why: !tap && reconnect?.macID == id ? .automatic : .tap, row: mac) { return true }
+            #endif
             dialSaved(id, why: !tap && reconnect?.macID == id ? .automatic : .tap)
             return true
         }
@@ -3349,6 +3491,12 @@ final class StreamClient: ObservableObject {
     /// row (not home), never beside another move, and not before the session's first window list and
     /// its own verified kind 18. Main thread.
     func moveHomeIfListed() {
+        #if os(iOS)
+        if RemoteDialPolicy.ownerTailnetScope(session?.macID.flatMap { savedMac($0) }) {
+            ownerWiredChanged()
+            return
+        }
+        #endif
         homeMoveCheck?.cancel()
         homeMoveCheck = nil
         // A row no longer listed is forgotten, its refusal and its tries: listed again, it is tried afresh.
@@ -3500,10 +3648,25 @@ final class StreamClient: ObservableObject {
     /// DiscoveryPolicy.wiredWait, or unable to go on (`moveUnconstrained`). A move to the cable has
     /// none (the row as listed could be Wi-Fi again, and never Wi-Fi to Wi-Fi): its wired dial not
     /// ready within wiredWait, or unable to go on, ends the move (`giveUpMove`). Main thread.
-    private func startMove(to endpoint: NWEndpoint, kind: MoveKind, fallback: NWEndpoint?) {
-        guard !RemoteDialPolicy.ownerTailnetScope(session?.macID.flatMap { savedMac($0) }) else { return }
+    private func startMove(to endpoint: NWEndpoint, kind: MoveKind, fallback: NWEndpoint?, ownerWired: OwnerWiredTarget? = nil) {
+        let owner = RemoteDialPolicy.ownerTailnetScope(session?.macID.flatMap { savedMac($0) })
+        var ownerParameters: NWParameters?
+        if owner {
+            #if os(iOS)
+            guard kind == .fromRemote, fallback == nil, let target = ownerWired,
+                  target.endpoint == endpoint, ownerWiredValid(target),
+                  let identity = DeviceIdentity.existing() else { return }
+            let tls = DeviceTLS.options(identity: identity, alpn: RemoteTLS.sessionALPN, pin: target.binding.pin, queue: queue)
+            let parameters = RemoteTLS.parameters(tls: tls, dialing: true)
+            parameters.requiredInterface = target.interface
+            parameters.includePeerToPeer = false
+            ownerParameters = parameters
+            #else
+            return
+            #endif
+        }
         let refused = WeakConnection()
-        let c = NWConnection(to: endpoint, using: moveParameters(kind, refused: refused))
+        let c = NWConnection(to: endpoint, using: ownerParameters ?? moveParameters(kind, refused: refused))
         refused.connection = c
         // Its own hello first, written to `c` as it is made, as `connect(to:)` does: every move's
         // connection (from AWDL, to the cable, to Wi-Fi, a rescue's, each fallback's) is a new
@@ -3512,7 +3675,7 @@ final class StreamClient: ObservableObject {
         // hand-over: what the session sends meanwhile waits in SessionLink (a fence, a hold), which
         // releases it onto `c` only after.
         sendHello(on: c)
-        moving = Move(connection: c, kind: kind)
+        moving = Move(connection: c, kind: kind, ownerWired: ownerWired)
         // A move up gives up; a reconnect over the cable (`sessionDead`) has the row as listed for
         // its fallback instead, whose own dial has the move's 5 s.
         let givesUp = kind == .toCable && !sessionDead
@@ -3717,6 +3880,13 @@ final class StreamClient: ObservableObject {
                 refuseHomeMove(c, why: why)
                 return
             }
+            #if os(iOS)
+            if let target = move.ownerWired {
+                guard ownerWiredValid(target), target.matches(c.currentPath),
+                      RemoteTLS.peerFingerprint(c) == target.binding.pin,
+                      RemoteTLS.negotiatedALPN(c) == RemoteTLS.sessionALPN else { moveEnded(c); c.cancel(); return }
+            }
+            #endif
             finishMove(c, kind: move.kind, kept: kept)
             return
         }
@@ -3807,6 +3977,14 @@ final class StreamClient: ObservableObject {
     }
 
     private func finishMoveAfterInputDrain(_ c: NWConnection, kind: MoveKind, kept: [(header: StreamHeader, payload: Data)]) {
+        let ownerTarget = moving?.ownerWired
+        #if os(iOS)
+        if let target = ownerTarget {
+            guard ownerWiredValid(target), target.matches(c.currentPath), c.state == .ready,
+                  RemoteTLS.peerFingerprint(c) == target.binding.pin,
+                  RemoteTLS.negotiatedALPN(c) == RemoteTLS.sessionALPN else { moveEnded(c); c.cancel(); return }
+        }
+        #endif
         moving = nil
         // The session this move was for must still run: over AWDL for a move from AWDL (a direct
         // session that ended meanwhile reconnects by itself, to the network row), not over it for
@@ -3867,7 +4045,7 @@ final class StreamClient: ObservableObject {
             #endif
         }
         if kind == .toCable, !reconnected { failedUps = nil }   // a move up that completed: the back-off starts again
-        if kind == .fromRemote {
+        if kind == .fromRemote, ownerTarget == nil {
             // Home: the session is a network one from here, its route line gone and its readout's
             // word read from the new connection (below). Its liveness and pings are the home rule's
             // (`startMeasuring(remote: false)`). Its connections from now on, a move to the cable or
@@ -3891,7 +4069,19 @@ final class StreamClient: ObservableObject {
             homeMoveRow = nil
         }
         connectedDirectly = false
-        session?.route = .network
+        if let target = ownerTarget {
+            ownerWiredSession = target
+            session?.candidate = target.candidate
+            session?.endpoint = target.endpoint
+            session?.home = nil
+            session?.row = nil
+            session?.route = .remote(.address)
+            remoteRoute = .address
+            homeInfo.moveEnded()
+            homeMoveViewport = nil
+        } else {
+            session?.route = .network
+        }
         sessionDead = false
         pathSignals = PathSignals()
         lastPongAt = ProcessInfo.processInfo.systemUptime
@@ -3972,6 +4162,14 @@ final class StreamClient: ObservableObject {
     private func moveEnded(_ c: NWConnection) {
         guard let move = moving, move.connection === c else { return }
         moving = nil
+        #if os(iOS)
+        if move.ownerWired != nil {
+            homeInfo.moveEnded()
+            if sessionDead { endSession() }
+            else { ownerWiredChanged() }
+            return
+        }
+        #endif
         if sessionDead {
             #if DEBUG
             print(move.kind == .toCable ? "path: the reconnect over the cable did not complete, and the old connection is gone: the session ends"
@@ -4665,6 +4863,10 @@ final class StreamClient: ObservableObject {
     /// never delivered its window list: the connect screen never left, and its Remote rows must not
     /// vanish for another 3 s. Main thread.
     func tearDown(status: String, restartSearch: Bool = true) {
+        #if os(iOS)
+        cancelOwnerWiredResolution()
+        ownerWiredSession = nil
+        #endif
         #if os(iOS)
         defer { observeAudioDiagnostics() }
         #endif

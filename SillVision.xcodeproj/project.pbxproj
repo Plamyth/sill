@@ -804,6 +804,8 @@
 				<string>96ED5C5789B174A01557791C</string>
 				<string>FBDC4F23F93125BBEEAE800C</string>
 				<string>3D4DE531BFD1AC11F6F66F4A</string>
+				<string>346C7F5DE2A66F703BC8009A</string>
+				<string>505EF74747F0747652458A30</string>
 			</array>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
@@ -856,6 +858,8 @@
 				<string>AC8D6597572DB8007CEC8C9F</string>
 				<string>AAF2C2DAF25BA42888B2B819</string>
 				<string>C6F3E5ABA8600FBF8CF25DC6</string>
+				<string>7EBA0C433A396300053662E4</string>
+				<string>F060D5FE4DA003E7CD885E22</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -1154,6 +1158,42 @@
 			<string>PBXBuildFile</string>
 			<key>fileRef</key>
 			<string>3D4DE531BFD1AC11F6F66F4A</string>
+		</dict>
+		<key>346C7F5DE2A66F703BC8009A</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/OwnerWiredPolicy.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>7EBA0C433A396300053662E4</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>346C7F5DE2A66F703BC8009A</string>
+		</dict>
+		<key>505EF74747F0747652458A30</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>iOSClient/OwnerWiredResolver.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>F060D5FE4DA003E7CD885E22</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>505EF74747F0747652458A30</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

@@ -54,6 +54,7 @@ final class RemoteConnector {
     private let queue: DispatchQueue
     private let candidates: [RemoteDialPolicy.Candidate]
     private let mode: Mode
+    private let ownerWired: OwnerWiredTarget?
     private let identity: RemoteIdentity
     /// A session dial's other keys by candidate (`Candidate.key`): saved Macs whose key may answer
     /// at that address in the pin's place (RemoteDialPolicy.successors). The winner's `fingerprint`
@@ -74,8 +75,9 @@ final class RemoteConnector {
     var onFailed: ((Failed) -> Void)?
 
     init(candidates: [RemoteDialPolicy.Candidate], mode: Mode, identity: RemoteIdentity, queue: DispatchQueue,
-         successors: [String: [Data]] = [:]) {
+         successors: [String: [Data]] = [:], ownerWired: OwnerWiredTarget? = nil) {
         self.candidates = candidates
+        self.ownerWired = ownerWired
         self.successors = successors
         self.mode = mode
         self.identity = identity
@@ -144,8 +146,15 @@ final class RemoteConnector {
                   let attempt = self.attempts.first(where: { !$0.ended && $0.candidate == candidate }) else { return }
             self.end(attempt, .tls(-9808))
         })
+        let parameters = RemoteTLS.parameters(tls: tls, dialing: true)
+        if let target = ownerWired {
+            guard case .session(let sessionPin) = mode, sessionPin == target.binding.pin,
+                  candidate == target.candidate, target.current() else { ends.append(.notSill); finish(); return }
+            parameters.requiredInterface = target.interface
+            parameters.includePeerToPeer = false
+        }
         let connection = NWConnection(host: NWEndpoint.Host(candidate.host), port: port,
-                                      using: RemoteTLS.parameters(tls: tls, dialing: true))
+                                      using: parameters)
         let attempt = Attempt(candidate, connection)
         attempts.append(attempt)
         connection.stateUpdateHandler = { [weak self, weak attempt] state in
@@ -164,6 +173,11 @@ final class RemoteConnector {
         guard !attempt.ended else { return }
         switch state {
         case .ready:
+            if let target = ownerWired {
+                guard target.matches(attempt.connection.currentPath),
+                      RemoteTLS.negotiatedALPN(attempt.connection) == RemoteTLS.sessionALPN,
+                      RemoteTLS.peerFingerprint(attempt.connection) == target.binding.pin else { end(attempt, .notSill); return }
+            }
             guard !finished else { attempt.ended = true; attempt.connection.cancel(); return }
             if case .ownerBootstrap(let pin) = mode {
                 guard RemoteTLS.negotiatedALPN(attempt.connection) == OwnerMacBootstrap.alpn,
