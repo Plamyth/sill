@@ -27,6 +27,7 @@ final class StreamClient {
         visionAudioIntentContext.cleanupReady = true
     }
     func sendVisionProviderCall(_ control: ProviderCallControl, to peer: NWConnection) { sent.append(control) }
+    func scheduleVisionProviderQuery(_ peer: NWConnection) {}
 }
 final class VisionRemoteAudioStore {
     static let shared = VisionRemoteAudioStore()
@@ -233,3 +234,18 @@ check(!nativeExpired.visionProviderCanStop, "오래된 원장은 native 종료 �
 nativeExpired.performVisionProviderCall(.stop)
 check(nativeExpired.sent.isEmpty, "오래된 원장으로 native 전송 없음")
 print("PASS: native selector의 실제 종료 메서드와 소유권·최신성 회귀. 외부 효과 0")
+
+let catalogClient = StreamClient(VisionProviderCall(connection: connection, clock: { now }), forwarding)
+catalogClient.visionAudioIntentConnection = connection
+var advertised = WindowList(macName: "격리 Mac", windows: [], active: .none)
+advertised.providerCalls = 1
+advertised.providerCallKinds = [ProviderCallKind.nativeCodex.rawValue]
+let decodedCatalog = try JSONDecoder().decode(WindowList.self, from: JSONEncoder().encode(advertised))
+catalogClient.observeVisionProviderCalls(decodedCatalog, from: catalogClient.connection!)
+check(catalogClient.visionProviderCall.nativeSupported, "실제 catalog 관측 메서드가 native 지원 종류를 소비함")
+advertised.providerCallKinds = nil
+catalogClient.observeVisionProviderCalls(advertised, from: NWConnection())
+check(catalogClient.visionProviderCall.nativeSupported, "다른 peer의 목록은 native 지원을 바꾸지 않음")
+catalogClient.observeVisionProviderCalls(advertised, from: catalogClient.connection!)
+check(!catalogClient.visionProviderCall.nativeSupported, "현재 peer가 명시적 지원을 철회하면 native 실행도 차단함")
+print("PASS: 실제 catalog codec·peer·native capability 연결 회귀. 외부 효과 0")

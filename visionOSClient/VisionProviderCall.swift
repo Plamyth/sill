@@ -288,7 +288,8 @@ extension StreamClient {
     }
     func observeVisionProviderCalls(_ list: WindowList, from peer: NWConnection) {
         guard connection === peer else { return }
-        visionProviderCall.observe(connection: visionAudioIntentConnection, capability: list.providerCalls, hostKey: visionAudioTrustedHostKey)
+        visionProviderCall.observe(connection: visionAudioIntentConnection, capability: list.providerCalls, hostKey: visionAudioTrustedHostKey,
+                                   providerCallKinds: list.providerCallKinds)
         scheduleVisionProviderQuery(peer)
     }
     private func sendVisionProviderCall(_ control: ProviderCallControl, to peer: NWConnection) {

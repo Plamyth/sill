@@ -155,6 +155,7 @@ public struct WindowList: Codable {
     public var remoteAudio: Int?
     public var audioPrivacy: AudioPrivacyState?
     public var providerCalls: Int?
+    public var providerCallKinds: [String]?
     public var catalogRefresh: Int?
     public var responseRequestID: UUID?
     public var sentry: SentryState?

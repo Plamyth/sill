@@ -38,7 +38,7 @@ with tempfile.TemporaryDirectory(prefix='vision-provider-call-') as temporary:
         return source[start:end]
     adapter = '\n'.join(member(marker) for marker in [
         '    func consumeVisionNativePreparedTarget(', '    var visionProviderCanStart:', '    var visionProviderCanStop:',
-        '    func performVisionProviderCall('])
+        '    func performVisionProviderCall(', '    func observeVisionProviderCalls('])
     (out/'Adapter.swift').write_text('import Foundation\nimport StreamProtocol\nextension StreamClient {\n' + adapter + '\n}\n')
     (out/'main.swift').write_text(stop_test.read_text())
     subprocess.run(swift + ['-I', str(out), '-L', str(out), '-lStreamProtocol',
