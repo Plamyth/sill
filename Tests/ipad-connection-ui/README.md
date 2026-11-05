@@ -208,3 +208,17 @@ Pstack Feature의 how 단계는 위 세 제품 소스와 기존 테스트/변환
 `verify.py`는 기존 보호 검사에 scope와 순서·금지 동작 검사를 추가한다. Mini에는 두 실제 menu AX를 `ACTUAL_POPUP_AX`와 코드의 표준입력 메모리로 전달해 직접 Cell/Button 구조를 대조한다. 배경에 같은 이름의 버튼이 추가된 경우와 popup이 중복된 경우도 검사하며 이것을 실제 UI 성공으로 세지 않는다. 새로운 증거·DerivedData는 storage-route가 반환한 `ui-native06-20261105-popup-scope`에만 둔다. 기존 실패 후보·actual 증거·DerivedData는 변경하지 않는다.
 
 Pstack Feature의 blocking 단계는 실패 실행·코드·프레임 대조이며, 독립 작업은 Mini 검사와 새 iOS SDK 빌드다. 공유 기기·현재 runner·Host 쓰기는 없고 같은 소유 WT의06 action 선택과 검증만 단일 writer로 수정한다. Ponytail 최소 선택으로 기존 Picker·tapChecked·gate를 재사용한다. 01~05·공용 helper·gate·xctestrun 선택/보호 계약은 그대로이며 ARENA·순정 Goal·제품 변경은0이다. 새 독립 검수는 부모에게 반환한다.
+
+## 07 열린 Dots popup의 명시적 원복 전용 후보
+
+부모가 실제 iPad에 Dots 체크와 target popup이 그대로 남았음을 확인했다. 초기 native와 닫힌 popup을 요구하는06을 이 상태로 재실행하지 않는다. `6bdb7743eebdf2f63863d856d9771cd87a668888`의01~06과 공용 helper는 원문 SHA `bc0907aa6b8712d4cd5fad50add94a784c5617681fe086c44e757ad32d41b2b8`로 보존한다. 6b 서명 산출물과 실패 증거도 보존하며, 다음 후보는 `ui-native07-recovery-20261105` 하나다.
+
+`prepare_destination.py GENERATED OUTPUT --recover07-only`는 `test07RecoverOpenDotsPopupToNative` 하나만 선택한다. 이 계약에만 `CCR_CONNECTION_UI_RECOVERY_APPROVED=0`을 추가하며 기존 일반 승인·OFF 확인·media flag도 모두0이다. 실행 전 부모가 Root 단일 writer, 같은 actual86/source, Host241/243의 인증된 native 광고 부재와 fresh OFF를 확인한 뒤 runner 복사본에서 일반 승인1·OFF 확인1·복구 승인1·media0을 설정해야 한다. 05/06/07 선택은 CLI와 함수 모두 상호 배타적이며 기본01/02 및 기존05/06 계약은 변하지 않는다. 정상 AUT args/env 주입과 artifact 설치 경로는 여전히 없다.
+
+07은 media0·복구 승인1을 검사한 뒤 기존 `existingApp()`의 일반 승인1·fresh OFF 확인1을 요구한다. 실행 중인 AUT만 activate하고 현재 AX·캡처를 남긴다. popup·오디오 navigation bar·배경의 exact `iPadCallTarget`과 start/stop/status가 각각 하나여야 한다. popup의 native/Dots/Grok 세 직접 Cell/Button, 빈 identifier, 유일한 Dots 체크, 배경 모델의 Dots 값, Dots 문구의 start/stop 비활성, 이전 요청·과거 결과 없음과 초기 Dots 상태를 확인한다. popup이 없거나 대상이 달라졌으면 기다리거나 다시 열지 않고 무효로 중지한다.
+
+열린 popup이 배경 Picker를 가리므로07에서만 해당 exact Picker의 AX 값을 읽는다. Picker를 누르거나 일반 `callTargetPicker`의 hittable 전제를 완화하지 않는다. 다른 숨김 UI에 적용할 helper나 복구 경로는 추가하지 않는다. native action의 frame·선택 상태를 검사하고 기존 `tapChecked`로 hittable/enabled 확인 후 한 번만 탭한다. popup 소멸, native 모델 값·미지원 상태·비활성 버튼을 확인한 뒤 해당 navigation bar의 닫기만 누른다. Dots 재선택·popup 열기·toolbar 표시·좌표·임의 wait·연속 재탭·실패 후 자동 복구는 없다. 닫기의 기존 5초 소멸 확인만 유지한다.
+
+07은 scope 수정의 실기 성공을 보장하지 않는다. 실제 탭 실패의 내부 원인은 미확정이다. 메뉴가 남으면 code43과 탭 뒤 AX·캡처를 남기고 끝낸다. 지원 native 상태나 다른 모델 상태가 보이면 오디오창을 닫는 단계로 진행하지 않는다. fresh OFF와 인증 광고 경로는 부모의 직전 metadata 근거이며 현재 Dots UI만으로 native 광고 부재나 오디오 효과0을 추정하지 않는다.
+
+Pstack Feature의 blocking 단계는 부모의 남은 popup 상태와06 진입 전제 대조다. Mini 정적 검사·저장 AX 대조와 새 SDK 빌드는 병렬로 수행하고, 같은 WT의07·선택기·보호 검사만 한 writer가 변경한다. Ponytail 최소 선택으로 기존 enum·AX/캡처·gate·tapChecked를 재사용하며06을 재구성하지 않는다. 설치·실행·UI·제품·Host/Core 쓰기는0이고 독립 검수는 부모에게 반환한다. 사용자 Pencil 확인은 부모의 마지막 묶음 한번으로 유지한다.

@@ -4,9 +4,9 @@ import plistlib
 from pathlib import Path
 
 
-def prepare(source, test05_only=False, test06_only=False):
-    if test05_only and test06_only:
-        raise ValueError('05와 06은 각각 단독으로 선택해야 합니다.')
+def prepare(source, test05_only=False, test06_only=False, recover07_only=False):
+    if sum((test05_only, test06_only, recover07_only)) > 1:
+        raise ValueError('05·06·복구07은 각각 단독으로 선택해야 합니다.')
     assert source['__xctestrun_metadata__']['FormatVersion'] == 1
     assert set(source) == {'ConnectionUITests', '__xctestrun_metadata__'}
     original = source['ConnectionUITests']
@@ -42,6 +42,9 @@ def prepare(source, test05_only=False, test06_only=False):
         target['OnlyTestIdentifiers'] = ['ConnectionUITests/test05ReadMonitorMenuAX']
     if test06_only:
         target['OnlyTestIdentifiers'] = ['ConnectionUITests/test06ReadNativeDotsUnsupportedChooserAX']
+    if recover07_only:
+        target['OnlyTestIdentifiers'] = ['ConnectionUITests/test07RecoverOpenDotsPopupToNative']
+        target['EnvironmentVariables']['CCR_CONNECTION_UI_RECOVERY_APPROVED'] = '0'
     return {'ConnectionUITests': target,
             '__xctestrun_metadata__': source['__xctestrun_metadata__']}
 
@@ -53,9 +56,11 @@ if __name__ == '__main__':
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument('--test05-only', action='store_true')
     selection.add_argument('--test06-only', action='store_true')
+    selection.add_argument('--recover07-only', action='store_true')
     args = parser.parse_args()
     data = prepare(plistlib.loads(args.generated.read_bytes()),
-                   test05_only=args.test05_only, test06_only=args.test06_only)
+                   test05_only=args.test05_only, test06_only=args.test06_only,
+                   recover07_only=args.recover07_only)
     with args.output.open('xb') as output:
         plistlib.dump(data, output, sort_keys=True)
     assert plistlib.loads(args.output.read_bytes()) == data

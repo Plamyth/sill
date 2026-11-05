@@ -386,4 +386,82 @@ final class ConnectionUITests: XCTestCase {
         }
         try restoreNativeCallAndClose(app)
     }
+
+    func test07RecoverOpenDotsPopupToNative() throws {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_RECOVERY_APPROVED"] == "1",
+              ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "0" else {
+            throw XCTSkip("07은 별도 복구 승인1·media0과 부모의 fresh OFF 확인 후에만 실행합니다.")
+        }
+        let app = try existingApp()
+        captureMediaState(app, name: "recover07-current-open-popup")
+        let popups = app.collectionViews
+            .containing(.button, identifier: ReadOnlyCallTarget.native.rawValue)
+            .containing(.button, identifier: ReadOnlyCallTarget.dots.rawValue)
+            .containing(.button, identifier: "Grok Bot")
+        let bars = app.navigationBars.matching(identifier: "오디오 입력·출력")
+        let pickers = app.buttons.matching(identifier: "iPadCallTarget")
+        let starts = app.buttons.matching(identifier: "iPadProviderCallStart")
+        let stops = app.buttons.matching(identifier: "iPadProviderCallStop")
+        let statuses = app.staticTexts.matching(identifier: "iPadProviderCallStatus")
+        guard popups.count == 1, bars.count == 1, pickers.count == 1,
+              starts.count == 1, stops.count == 1, statuses.count == 1,
+              app.buttons.matching(identifier: "iPadProviderCallCheckPrevious").count == 0,
+              app.staticTexts.matching(identifier: "iPadProviderCallHistoricalResult").count == 0 else {
+            throw NSError(domain: "ConnectionUI", code: 40,
+                          userInfo: [NSLocalizedDescriptionKey: "복구 대상의 현재 상태가 다릅니다. popup을 다시 열지 않고 중지합니다."])
+        }
+        let popup = popups.element(boundBy: 0)
+        let picker = pickers.element(boundBy: 0)
+        let start = starts.element(boundBy: 0)
+        let stop = stops.element(boundBy: 0)
+        let status = statuses.element(boundBy: 0)
+        let actions = popup.cells.children(matching: .button)
+        let rows = actions.allElementsBoundByIndex
+        let selected = rows.filter(\.isSelected)
+        let nativeActions = actions.matching(NSPredicate(format: "label == %@", ReadOnlyCallTarget.native.rawValue))
+        guard popup.isHittable, popup.cells.count == 3, popup.buttons.count == 3,
+              rows.map(\.label) == [ReadOnlyCallTarget.native.rawValue, ReadOnlyCallTarget.dots.rawValue, "Grok Bot"],
+              rows.allSatisfy({ $0.identifier.isEmpty }), nativeActions.count == 1,
+              selected.count == 1, selected[0].label == ReadOnlyCallTarget.dots.rawValue,
+              picker.isEnabled, try selectedCallTarget(picker) == .dots,
+              start.label == ReadOnlyCallTarget.dots.start, stop.label == ReadOnlyCallTarget.dots.stop,
+              !start.isEnabled, !stop.isEnabled, ReadOnlyCallTarget.dots.statuses.contains(status.label) else {
+            throw NSError(domain: "ConnectionUI", code: 41,
+                          userInfo: [NSLocalizedDescriptionKey: "정확한 세 action·Dots 체크·기존 대상·시작/종료 비활성 전제가 아닙니다. 조작하지 않습니다."])
+        }
+        let action = nativeActions.element(boundBy: 0)
+        guard !action.isSelected, action.frame.width > 0, action.frame.height > 0,
+              popup.frame.contains(action.frame), app.frame.contains(action.frame) else {
+            throw NSError(domain: "ConnectionUI", code: 42,
+                          userInfo: [NSLocalizedDescriptionKey: "복구 native action의 선택·frame 전제가 다릅니다."])
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "popupFrame": String(describing: popup.frame), "pickerLabel": picker.label,
+            "pickerHittable": picker.isHittable, "startEnabled": start.isEnabled,
+            "stopEnabled": stop.isEnabled, "status": status.label,
+            "nativeActionFrame": String(describing: action.frame),
+            "nativeActionHittable": action.isHittable, "nativeActionEnabled": action.isEnabled,
+            "selected": selected[0].label,
+            "operation": "이미 열린 popup의 native action 1회 선택 후 복원·닫기만 확인"
+        ], options: [.prettyPrinted, .sortedKeys])
+        let ax = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        ax.name = "recover07-before-native-action-values"
+        ax.lifetime = .keepAlways
+        add(ax)
+        try tapChecked(action)
+        captureMediaState(app, name: "recover07-after-native-action")
+        guard !popup.exists else {
+            throw NSError(domain: "ConnectionUI", code: 43,
+                          userInfo: [NSLocalizedDescriptionKey: "native action 1회 후에도 popup이 남았습니다. 재탭하지 않습니다."])
+        }
+        try observeReadOnlyCall(app, target: .native, name: "recover07-restored-native")
+        let bar = try unique(app.navigationBars.matching(identifier: "오디오 입력·출력"))
+        try tapUnique(bar.buttons.matching(NSPredicate(format: "label == %@", "닫기")))
+        guard bar.waitForNonExistence(timeout: 5) else {
+            throw NSError(domain: "ConnectionUI", code: 44,
+                          userInfo: [NSLocalizedDescriptionKey: "복구 뒤 오디오창 닫힘 미확인"])
+        }
+        captureMediaState(app, name: "recover07-closed")
+    }
 }

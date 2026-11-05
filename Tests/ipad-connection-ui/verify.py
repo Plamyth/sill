@@ -10,6 +10,8 @@ if 'FILES' not in globals():
     FILES = {str(p.relative_to(root)): p.read_text() for p in root.rglob('*')
              if p.is_file() and p.suffix in {'.swift', '.py', '.pbxproj', '.xcscheme'}}
 full_swift = FILES['ConnectionUITests.swift']
+previous_swift = full_swift.split('\n    func test07RecoverOpenDotsPopupToNative()', 1)[0].rstrip() + '\n}\n'
+assert hashlib.sha256(previous_swift.encode()).hexdigest() == 'bc0907aa6b8712d4cd5fad50add94a784c5617681fe086c44e757ad32d41b2b8'
 swift, native06 = full_swift.split('\n    private enum ReadOnlyCallTarget:', 1)
 swift = swift.rstrip() + '\n}\n'
 assert hashlib.sha256(swift.encode()).hexdigest() == 'd2282679266e9ed82c5da456d48e0484e0453062454828a5ffeebab71e3650e2'
@@ -151,7 +153,20 @@ except ValueError:
 else:
     raise AssertionError('mixed 05/06 selection accepted')
 assert 'add_mutually_exclusive_group()' in FILES['prepare_destination.py']
-assert full_swift.count('func test') == 6
+recovery_contract = namespace['prepare'](seed, recover07_only=True)['ConnectionUITests']
+assert recovery_contract['OnlyTestIdentifiers'] == ['ConnectionUITests/test07RecoverOpenDotsPopupToNative']
+assert recovery_contract['EnvironmentVariables'] == dict(result['EnvironmentVariables'], CCR_CONNECTION_UI_RECOVERY_APPROVED='0')
+assert {k: v for k, v in recovery_contract.items() if k not in ('OnlyTestIdentifiers', 'EnvironmentVariables')} == {
+    k: v for k, v in result.items() if k not in ('OnlyTestIdentifiers', 'EnvironmentVariables')}
+for modes in ({'test05_only': True, 'recover07_only': True},
+              {'test06_only': True, 'recover07_only': True}):
+    try:
+        namespace['prepare'](seed, **modes)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('mixed recovery selection accepted')
+assert full_swift.count('func test') == 7
 assert full_swift.count('.tap()') == swift.count('.tap()')
 assert full_swift.count('.activate()') == 1
 for forbidden in ('existingMediaApp', '.tap()', 'Task.sleep', 'performIPadProviderCall',
@@ -160,7 +175,7 @@ for forbidden in ('existingMediaApp', '.tap()', 'Task.sleep', 'performIPadProvid
                   'useIPadFullDuplex', 'fetchMacAudioRoutes', 'macDisplayChooser',
                   'WindowList', 'nativeSupported', 'providerCallKinds'):
     assert forbidden not in native06, forbidden
-test06 = native06.split('func test06ReadNativeDotsUnsupportedChooserAX()', 1)[1]
+test06 = native06.split('func test06ReadNativeDotsUnsupportedChooserAX()', 1)[1].split('func test07', 1)[0]
 assert test06.index('environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "0"') < test06.index('try existingApp()')
 assert 'throw XCTSkip(' in test06
 assert test06.count('try existingApp()') == 1
@@ -203,6 +218,35 @@ assert selection06.index('try tapChecked(action)') < selection06.index('guard !p
 assert selection06.index('guard !popup.exists else') < selection06.index('guard try selectedCallTarget(callTargetPicker(app)) == to')
 for forbidden in ('waitFor', 'sleep', 'while ', 'for ', 'continue', 'retry', '651', '829'):
     assert forbidden not in selection06, forbidden
+recovery07 = full_swift.split('func test07RecoverOpenDotsPopupToNative()', 1)[1]
+assert recovery07.index('environment["CCR_CONNECTION_UI_RECOVERY_APPROVED"] == "1"') < recovery07.index('try existingApp()')
+assert recovery07.index('environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "0"') < recovery07.index('try existingApp()')
+assert recovery07.count('try existingApp()') == 1
+assert recovery07.count('try tapChecked(action)') == 1
+assert recovery07.count('try tapUnique(') == 1
+for forbidden in ('tapChecked(picker)', 'callTargetPicker(', 'selectReadOnlyCallTarget(',
+                  'restoreNativeCallAndClose(', 'openAudioChooser(', 'ensureToolbarVisible(',
+                  'requireAudioChooser(', 'menuAction(', 'target: .dots', 'catch', 'while ',
+                  'sleep', 'coordinate', 'swipe', 'typeText', 'press('):
+    assert forbidden not in recovery07, forbidden
+for expected in ('popups.count == 1, bars.count == 1, pickers.count == 1',
+                 'starts.count == 1, stops.count == 1, statuses.count == 1',
+                 'popup.cells.children(matching: .button)',
+                 'popup.isHittable, popup.cells.count == 3, popup.buttons.count == 3',
+                 'rows.allSatisfy({ $0.identifier.isEmpty }), nativeActions.count == 1',
+                 'selected.count == 1, selected[0].label == ReadOnlyCallTarget.dots.rawValue',
+                 'picker.isEnabled, try selectedCallTarget(picker) == .dots',
+                 '!start.isEnabled, !stop.isEnabled',
+                 'ReadOnlyCallTarget.dots.statuses.contains(status.label)',
+                 'popup.frame.contains(action.frame), app.frame.contains(action.frame)',
+                 'guard !popup.exists else',
+                 'try observeReadOnlyCall(app, target: .native, name: "recover07-restored-native")',
+                 'bar.buttons.matching(NSPredicate(format: "label == %@", "닫기"))'):
+    assert expected in recovery07, expected
+assert recovery07.index('!start.isEnabled, !stop.isEnabled') < recovery07.index('try tapChecked(action)')
+assert recovery07.index('try tapChecked(action)') < recovery07.index('guard !popup.exists else')
+assert recovery07.index('guard !popup.exists else') < recovery07.index('target: .native') < recovery07.index('try tapUnique(')
+assert recovery07.count('waitFor') == 1 and 'bar.waitForNonExistence(timeout: 5)' in recovery07
 popup_replay = []
 if 'ACTUAL_POPUP_AX' in globals():
     titles = ['Mac 순정 Codex 음성', 'ChatGPT Dots', 'Grok Bot']
@@ -235,6 +279,7 @@ if 'ACTUAL_POPUP_AX' in globals():
         assert all(row.get('identifier') == '' for row in rows)
         assert len(list(popup.iter('Button'))) == 3
         assert sum(row.get('selected') == 'True' for row in rows) == 1
+        selected_title = next(row.get('label') for row in rows if row.get('selected') == 'True')
         form = next(view for view in tree.iter('CollectionView')
                     if any(x.get('identifier') == 'iPadCallTarget' for x in view.iter('Button')))
         assert form is not popup
@@ -244,6 +289,7 @@ if 'ACTUAL_POPUP_AX' in globals():
         assert len(popup_candidates(tree)) == 2
         popup_replay.append({'snapshot': name, 'directPopupActions': titles,
                              'backgroundSameNameExcluded': True, 'duplicatePopupRejected': True,
+                             'recovery07SelectedTargetPrecondition': selected_title == 'ChatGPT Dots',
                              'actualTapExecuted': False})
 restoration = native06.split('private func restoreNativeCallAndClose(', 1)[1].split('func test06', 1)[0]
 assert restoration.index('target: .dots, name: "native06-restore-guard"') < restoration.index('from: .dots, to: .native')
