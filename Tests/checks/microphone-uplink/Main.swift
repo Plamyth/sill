@@ -138,6 +138,7 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         catalogReplayTests()
         await pluginDiscoveryTests()
         await cleanupRecoveryTests()
+        await cancellationTests()
         await preparationWatchdogTests()
         let f = Fixture()
         let start = f.start(); f.receiver.control(start, fingerprint: Data([1])); await settle()
@@ -243,7 +244,6 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         _ = bounded.start(); bounded.receiver.control(stable, fingerprint: Data([1])); bounded.receiver.control(stop, fingerprint: Data([1]))
         expect(bounded.prepares == 1 && bounded.states.last?.phase == .off, "finite-actions-no-eviction")
 
-        await cancellationTests()
         await nativeTests()
         await integrationTests()
         print("RESULT_ASSERTIONS \(assertions)")
@@ -262,7 +262,7 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
                                        fingerprint: Data([1]), arrived: delayed.now), "preparing-no-pcm-admission")
         delayed.now = startedAt + 7_524_205_875
         delayed.receiver.checkWatchdog()
-        expect(delayed.receiver.phase == .preparing, "preparing-within-client-budget")
+        expect(delayed.receiver.phase == .preparing, "preparing-observed-delay-within-budget")
         delayed.finishPrepare()
         await until({ delayed.receiver.phase == .active }, "delayed-prepare-active")
         delayed.receiver.checkWatchdog()
@@ -284,7 +284,10 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
             let timeout = Fixture(delayed: true)
             _ = timeout.start()
             await until({ timeout.continuation != nil }, "preparing-timeout-entered")
-            timeout.now += 10_000_000_000
+            timeout.now += 9_999_999_999
+            timeout.receiver.checkWatchdog()
+            expect(timeout.receiver.phase == .preparing, "preparing-before-hard-budget-boundary")
+            timeout.now += 1
             if tickBeforeCompletion { timeout.receiver.checkWatchdog() }
             if tickBeforeCompletion {
                 expect(timeout.receiver.phase == .retiring && timeout.render?.isOpen == false && timeout.sink.closes == 0,
@@ -308,13 +311,13 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         await until({ cancelled.receiver.phase == .off }, "delayed-normal-cancel-cleaned")
         expect(cancelled.sink.closes == 1 && !cancelled.states.contains(where: { $0.phase == .active }), "delayed-normal-cancel-no-enabled")
 
-        for loss in ["grant", "connection", "proof", "clock"] {
+        for loss in ["grant", "connection", "render", "clock"] {
             let invalid = Fixture(delayed: true)
             _ = invalid.start()
             await until({ invalid.continuation != nil }, "preparing-loss-entered")
             if loss == "grant" { invalid.owner.grant!.revoke() }
             if loss == "connection" { invalid.allow = false }
-            if loss == "proof" { invalid.render!.close() }
+            if loss == "render" { invalid.render!.close() }
             if loss == "clock" { invalid.now -= 1 }
             invalid.receiver.checkWatchdog()
             expect(invalid.receiver.phase == .retiring && invalid.render?.isOpen == false, "preparing-\(loss)-loss-closes-gate")

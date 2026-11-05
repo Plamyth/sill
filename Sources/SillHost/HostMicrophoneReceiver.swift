@@ -21,6 +21,7 @@ package struct HostMicrophonePreparation {
 @MainActor
 final class HostMicrophoneReceiver {
     enum Phase: Equatable { case off, preparing, active, retiring, cleanupFailed }
+    private static let preparationBudget: UInt64 = 10_000_000_000
     private final class Lease {
         let serial: UInt64
         let id = UUID()
@@ -197,17 +198,20 @@ final class HostMicrophoneReceiver {
             owned.preparePending = false
             owned.resource = result.resource
             let completedAt = now()
+            let preparationExpired = completedAt < owned.startedAt || completedAt - owned.startedAt >= Self.preparationBudget
             let elapsedMs = Double(completedAt >= owned.startedAt ? completedAt - owned.startedAt : 0) / 1_000_000
             print("mic.trace prepareComplete request=\(owned.request.requestID) grant=\(owned.id) elapsedMs=\(elapsedMs) phase=\(phase) renderOpen=\(owned.render.isOpen) renderAdmitted=\(owned.render.isAdmitted) resource=\(result.resource != nil) error=\(result.error != nil)")
-            guard lease === owned, phase == .preparing, result.error == nil, result.resource != nil, live(owned) else {
+            guard lease === owned, phase == .preparing, !preparationExpired,
+                  result.error == nil, result.resource != nil, live(owned) else {
                 owned.render.close()
                 if lease === owned, phase == .preparing {
-                    revoke(reason: result.error ?? "preparation superseded")
+                    revoke(reason: result.error ?? (preparationExpired ? "Mac 마이크 준비 시간이 초과되었습니다." : "preparation superseded"))
                 } else {
                     await retire(owned)
                 }
                 return
             }
+            owned.lastArrival = completedAt
             phase = .active
             record(owned.request, state(for: owned))
         }
@@ -282,11 +286,14 @@ final class HostMicrophoneReceiver {
     func checkWatchdog() {
         guard let owned = lease, phase == .active || phase == .preparing else { return }
         let time = now()
-        if !live(owned) || time < owned.lastArrival || time - owned.lastArrival > 2_000_000_000 {
+        let timedOut = phase == .preparing
+            ? time < owned.startedAt || time - owned.startedAt >= Self.preparationBudget
+            : time < owned.lastArrival || time - owned.lastArrival > 2_000_000_000
+        if !live(owned) || timedOut {
             let elapsedMs = Double(time >= owned.startedAt ? time - owned.startedAt : 0) / 1_000_000
             let idleMs = Double(time >= owned.lastArrival ? time - owned.lastArrival : 0) / 1_000_000
             print("mic.trace watchdogFailure request=\(owned.request.requestID) grant=\(owned.id) source=\(owned.request.scope.source) live=\(live(owned)) ownerValid=\(owned.owner.valid(at: time)) renderOpen=\(owned.render.isOpen) renderAdmitted=\(owned.render.isAdmitted) phase=\(phase) admitted=\(owned.admitted) elapsedMs=\(elapsedMs) idleMs=\(idleMs)")
-            revoke(reason: "grant expired or ingress idle")
+            revoke(reason: phase == .preparing && timedOut ? "Mac 마이크 준비 시간이 초과되었습니다." : "grant expired or ingress idle")
         } else if phase == .active, owned.resource?.runtimeValid() != true {
             revoke(reason: "destination changed")
         }

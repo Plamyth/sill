@@ -1,5 +1,13 @@
 # Host microphone backend candidate
 
+## 초기 준비 watchdog 회귀
+
+Root의 2026-11-05 결정에 따라 Host 초기 준비는 10초 미만의 유한 budget을 사용한다. 실제 Host241 로그의 준비 지연 7.524205875초를 허용하며, 별도 iPad 담당이 client start 대기를 12초로 맞춘다. 공통 wire timeout이나 protocol 필드는 바꾸지 않는다. active 진입 시 PCM idle 기준을 재설정하고 이후 2초 초과 idle 보호를 유지한다. owner·현재 connection·닫힌 render gate·출력 유효성 검사는 그대로 유지한다. watchdog tick 전에 준비 콜백이 반환되어도 10초 경계에서 active로 전환하지 않고 반환 resource를 정리한다.
+
+`python3 -B Tests/checks/microphone-uplink/run.py ROOT OUTPUT --receiver-only`는 기존 `Fixture(delayed: true)`, fake clock, continuation과 production receiver/grant/HAL 소스, cleanup 진입점을 재사용한다. 7.524초 준비 성공, 10초 직전·경계, tick 없는 늦은 완료, 준비 중 취소·grant/connection/render 상실·clock 역행과 active idle을 검사한다. 관련 mutation도 실제 컴파일·실행한다. 외부 Network/HAL seam은 inert이며 실제 CoreAudio 호출·capture는 없다.
+
+이 선택은 server/catalog/원본 owner 통합을 제외한다. 기존 전체 fixture는 기준 소스에서 protocol 추출 목록이 뒤처져 컴파일되지 않았으며 이 선택의 성공으로 전체 검사를 통과했다고 보지 않는다. 실제 privacy/proof 손실과 await 중 membership 교체는 별도 기존 `Tests/checks/native-mic-forwarding-proof/run.py`의 production 추출 회귀로 대조한다. 실기기·실제 capture·HAL 지연 원인·서명·Host 설치 수용은 Root의 후속 검증이다.
+
 This unit implements fork kinds 204 control, 205 state, 206 frame, and 207 receipt. It provides host transport and an owner-bound public AUAudioUnit output sink. Native microphone capture, AVAudioSession arbitration, client UI, an original-call owner adapter, and physical audio acceptance remain open. The public initializer's `microphoneOwner` defaults to nil. The menu bar host now supplies SillVirtualMicrophoneOwner for explicit Mac default-input routing through BlackHole2ch. A CLI or other host with no provider advertises no capability. An injected valid owner can advertise protocol availability; native unit construction or format failure must refuse the explicit start. Public API availability is not proof that a particular HAL bridge, driver, endpoint or call works.
 
 `HostLocalOwnerGrant` is a host-local object with synchronous revocation. It binds an opaque destination and capability, authenticated connection identity, source, input generation, committed video epoch, paired fingerprint, original owner, call generation, exact virtual output/input UID and plugin, existing channel mapping, and monotonic expiry. The future original owner must establish that mapping and revoke the object synchronously on call or input change. Neither a process device list nor thread-scoped appendAudio supplies an exact call writer fence. A remote packet, paired name, installed driver, or compile result cannot create authority.
