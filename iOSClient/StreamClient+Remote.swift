@@ -406,7 +406,7 @@ extension StreamClient {
             DispatchQueue.main.async {
                 guard let self, let connector, self.remoteDial === connector else { return }
                 self.remoteDial = nil
-                if ownerWired != nil { self.dialSaved(macID, why: why); return }
+                if ownerWired != nil, failed.retry == .transport { self.dialSaved(macID, why: why); return }
                 self.remoteDialFailed(macID: macID, why: why, failure: failed.failure, candidate: failed.candidate, retry: failed.retry)
             }
         }
@@ -545,17 +545,6 @@ extension StreamClient {
     /// reconnect: the network row, the Direct row, then (a saved Mac) its saved addresses (§7.4).
     func sessionEnded(error: NWError?, end: RemoteDialPolicy.End?) {
         let s = session
-        #if os(iOS)
-        if ownerWiredSession != nil, !connected, let id = s?.macID {
-            let why = s?.why ?? .automatic
-            tearDown(status: status, restartSearch: false)
-            if appInForeground {
-                if why == .automatic, reconnect == nil { dialSavedAtStartup(id) }
-                else { dialSaved(id, why: why) }
-            }
-            return
-        }
-        #endif
         let goodbye = self.goodbye
         firstListDeadline?.cancel()
         firstListDeadline = nil
@@ -592,6 +581,20 @@ extension StreamClient {
             endWithNotice(goodbye, session: s, saved: saved, name: name)
             return
         }
+        // Preserve authenticated refusals and notices above. Only a transport failure of the
+        // provisional USB session may try the saved Tailnet door without a new user action.
+        #if os(iOS)
+        if ownerWiredSession != nil, !connected, let id = s?.macID, goodbye == nil,
+           RemoteDialPolicy.retryDisposition(for: [end ?? error.map { RemoteConnector.end(of: $0) } ?? .posix(ECONNRESET)]) == .transport {
+            let why = s?.why ?? .automatic
+            tearDown(status: status, restartSearch: false)
+            if appInForeground {
+                if why == .automatic, reconnect == nil { dialSavedAtStartup(id) }
+                else { dialSaved(id, why: why) }
+            }
+            return
+        }
+        #endif
         if let s, s.route.isRemote, !connected, let id = s.macID,
            goodbye == nil || !RemoteDialPolicy.ownerTailnetScope(saved) {
             let how: RemoteDialPolicy.End = end ?? goodbye.map { .goodbye($0.reason) } ?? error.map { e in

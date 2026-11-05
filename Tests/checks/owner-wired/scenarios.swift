@@ -54,4 +54,28 @@ do { let(c,old,candidate)=staged(); candidate.cancel(); c.moveProbed(candidate,k
 do { let(c,old,candidate)=staged(); c.installActualMoveHandler(candidate); candidate.stateUpdateHandler?(.ready); check("actual ready callback probes without disconnecting old", c.probes == 1 && c.connection === old && c.committed == 0 && c.audioRebind == 0); candidate.stateUpdateHandler?(.ready); check("late repeated ready cannot commit", c.connection === old && c.committed == 0) }
 do { let(c,old,candidate)=staged(); c.installActualMoveHandler(candidate); c.moveSaidGoodbye(candidate,Goodbye(reason:"owner-wired-unsupported")); candidate.stateUpdateHandler?(.failed("Host 242 not installed")); check("Host unsupported rejection preserves healthy Tailnet and audio", c.connection === old && old.cancels == 0 && c.committed == 0 && c.audioRebind == 0) }
 do { let(c,old,candidate)=staged(); c.ownerWiredSession = c.moving?.ownerWired; c.moving=nil; interfaces=[:]; c.ownerWiredChanged(); check("unplugged active USB closes only its peer for remote recovery", old.cancels == 1 && candidate.cancels == 0) }
+func earlyUSB() -> StreamClient {
+ let c=fresh(); let binding=c.ownerWiredBinding("owner")!
+ c.ownerWiredSession=OwnerWiredTarget(binding:binding,key:"usb",interface:Interface(name:"en2",index:9))
+ return c
+}
+do { let c=earlyUSB(); c.goodbye=Goodbye(reason:Goodbye.removed); c.sessionEnded(error:nil,end:nil); check("removed before first catalog revokes and prevents fallback",c.tailnet == 0 && c.records[0].revoked == true && c.reconnect == nil) }
+do { let c=earlyUSB(); c.goodbye=Goodbye(reason:Goodbye.update,message:"업데이트가 필요합니다",reconnect:false); c.sessionEnded(error:nil,end:nil); check("update refusal preserves notice without Tailnet retry",c.tailnet == 0 && c.notice?.storeLink == true && c.status == "업데이트가 필요합니다" && c.reconnect == nil) }
+for end: RemoteDialPolicy.End in [.notSill,.tlsAfterReady(-9825),.tls(-9808),.goodbye("removed")] {
+ let c=earlyUSB(); c.sessionEnded(error:nil,end:end); check("non-transport failure prevents fallback: \(end)",c.tailnet == 0 && c.reconnect == nil)
+}
+for reason in [Goodbye.remoteOff,Goodbye.internetOff,Goodbye.pairingRequired,"owner-denied"] {
+ let c=earlyUSB(); c.goodbye=Goodbye(reason:reason,reconnect:false); c.sessionEnded(error:nil,end:nil); check("explicit Host denial prevents direct retry: \(reason)",c.tailnet == 0 && c.reconnect == nil)
+}
+for end: RemoteDialPolicy.End in [.timeout,.noWindowList,.posix(ECONNRESET),.posix(ENETDOWN)] {
+ let c=earlyUSB(); c.sessionEnded(error:nil,end:end); check("pure transport failure falls back once: \(end)",c.tailnet == 1 && c.ownerWiredSession == nil)
+}
+do { let c=earlyUSB(); c.sessionEnded(error:.tls(-9825),end:nil); check("TLS revocation from error preserves stop disposition",c.tailnet == 0 && c.reconnect == nil) }
+do { let c=earlyUSB(); c.goodbye=Goodbye(reason:Goodbye.update,reconnect:true); c.sessionEnded(error:nil,end:nil); check("Host-authorized notice reconnect keeps shared scheduler",c.tailnet == 0 && c.notice?.storeLink == true && c.reconnect != nil && c.retrySchedules == 1) }
+for failure: RemoteDialPolicy.Failure in [.wrongMac,.revoked,.notSill] {
+ let c=earlyUSB(); let connector=RemoteConnector(); c.installActualFailureCallback(connector,ownerWired:c.ownerWiredSession)
+ connector.onFailed?(.init(failure:failure,candidate:nil,retry:.stop)); RunLoop.main.run(until:Date(timeIntervalSinceNow:0.02))
+ check("connector auth/protocol failure preserves stop: \(failure)",c.tailnet == 0 && c.stoppedDials == 1)
+}
+do { let c=earlyUSB(); let connector=RemoteConnector(); c.installActualFailureCallback(connector,ownerWired:c.ownerWiredSession); connector.onFailed?(.init(failure:.noAnswer,candidate:nil,retry:.transport)); RunLoop.main.run(until:Date(timeIntervalSinceNow:0.02)); check("connector transport failure allows one Tailnet attempt",c.tailnet == 1 && c.stoppedDials == 0) }
 print("owner-wired: \(checked) checks passed")

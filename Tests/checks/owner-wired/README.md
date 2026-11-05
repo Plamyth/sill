@@ -19,6 +19,14 @@ Pstack의 feature 경로를 사용하고, Ponytail full의 기존 구조 재사�
 
 Bonjour는 발견 전용이며 DNS-SD의 포트와 TXT를 신뢰하지 않는다. `DNSServiceResolve`와 IPv6 `DNSServiceGetAddrInfo`를 현재 유선 인터페이스로 제한하고, 실제 목적지는 저장 `remotePort`이다. 등록 owner의 USB는 legacy home 신뢰로 변환하지 않고 remote-door session으로 유지한다. 저장 주소와 `lastWorked`에 USB 주소를 승격하지 않는다.
 
-Host 242의 물리 NCM·TLS fingerprint·현재 서명 registry active 기기/principal/epoch 재검증이 별도 선행 의존이다. 이 구현은 owner receipt를 해석하지 않는다. 후보가 거절되거나 첫 카탈로그 전에 실패하면 Tailnet로 복구하며, 정상 Tailnet 옆의 move 실패는 기존 세션을 유지한다. 같은 발견 세대의 USB 시도는 최대 두 번이며 대기에는 기존 `DiscoveryPolicy.upWait`를 사용한다.
+Host 242의 물리 NCM·TLS fingerprint·현재 서명 registry active 기기/principal/epoch 재검증이 별도 선행 의존이다. 이 구현은 owner receipt를 해석하지 않는다. 첫 카탈로그 전 순수 전송 장애만 Tailnet로 복구하며, 명시적 goodbye·인증·프로토콜 거부는 기존 공통 판정을 보존한다. 또한 정상 Tailnet 옆의 move 실패는 기존 세션을 유지한다. 같은 발견 세대의 USB 시도는 최대 두 번이며 대기에는 기존 `DiscoveryPolicy.upWait`를 사용한다.
 
 최종 인계의 source hash·commit/tree·Mini 영수증·SDK 결과는 storage-route가 반환한 외장 산출물 경로에서 확인한다. 공개 owner 프로필 공급 없이 전체 앱 패키징은 완료하지 않는다. 이 후보는 push/merge/서명/설치/실기 검증을 수행하지 않았다.
+
+## 2026-11-05 독립 검수 수정
+
+Pstack bug-fix 경로에서 추출 실행으로 `removed` 거부가 Tailnet 재시도로 바뀌는 실패와 Vision 소스 누락을 먼저 재현했다. Ponytail full에 따라 기존 goodbye·RetryDisposition 판정을 우선하고, 기존 connector 실패 콜백에도 같은 disposition을 적용했다. Vision은 루트 `SillVision.xcodeproj`와 그 생성기 `Scripts/make-vision-project.py`의 기존 Sources에 두 파일만 보충했다. iOS 프로젝트와 다른 UI·오디오 후보를 수정하지 않았다.
+
+기존 47개에 실제 `sessionEnded`·`endWithNotice` 및 connector 실패 콜백 추출 검사를 추가해 동작 검사 67개로 확장했다. 공통 GoodbyePolicy, Goodbye 모델, RetryDisposition 원문을 사용하며 `removed`의 revoked 저장, update 공지와 명시적 reconnect, remoteOff/internetOff/pairingRequired/새 거부, notSill/TLS/잘못된 pin, 허용된 전송 실패를 확인한다. Vision 프로젝트와 생성기 등록 검사 2개를 별도로 실행한다. 프로젝트 생성기는 실행 없이 AST에서 목록을 읽어 검사하므로 공유 소스를 덮지 않는다.
+
+검수 전 RED와 수정 후 GREEN은 별도 Mini 영수증으로 남기고 각각 임시 소스 삭제를 확인한다. Vision Xcode build는 무서명 generic visionOS 대상이며 설치·실기 검증을 하지 않는다. iOS SDK 검사는 기존 정확한 target source list를 사용한 arm64 컴파일이다. SDK 통과와 실제 연결·오디오·기기 수용은 별개다.

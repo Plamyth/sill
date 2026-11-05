@@ -3,7 +3,7 @@ import Foundation
 let pin = Data(repeating: 7, count: 32)
 enum MacID { static func make(fingerprint: Data) -> String { fingerprint == pin ? "owner" : "other" } }
 struct SavedMac { var macID = "owner", remotePort = 7469; var fingerprintData: Data? = pin; var method = "owner"; var revoked: Bool?; var newKey: Bool? }
-enum RemoteDialPolicy { static func ownerTailnetScope(_ saved: SavedMac?) -> Bool { saved?.method == "owner" } }
+/* ACTUAL_DIAL_POLICY */
 enum DeviceIdentity { static var available = true; static func existing() -> Int? { available ? 1 : nil } }
 struct UIDevice { enum Idiom { case pad, phone }; static var current = UIDevice(); var userInterfaceIdiom = Idiom.pad }
 struct Interface: Equatable { enum Kind { case wiredEthernet, wifi }; let name: String; let index: Int; var type = Kind.wiredEthernet }
@@ -14,7 +14,9 @@ struct FoundMac { enum Route { case network, remote }; var id = "usb"; var route
 final class NWConnection { enum State: Equatable { case ready, cancelled, waiting(String), failed(String) }; enum Completion { case contentProcessed((String?) -> Void) }; var stateUpdateHandler: ((State) -> Void)?; func send(content: Data, completion: Completion) {}; var state = State.ready; var currentPath: Int? = 1; var cancels = 0; var fingerprint = pin; var alpn = "sill/1"; func cancel() { cancels += 1; state = .cancelled } }
 struct StreamHeader {}
 struct SignedMacInfo { let valid: Bool }
-struct Goodbye { let reason: String }
+/* ACTUAL_GOODBYE */
+/* ACTUAL_GOODBYE_POLICY */
+/* ACTUAL_VERSION */
 enum RemoteTLS { static let sessionALPN = "sill/1"; static func peerFingerprint(_ c: NWConnection) -> Data? { c.fingerprint }; static func negotiatedALPN(_ c: NWConnection) -> String? { c.alpn } }
 struct OwnerWiredTarget { var binding: OwnerWiredPolicy.Binding; var key: String; var interface: Interface; var endpoint = NWEndpoint.address; var valid = true; func current() -> Bool { valid && if_nametoindex(interface.name) == UInt32(interface.index) }; func matches(_ path: Int?) -> Bool { current() && path == 1 } }
 final class OwnerWiredResolver {
@@ -27,18 +29,18 @@ final class OwnerWiredResolver {
  static func answer(_ index: Int, success: Bool) { let p = pending[index]; p.completion(success ? OwnerWiredTarget(binding: p.resolver.binding, key: p.resolver.key, interface: p.resolver.interface) : nil) }
 }
 final class StreamClient {
- enum DialReason { case automatic, tap }
+ enum DialReason { case automatic, tap, afterPairing }
  enum MoveKind { case fromRemote, fromDirect, toCable, toWifi }
  struct Move { var connection: NWConnection; var kind = MoveKind.fromRemote; var ownerWired: OwnerWiredTarget? }
- struct Session { struct Route { var isRemote = true }; var route = Route(); var macID: String? = "owner" }
- struct Retry {}
+ struct Session { struct Route { var isRemote = true }; var route = Route(); var macID: String? = "owner"; var why: DialReason? = .automatic; var home: DiscoveryPolicy.HomeTrust? = nil; var candidate: RemoteDialPolicy.Candidate? = nil }
+ struct Retry { var remoteAllowed = true }
  struct HomeInfo { var latest: Double? = 1; mutating func moveStarted() {} }
  enum StartupAutoConnection { case waitingRemote(String) }; var startupAutoConnection = StartupAutoConnection.waitingRemote("owner")
  struct HomeRow { let id: String }; struct HomeRows { var refused = Set<String>() }
  var homeMoveRows = HomeRows(), homeMoveRow: HomeRow?, homeMoveName: String?, goodbye: Goodbye?
  var records = [SavedMac()]
  var appInForeground = true, connected = false, sessionListed = true, sessionDead = false
- var connection: NWConnection?, remoteDial: Int?, pairingDial: Int?, homeAsk: Int?, pendingLink: Int?, reconnect: Retry?
+ var connection: NWConnection?, remoteDial: RemoteConnector?, pairingDial: Int?, homeAsk: Int?, pendingLink: Int?, reconnect: Retry?
  enum Pairing { case idle, busy }; var pairing = Pairing.idle
  var session: Session? = Session(), moving: Move?, ownerWiredSession: OwnerWiredTarget?
  var ownerWiredResolver: OwnerWiredResolver?, ownerWiredToken: UUID?, ownerWiredRecheck: DispatchWorkItem?
@@ -65,5 +67,30 @@ final class StreamClient {
  func moveUnconstrained(after c: NWConnection, _ fallback: NWEndpoint, why: String) {}
  func giveUpMove(_ c: NWConnection, why: String) { moveEnded(c); c.cancel() }
 
+ static let deviceWord = "iPad"
+ struct Notice { let text: String; let storeLink: Bool }
+ var notice: Notice?, firstListDeadline: DispatchWorkItem?, reconnectCheck: DispatchWorkItem?, afterPairingWatch: DispatchWorkItem?
+ var status = "connected", retrySchedules = 0, stoppedDials = 0, discoveryUpdates = 0
+ var savedMacs: [SavedMac] { get { records } set { records = newValue } }
+ func persistSavedMacs() {}
+ func displayName(_ id: String) -> String { "Mac" }
+ func discoveryChanged() { discoveryUpdates += 1 }
+ func updateDiscovery() {}
+ func scheduleReconnectRetry() { retrySchedules += 1 }
+ @discardableResult func reconnectIfListed() -> Bool { false }
+ func tearDown(status: String, restartSearch: Bool = true) { self.status = status; connected = false; connection = nil; ownerWiredSession = nil }
+ func remoteDialFailed(macID: String, why: DialReason, failure: RemoteDialPolicy.Failure, candidate: RemoteDialPolicy.Candidate?, retry: RemoteDialPolicy.RetryDisposition = .stop) { stoppedDials += 1 }
+ func homeSessionEnded(_ session: Session?, error: NWError?, goodbye: String?) -> Bool { false }
+ func fallBackFromStartupWired() -> Bool { false }
+ func lostReconnect(session: Session?, saved: SavedMac?, name: String, remoteAllowed: Bool, afterQuit: Bool = false) -> Retry { Retry(remoteAllowed: remoteAllowed) }
  /* ACTUAL_METHODS */
 }
+
+enum NWError { case posix(POSIXErrorCode), tls(Int32), dns(Int32), other }
+final class RemoteConnector {
+ struct Failed { let failure: RemoteDialPolicy.Failure; let candidate: RemoteDialPolicy.Candidate?; let retry: RemoteDialPolicy.RetryDisposition }
+ var onFailed: ((Failed) -> Void)?
+ /* ACTUAL_ERROR_END */
+}
+enum RemoteCopy { static func dialFailure(_ failure: RemoteDialPolicy.Failure, mac: String, candidate: RemoteDialPolicy.Candidate?, vpnName: String?, device: String) -> String { "blocked:\(failure)" } }
+enum SavedMacs { static func revoking(_ id: String, in list: [SavedMac]) -> [SavedMac]? { list.map { var record = $0; if record.macID == id { record.revoked = true }; return record } } }
