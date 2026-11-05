@@ -75,6 +75,7 @@ package final class StreamCoordinator {
     private var nextRemoteAudioAction: UInt64 = 0
     private var remoteAudioEpoch: UInt64 = 0
     private var remoteAudioRunning = false
+    private var remoteAudioRevocationTracesRemaining = 16
     private let remoteAudioLifecycle = RemoteAudioCaptureLifecycle()
     /// `--synthetic`: the Desktop source streams a test pattern instead of the screen.
     let synthetic: Bool
@@ -3300,12 +3301,16 @@ package final class StreamCoordinator {
         }
     }
 
-    private func revokeRemoteAudio(reason: String) async {
-        enqueueRemoteAudioRevocation(reason: reason)
+    private func revokeRemoteAudio(reason: String, file: StaticString = #fileID, line: UInt = #line) async {
+        enqueueRemoteAudioRevocation(reason: reason, file: file, line: line)
         await remoteAudioLifecycle.waitUntilIdle()
     }
 
-    private func enqueueRemoteAudioRevocation(reason: String) {
+    private func enqueueRemoteAudioRevocation(reason: String, file: StaticString = #fileID, line: UInt = #line) {
+        if remoteAudioRevocationTracesRemaining > 0 {
+            remoteAudioRevocationTracesRemaining -= 1
+            print("audio.trace outputRevoked origin=\(file):\(line) subscribers=\(remoteAudioSubscribers.count) running=\(remoteAudioRunning)")
+        }
         let old = remoteAudioSubscribers.compactMap { connections[$0] }
         remoteAudioSubscribers.removeAll()
         remoteAudioRequests.removeAll()
