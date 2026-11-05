@@ -31,6 +31,11 @@ for token in ('.launch(', '.terminate(', 'launchArguments', 'launchEnvironment',
               'coordinate(', 'typeText(', 'press(', 'swipe', 'adjust(', 'springboard'):
     assert token not in swift, token
 assert 'CCR_CONNECTION_UI_APPROVED' in swift
+import re
+audio_gate = re.search(
+    r'guard ProcessInfo.processInfo.environment\["CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED"\] == "1" else \{\s*throw XCTSkip\([^\n]+\)\s*\}', swift)
+assert audio_gate is not None
+assert audio_gate.end() < swift.index('let app = XCUIApplication(') < swift.index('app.activate()')
 assert '.runningBackgroundSuspended' in swift
 assert 'app.menuBars.descendants' in swift
 assert 'identifier: "macDisplayChooser"' in swift
@@ -54,12 +59,17 @@ seed = {'__xctestrun_metadata__': {'FormatVersion': 1}, 'ConnectionUITests': {
     'TestHostPath': 'runner.app', 'UITargetAppPath': 'FORBIDDEN.app',
     'DependentProductPaths': ['FORBIDDEN.app'],
     'BlueprintName': 'ConnectionUITests', 'ProductModuleName': 'ConnectionUITests',
-    'TestingEnvironmentVariables': {}}}
+    'TestingEnvironmentVariables': {},
+    'EnvironmentVariables': {'CCR_CONNECTION_UI_APPROVED': '1',
+                             'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED': '1'}}}
 result = namespace['prepare'](seed)['ConnectionUITests']
 assert result['UseDestinationArtifacts'] is True
 assert result['UseUITargetAppProvidedByTests'] is True
 assert result['UITargetAppBundleIdentifier'] == 'com.ambrion.sillcanvas.ipad'
-assert result['EnvironmentVariables'] == {'CCR_CONNECTION_UI_APPROVED': '0'}
+assert result['EnvironmentVariables'] == {
+    'CCR_CONNECTION_UI_APPROVED': '0',
+    'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED': '0',
+}
 for key in ('TestHostPath', 'TestBundlePath', 'UITargetAppPath', 'DependentProductPaths',
             'UITargetAppCommandLineArguments', 'UITargetAppEnvironmentVariables'):
     assert key not in result

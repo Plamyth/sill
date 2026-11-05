@@ -43,10 +43,11 @@ Apple Xcode 27.0에 포함된 `Contents/Developer/usr/share/man/man5/xcodebuild.
 | `TestBundleDestinationRelativePath` | `__TESTHOST__/PlugIns/ConnectionUITests.xctest` |
 | `UITargetAppBundleIdentifier` | `com.ambrion.sillcanvas.ipad` |
 | runner의 `CCR_CONNECTION_UI_APPROVED` | `0`, 두 테스트 모두 skip |
+| runner의 `CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED` | `0`, activate 이전 오디오 OFF 확인 필수 |
 
 `TestHostPath`, `TestBundlePath`, `UITargetAppPath`, `DependentProductPaths`, 정상 앱의 arguments/environment는 변환 결과에 없다. 테스트 두 개만 allowlist에 둔다. 설치할 유일한 후보 경로는 `DerivedData/Build/Products/Debug-iphoneos/ConnectionUITests-Runner.app`이다. 정상 앱 artifact는 생성하지 않는다.
 
-Root가 향후 독립 검수, 실제 기기 단일 소유자 조율, runner 서명/provisioning·entitlements·OS 호환성, 정상 TestFlight 버전·데이터 보존을 확인한 후 runner만 한 번 설치한다. 이때 정상 앱이나 옛 REA 앱 설치는 하지 않는다. 설치 후 runner ID와 내부 test bundle을 readback하고, 별도 실행용 xctestrun 복사본의 runner 승인 값만 `1`로 변경한 뒤 새 SHA를 남겨야 한다. 앱을 테스트 제공 대상으로 지정한 동작과 destination artifacts 계약의 실제 호환성은 아직 미검증이다. 자동 앱 launch/재설치가 없음을 첫 실행에서 별도로 관측해야 한다.
+Root가 향후 독립 검수, 실제 기기 단일 소유자 조율, runner 서명/provisioning·entitlements·OS 호환성, 정상 TestFlight 버전·데이터 보존을 확인한 후 runner만 한 번 설치한다. 이때 정상 앱이나 옛 REA 앱 설치는 하지 않는다. 설치 후 runner ID와 내부 test bundle을 readback하고, 별도 실행용 xctestrun 복사본의 runner 승인 값을 `1`로 변경한다. 추가로 직전 실제 기기·Host metadata를 부모가 직접 확인한 경우에만 runner의 `CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED`도 `1`로 변경하고 새 SHA를 남겨야 한다. 앱을 테스트 제공 대상으로 지정한 동작과 destination artifacts 계약의 실제 호환성은 아직 미검증이다. 자동 앱 launch/재설치가 없음을 첫 실행에서 별도로 관측해야 한다.
 
 최초 `ipad-connection-ui-20261105` artifact는 서명을 끈 빌드의 이력이다. 후속 서명 후보는 아래 새 경로에서 별도로 빌드·검증하며 이전 unsigned SHA를 사용하지 않는다. 정상 앱·옛 REA 앱을 생성하지 않는 단일 UITest target은 유지한다.
 
@@ -88,3 +89,12 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild build-for-te
 빌드/서명 및 Mini 정적 검사는 실제 AX 노출·activation·오디오 창 표시·음성·제품 수용을 증명하지 않는다. 이 수정본에 대한 부모 독립 검수는 아직 대기다. 설치·XCTest 실행·USB 조작·Host·오디오·기기 UI 조작은 수행하지 않았다.
 
 최종 AX 대체 경로 후보는 Xcode 27.0 generic iOS `build-for-testing`과 runner/test bundle 각각의 strict deep 서명 검증을 통과했다. embedded profile UUID는 사전 확인한 기존 값과 일치한다. Mini의 최종 정적 검사와 전송 전후 소스 SHA 대조, project/xctestrun plist lint도 통과했다. 정상 앱 artifact가 없고 runner.app 하나만 생성된 것을 확인했다. 증거는 `signedcandidate/ax-fallback/build-final.log`, `signature-verification.json`, `mini-static-final.json`, `candidate-receipt.json`, `runner-files-sha256.json`이다.
+
+
+## P2 후속 보정: activate 이전 오디오 OFF 확인
+
+`existingApp()`은 일반 실행 승인에 더해 `CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED=1`을 필수로 요구한다. 누락·`0`·그 밖의 값이면 앱 객체 생성 및 `activate()` 전에 skip한다. 변환기는 두 flag를 모두 `0`으로 생성하며 원본 xctestrun에 `1`이 있더라도 전달하지 않는다. flag는 정상 앱 launch environment가 아니라 runner environment에만 둔다.
+
+부모가 직전 실제 metadata에서 `micDesired=false`, `playbackDesired=false`, `capture=false`, `engine=false`, attempts 없음과 Host intent `null`을 직접 확인하고 동일한 기기 소유 구간을 유지한 경우에만 이 flag를 `1`로 설정한다. 이번 소스 작업이 그 runtime 상태를 확인했다는 뜻은 아니다. 확인과 활성화 사이 상태 변경이 없도록 조율하고 실행 후에도 실제 오디오 효과를 별도로 관측해야 한다. flag만으로 zero-audioEffects를 보장하지 않는다. 저장된 오디오 ON 상태는 background → activate에서 자동 재개될 수 있으므로 기존 bcc7 후보의 소스만으로 오디오 효과 0을 주장하지 않는다.
+
+runtime 설정 변경·launch·오디오 toggle·권한/키 변경은 추가하지 않는다. 검수용 커밋 후 기존 Team/identity/profile로 `signedcandidate/audio-off-gate`에 새 generic signed build-for-testing을 수행한다. 이 경로의 새 영수증과 해시만 이번 P2 후보로 사용한다. 앞선 `ax-fallback`은 이력으로 보존한다. 최종 실기 실행·설치는 부모의 독립 검수와 Fold 구간 반납 후 부모가 직접 수행하며, 이번 작업의 기기·USB·XCTest 실행·설치·Host·오디오 UI 조작은 0이다.

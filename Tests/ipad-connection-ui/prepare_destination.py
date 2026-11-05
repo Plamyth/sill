@@ -20,7 +20,10 @@ def prepare(source):
         'UseDestinationArtifacts': True,
         'TestBundleDestinationRelativePath': '__TESTHOST__/PlugIns/ConnectionUITests.xctest',
         'UITargetAppBundleIdentifier': 'com.ambrion.sillcanvas.ipad',
-        'EnvironmentVariables': {'CCR_CONNECTION_UI_APPROVED': '0'},
+        'EnvironmentVariables': {
+            'CCR_CONNECTION_UI_APPROVED': '0',
+            'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED': '0',
+        },
         'OnlyTestIdentifiers': [
             'ConnectionUITests/test01ReadDefaultMonitorAX',
             'ConnectionUITests/test02OpenNativeAudioChooserOnly'],

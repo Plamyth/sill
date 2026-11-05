@@ -7,6 +7,9 @@ final class ConnectionUITests: XCTestCase {
         guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_APPROVED"] == "1" else {
             throw XCTSkip("Root의 runner 설치·기기 조율 후에만 실행합니다.")
         }
+        guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED"] == "1" else {
+            throw XCTSkip("직전 기기·Host metadata의 오디오 OFF를 부모가 확인한 뒤에만 활성화합니다.")
+        }
         let app = XCUIApplication(bundleIdentifier: "com.ambrion.sillcanvas.ipad")
         guard [.runningForeground, .runningBackground, .runningBackgroundSuspended].contains(app.state) else {
             throw XCTSkip("정상 앱이 실행 중이지 않습니다. 이 후보는 앱을 launch하지 않습니다.")
