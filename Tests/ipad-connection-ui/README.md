@@ -144,6 +144,6 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild build-for-te
 
 부모가 정상 제품의 오디오 설정 상단 toolbar에 명시 `iPad 입출력 중지` Button, accessibilityIdentifier `stopIPadAudio`를 추가한다. 제품 구현은 부모 소유이며 이 WT에서 제품 파일을 쓰지 않는다. 해당 버튼은 부모의 기존 cancelDesiredAudioRequest → 같은 Mac pin/기기/CAS217 stop 계약만 사용하고 Host241을 유지한다는 인계다. 이 테스트 후보가 그 제품 변경의 실제 설치·동작을 검증한 것은 아니다.
 
-`test04DisableIPadAudio`는 기존 media 승인 gate 후 실행 중 canonical 앱만 activate한다. 현재 화면의 exact Button identifier와 정확한 label이 일치하는 요소를 유일성·hittable·enabled 검사 후 한 번 누른다. picker·메뉴·스크롤·다른 화면 진입·좌표·키·launch fallback은 없다. 기존 selectOff helper는 완전히 제거한다. 탭 직후와 10초 후 screenshot/native AX를 첨부하며 실제 desired/intent/engine 중지 수용은 부모 metadata로 판정한다. 버튼이 없거나 가려졌으면 실패하고 추정 복구하지 않는다.
+`test04DisableIPadAudio`는 기존 media 승인 gate 후 실행 중 canonical 앱만 activate한다. 정확한 오디오 NavigationBar가 없을 때만 03과 같은 기존 openAudioChooser 경로로 창을 열고 requireAudioChooser를 확인한다. 그 뒤 exact Button identifier와 정확한 label이 일치하는 요소를 유일성·hittable·enabled 검사 후 한 번 누른다. picker·스크롤·좌표·키·launch fallback은 없다. desired가 true인 경우에도 01/02의 OFF gate를 거짓으로 열지 않는다. 기존 selectOff helper는 완전히 제거한다. 탭 직후와 10초 후 screenshot/native AX를 첨부하며 실제 desired/intent/engine 중지 수용은 부모 metadata로 판정한다. 버튼이 없거나 가려졌으면 실패하고 추정 복구하지 않는다.
 
 03 ON 메서드와 01/02는 변경하지 않는다. 세 flag는 기본 0, default allowlist는 01/02뿐이다. 04 실행은 부모가 별도 xctestrun 복사본에서 04만 선택하고 media 승인 후 수행한다. 새 ON·Host·기기 실행·설치는 이번 작업에서 0이다. 새 서명 후보는 `signedcandidate/explicit-stop`에 분리하고 기존 Team/profile을 사용한다. 제품 앱의 새 서명·설치 시점과 실제 stop 버튼 노출은 부모가 조율한다. 독립 비작성 검수·빌드/서명 결과와 정확한 파일 SHA는 이 경로의 candidate-receipt.json에 기록한다.
