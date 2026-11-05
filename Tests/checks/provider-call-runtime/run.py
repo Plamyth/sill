@@ -20,6 +20,7 @@ parser.add_argument('--sha256', required=True)
 parser.add_argument('--production-commit', required=True)
 parser.add_argument('--production-tree', required=True)
 parser.add_argument('--handlers-only', action='store_true')
+parser.add_argument('--native-session-only', action='store_true')
 args = parser.parse_args()
 sha = lambda data: hashlib.sha256(data).hexdigest()
 raw = args.manifest.read_bytes()
@@ -110,7 +111,7 @@ final class HostIdentity {
     subprocess.run(['codesign', '--verify', '--strict', str(binary)], check=True)
     signature = subprocess.run(['codesign', '-dv', '--verbose=4', str(binary)], capture_output=True, text=True, check=True)
     cases = out / 'cases'; cases.mkdir()
-    worker = subprocess.Popen([str(binary), shutil.which('node'), str(shared / 'child.js'), str(cases), str(node)] + (['--handlers-only'] if args.handlers_only else []),
+    worker = subprocess.Popen([str(binary), shutil.which('node'), str(shared / 'child.js'), str(cases), str(node)] + (['--handlers-only'] if args.handlers_only else []) + (['--native-session-only'] if args.native_session_only else []),
         start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         output, _ = worker.communicate(timeout=150)

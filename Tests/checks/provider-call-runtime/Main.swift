@@ -9,6 +9,7 @@ enum CheckError: Error { case setup(String) }
     let fixture: Fixture
     let challenge: [String: Any]
     let provider: String
+    let callSessionId: String
     var corruptStage = "", corruptField = "", corruptValue: Any = ""
     var hold = "", waiting = false, resume = false
     var calls: [String] = [], effects = 0, signatures = 0
@@ -21,8 +22,8 @@ enum CheckError: Error { case setup(String) }
             "guestId": 17, "url": "https://chatgpt.com/dots/leaf-a", "timeOrigin": 1_700_000_000_123.5]
         let typed: ProviderCallTarget = try decode(target)
         switch typed {
-        case .webGuest: provider = "chatgpt-dots-webguest"
-        case .nativeTarget: provider = "codex-app-server"
+        case .webGuest: provider = "chatgpt-dots-webguest"; callSessionId = "fixture-session"
+        case .nativeTarget(let target): provider = "codex-app-server"; callSessionId = target.voiceSessionId
         }
         challenge = ["schemaVersion": 1, "challenge": Base64URL.encode(Data(repeating: 7, count: 32)),
             "coreGeneration": UUID().uuidString.lowercased(), "requestId": request.requestId.uuidString.lowercased(),
@@ -79,7 +80,7 @@ enum CheckError: Error { case setup(String) }
             }
             let result = try ProviderCallResult(requestId: self.request.requestId,
                 status: self.request.action == .start ? .started : .stopped, reason: "fixture_readback",
-                callSessionId: "fixture-session", provider: provider)
+                callSessionId: callSessionId, provider: provider)
             reply["result"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result))
         default: throw CheckError.setup(op)
         }
@@ -152,8 +153,7 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
             checks.append(["name": name, "passed": value]); print("\(value ? "PASS" : "FAIL") \(name)")
         }
         try selectorWireChecks(check)
-        if CommandLine.arguments.contains("--handlers-only") {
-            await handlerChecks(check)
+        func finishSubset() throws -> Never {
             let failures = checks.filter { $0["passed"] as? Bool == false }
             let report: [String: Any] = ["checks": checks, "failures": failures,
                 "passedCount": checks.count - failures.count, "checkCount": checks.count,
@@ -161,6 +161,10 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(
                 to: URL(fileURLWithPath: CommandLine.arguments[3]).appendingPathComponent("report.json"))
             exit(failures.isEmpty ? 0 : 1)
+        }
+        if CommandLine.arguments.contains("--handlers-only") {
+            await handlerChecks(check)
+            try finishSubset()
         }
         func wait(_ condition: () -> Bool) async throws {
             let until = ContinuousClock.now.advanced(by: .seconds(6))
@@ -186,7 +190,7 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
             f.runtime.checkPausePolling()
             guard let session = await f.runtime.providerSession(viewer(p)) else { throw CheckError.setup("actual providerSession") }
             let r = try ProviderCallRequest(requestId: UUID(), action: action, expectedLeaseRevision: session.snapshot.revision,
-                pairedDeviceId: p.id, desiredInput: true, desiredOutput: true, callSessionId: action == .stop ? "fixture-session" : nil)
+                pairedDeviceId: p.id, desiredInput: true, desiredOutput: true, callSessionId: action == .stop ? (nativeTarget?["voiceSessionId"] as? String ?? "fixture-session") : nil)
             let core = try Core(r, f, ttl: ttl, nativeTarget: nativeTarget)
             let runtime = ProviderCallRuntime(identity: try HostIdentity(), recoveryReady: { recovery }, open: { _, _ in core })
             return .init(fixture: f, peer: p, session: session, request: r, core: core, runtime: runtime)
@@ -204,6 +208,59 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
         let nativeFile = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("provider-call-bridge/native-target-vectors.json")
         let nativeRows = try JSONSerialization.jsonObject(with: Data(contentsOf: nativeFile)) as! [String: Any]
+        if CommandLine.arguments.contains("--native-session-only") {
+            for (index, row) in (nativeRows["vectors"] as! [[String: Any]]).enumerated() {
+                let target = row["target"] as! [String: Any], sessionID = target["voiceSessionId"] as! String
+                for action in [ProviderCallRequest.Action.start, .stop] {
+                    let a = try await setup("session-valid-\(index)-\(action.rawValue)", action: action, nativeTarget: target)
+                    let value = await perform(a, kind: .nativeCodex)
+                    check("native \(action.rawValue) keeps exact target session UUID case", value?.result.status == (action == .start ? .started : .stopped) &&
+                        value?.result.callSessionId == sessionID && a.core.signatures == 2 && a.core.effects == 1)
+                    await a.fixture.finish()
+                }
+                let wrongCase = sessionID == sessionID.uppercased() ? sessionID.lowercased() : sessionID.uppercased()
+                for bad in [nil, "00000000-0000-0000-0000-000000000001", wrongCase] as [String?] {
+                    let a = try await setup("session-wrong-stop-\(index)-\(bad ?? "null")", action: .stop, nativeTarget: target)
+                    let request = try ProviderCallRequest(requestId: a.request.requestId, action: .stop,
+                        expectedLeaseRevision: a.request.expectedLeaseRevision, pairedDeviceId: a.peer.id,
+                        desiredInput: true, desiredOutput: true, callSessionId: bad)
+                    let value = await perform(a, request: request, kind: .nativeCodex)
+                    check("native wrong stop session rejected before identity and Acquire", value?.result.status == .failed &&
+                        a.core.calls == ["provider.challenge"] && a.core.signatures == 0 &&
+                        count(a.fixture, "forwardingProviderAcquire") == 0 && a.core.effects == 0)
+                    await a.fixture.finish()
+                    for action in [ProviderCallRequest.Action.start, .stop] {
+                        let b = try await setup("session-wrong-result-\(index)-\(action.rawValue)-\(bad ?? "null")", action: action, nativeTarget: target)
+                        b.core.corruptStage = "provider.result"; b.core.corruptField = "result"
+                        b.core.corruptValue = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ProviderCallResult(
+                            requestId: b.request.requestId, status: action == .start ? .started : .stopped,
+                            reason: "fixture_readback", callSessionId: bad, provider: "codex-app-server")))
+                        let value = await perform(b, kind: .nativeCodex)
+                        check("native wrong \(action.rawValue) result session stays unknown without fallback", value?.result.status == .unknown &&
+                            value?.result.provider == "codex-app-server" && b.core.effects == 1 && b.core.calls.count == 4)
+                        await b.fixture.finish()
+                    }
+                }
+            }
+            let target = (nativeRows["vectors"] as! [[String: Any]])[0]["target"] as! [String: Any]
+            for status in [ProviderCallResult.Status.failed, .unknown] {
+                let a = try await setup("session-native-\(status.rawValue)-null", nativeTarget: target)
+                a.core.corruptStage = "provider.result"; a.core.corruptField = "result"
+                a.core.corruptValue = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ProviderCallResult(
+                    requestId: a.request.requestId, status: status, reason: "fixture_result", provider: "codex-app-server")))
+                check("native \(status.rawValue) does not require session", (await perform(a, kind: .nativeCodex))?.result.status == status)
+                await a.fixture.finish()
+            }
+            let legacy = try await setup("session-legacy-stop-null", action: .stop)
+            legacy.core.corruptStage = "provider.result"; legacy.core.corruptField = "result"
+            legacy.core.corruptValue = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ProviderCallResult(
+                requestId: legacy.request.requestId, status: .stopped, reason: "fixture_stopped")))
+            let stopped = await perform(legacy)
+            check("legacy stopped retains existing null session contract", stopped?.result.status == .stopped && stopped?.result.callSessionId == nil)
+            await legacy.fixture.finish()
+            await handlerChecks(check)
+            try finishSubset()
+        }
         for (index, row) in (nativeRows["vectors"] as! [[String: Any]]).enumerated() {
             let target = row["target"] as! [String: Any]
             let a = try await setup("native-signed-\(index)", nativeTarget: target)
