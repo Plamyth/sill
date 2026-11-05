@@ -137,12 +137,14 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
                             _ = try ProviderPeerAnchor.verify(fd, policy: .core)
                             try Self.write(ready, to: fd, until: deadline)
                             _ = try ProviderPeerAnchor.verify(fd, policy: .core)
-                            try finishMediaTransition()
+                            try finishMediaTransition(until: deadline)
                             continuation.resume()
                         } catch { invalidate(); continuation.resume(throwing: error) }
                     }
                 }
             } onCancel: { [self] in invalidate() }
+            try Task.checkCancellation()
+            try requireCurrentMedia(until: deadline)
         } catch { invalidate(); throw error }
     }
 
@@ -170,9 +172,10 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
         guard mode == .command, descriptor != nil else { throw ProviderCallFailure.unavailable }
         mode = .transitioning
     }
-    private func finishMediaTransition() throws {
+    private func finishMediaTransition(until deadline: TimeInterval) throws {
         lock.lock(); defer { lock.unlock() }
         guard mode == .transitioning, descriptor != nil else { throw ProviderCallFailure.unavailable }
+        guard ProcessInfo.processInfo.systemUptime < deadline else { throw ProviderCallFailure.expired }
         mode = .media
     }
     private func duplicate(transition: Bool = false) throws -> Int32 {
@@ -198,21 +201,32 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
         guard deadline.isFinite else { throw ProviderCallFailure.invalidFields }
         try reserve(direction)
         defer { release(direction) }
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                (direction == .read ? readQueue : writeQueue).async { [self] in
-                    do {
-                        let fd = try duplicate()
-                        defer { Darwin.close(fd) }
-                        _ = try ProviderPeerAnchor.verify(fd, policy: .core)
-                        let value = try operation(fd)
-                        _ = try ProviderPeerAnchor.verify(fd, policy: .core)
-                        guard ProcessInfo.processInfo.systemUptime < deadline else { throw ProviderCallFailure.expired }
-                        continuation.resume(returning: value)
-                    } catch { invalidate(); continuation.resume(throwing: error) }
+        do {
+            let value: Value = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    (direction == .read ? readQueue : writeQueue).async { [self] in
+                        do {
+                            let fd = try duplicate()
+                            defer { Darwin.close(fd) }
+                            _ = try ProviderPeerAnchor.verify(fd, policy: .core)
+                            let value = try operation(fd)
+                            _ = try ProviderPeerAnchor.verify(fd, policy: .core)
+                            try requireCurrentMedia(until: deadline)
+                            continuation.resume(returning: value)
+                        } catch { invalidate(); continuation.resume(throwing: error) }
+                    }
                 }
-            }
-        } onCancel: { [self] in invalidate() }
+            } onCancel: { [self] in invalidate() }
+            try Task.checkCancellation()
+            try requireCurrentMedia(until: deadline)
+            return value
+        } catch { invalidate(); throw error }
+    }
+
+    private func requireCurrentMedia(until deadline: TimeInterval) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard mode == .media, descriptor != nil else { throw ProviderCallFailure.unavailable }
+        guard deadline.isFinite, ProcessInfo.processInfo.systemUptime < deadline else { throw ProviderCallFailure.expired }
     }
 
     private static func mediaHeader(_ frame: Data) throws -> Data {
@@ -232,7 +246,11 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
         guard (1...mediaBodyLimit).contains(size) else { throw ProviderCallFailure.invalidFields }
         var bytes = [UInt8](repeating: 0, count: size)
         var received = 0
-        defer { bytes.withUnsafeMutableBytes { $0.initializeMemory(as: UInt8.self, repeating: 0) } }
+        defer {
+            bytes.withUnsafeMutableBytes { raw in
+                if let base = raw.baseAddress { _ = memset_s(base, raw.count, 0, raw.count) }
+            }
+        }
         try bytes.withUnsafeMutableBytes { raw in
             while received < size {
                 try wait(fd, events: Int16(POLLIN), until: deadline)

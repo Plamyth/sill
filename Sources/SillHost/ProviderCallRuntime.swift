@@ -28,7 +28,8 @@ struct ProviderCallNativeReadback {
         self.result = result; self.context = context; self.session = session; self.authority = authority
     }
 
-    func isCurrent() async -> Bool {
+    // This checks the original command ticket, not authority for a continuing media stream.
+    func isCommandReadbackCurrent() async -> Bool {
         let current = { !Task.isCancelled && context.isCurrent() && session.admitted() &&
             authority == session.relay.providerAuthorityIdentity }
         guard current(), let snapshot = await session.readSnapshot(), current() else { return false }

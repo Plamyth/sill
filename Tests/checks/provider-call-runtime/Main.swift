@@ -228,12 +228,12 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
                     if case .readback(let observed) = a.nativeEvents.values.last {
                         check("native readback preserves target and Core generation", observed.target.voiceSessionId == sessionID &&
                             observed.target.targetHash == target["targetHash"] as? String && observed.coreGeneration == UUID(uuidString: a.core.challenge["coreGeneration"] as! String) && observed.result.status == value?.result.status && observed.result.callSessionId == value?.result.callSessionId)
-                        check("fresh native readback rechecks current authority", await observed.isCurrent())
+                        check("fresh native readback rechecks current authority", await observed.isCommandReadbackCurrent())
                         _ = await query(a, kind: .nativeCodex)
                         _ = await perform(a, kind: .nativeCodex)
                         check("query and duplicate perform never replay native media event", a.nativeEvents.values.count == (action == .stop ? 2 : 1) && a.core.effects == 1)
                         a.peer.live = false
-                        check("retired connection invalidates readback", !(await observed.isCurrent()))
+                        check("retired connection invalidates readback", !(await observed.isCommandReadbackCurrent()))
                     } else { check("native readback exists", false) }
                     await a.fixture.finish()
                 }

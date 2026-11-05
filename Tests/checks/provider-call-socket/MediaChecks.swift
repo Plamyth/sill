@@ -2,10 +2,19 @@ import Foundation
 import Darwin
 
 enum ProviderCallFailure: Error { case unavailable, expired, invalidFields, superseded }
+final class VerificationHook: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callback: ((Int) -> Void)?
+    private var count = 0
+    func set(_ action: ((Int) -> Void)?) { lock.lock(); count = 0; callback = action; lock.unlock() }
+    func run() { lock.lock(); count += 1; let value = count; let action = callback; lock.unlock(); action?(value) }
+}
 enum ProviderPeerAnchor {
+    static let hook = VerificationHook()
     enum Policy { case core }
     static func verify(_ fd: Int32, policy: Policy) throws -> Bool {
         guard fcntl(fd, F_GETFD) >= 0 else { throw ProviderCallFailure.unavailable }
+        hook.run()
         return true
     }
 }
@@ -70,6 +79,29 @@ enum ProviderPeerAnchor {
             catch { expect(true, "\(kind) closes media without fabricated response") }
             do { try await s.sendMedia(input, until: ProcessInfo.processInfo.systemUptime + 1); fatalError("closed socket") }
             catch { expect(true, "failed media cannot resume implicitly") }
+        }
+        do {
+            let (s, p) = try pair(); defer { s.invalidate(); Darwin.close(p); ProviderPeerAnchor.hook.set(nil) }
+            ProviderPeerAnchor.hook.set { count in if count == 2 { Thread.sleep(forTimeInterval: 0.08) } }
+            do { try await s.beginMedia(ready: ready, until: ProcessInfo.processInfo.systemUptime + 0.04); fatalError("expired ready") }
+            catch { expect(true, "ready cannot succeed after peer check crosses deadline") }
+            do { try await s.sendMedia(input, until: ProcessInfo.processInfo.systemUptime + 1); fatalError("expired media reopened") }
+            catch { expect(true, "expired ready permanently closes socket") }
+        }
+        do {
+            let (s, p) = try pair(); defer { s.invalidate(); Darwin.close(p); ProviderPeerAnchor.hook.set(nil) }
+            try await s.beginMedia(ready: ready, until: ProcessInfo.processInfo.systemUptime + 1)
+            _ = try peerRead(ready.count, p)
+            let reached = DispatchSemaphore(value: 0), unblock = DispatchSemaphore(value: 0)
+            ProviderPeerAnchor.hook.set { count in if count == 2 { reached.signal(); unblock.wait() } }
+            try peerSend(output, p)
+            let pending = Task { try await s.receiveMedia(until: ProcessInfo.processInfo.systemUptime + 3) }
+            while reached.wait(timeout: .now()) != .success { try await Task.sleep(for: .milliseconds(1)) }
+            pending.cancel(); unblock.signal()
+            do { _ = try await pending.value; fatalError("cancelled PCM returned") }
+            catch { expect(true, "cancel after reading PCM cannot return a successful frame") }
+            do { try await s.sendMedia(input, until: ProcessInfo.processInfo.systemUptime + 1); fatalError("cancelled media reopened") }
+            catch { expect(true, "cancelled read permanently closes socket") }
         }
         print("MEDIA_RESULT=\(checks); peer authentication stubbed; no Core, Host, device or audio effects")
     }
