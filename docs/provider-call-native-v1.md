@@ -20,7 +20,7 @@ operation은 perform/query다. query도 원래7필드 request를 그대로 보�
 
 requestId는 UUID, action은 start/stop, expectedLeaseRevision은 UInt64 정규 십진 문자열, pairedDeviceId는 SPKI SHA256 소문자 hex64다. 방향은 boolean이다. callSessionId는 null 또는1..128 UTF16 code unit의 문자열이며 start는 null이어야 한다. 빈 문자열과 단독 surrogate는 거부하고 Unicode 정규화를 하지 않는다.
 
-응답의 정확한 키는 schemaVersion/requestDigest/result다. result의 키는 requestId/status/reason/callSessionId/provider/mediaProtection다. status는 started/stopped/unsupported/failed/unknown/pending이다. provider는 chatgpt-dots-webguest, mediaProtection은 not_attested다. reason은 내부 오류 코드이며 사용자 화면은 한국어로 표시한다. 미디어 보호 증거는 기존 별도 음성 계약에서 확인한다.
+응답의 정확한 키는 schemaVersion/requestDigest/result다. result의 키는 requestId/status/reason/callSessionId/provider/mediaProtection다. status는 started/stopped/unsupported/failed/unknown/pending이다. provider는 기존 chatgpt-dots-webguest 또는 명시적인 codex-app-server이며 기본값은 기존 webguest다. mediaProtection은 두 경로 모두 not_attested다. reason은 내부 오류 코드이며 사용자 화면은 한국어로 표시한다. 미디어 보호 증거는 기존 별도 음성 계약에서 확인한다.
 
 started/stopped는 실제 공식 UI의 phase/session readback을 Host가 현재 paired admission과 새 Node snapshot에 대조한 결과만 쓴다. Node Dispatch 승인, Core activated, 서명 생성, 메시지 전달은 통화 성공 ACK가 아니다.
 
@@ -54,7 +54,11 @@ identity/dispatch의 서명 메시지는 목적 문자열 UTF8 + NUL + 받은 pa
 
 requestDigest는 Node journal 내부 requestHash와 다르다. UTF8 ccr-provider-request-v1 + NUL 뒤 requestId의 lowercase UUID/action/정규 십진 revision/lowercase pairedDeviceId를 UInt32 BE 길이+UTF8으로 붙인다. 방향은 각0/1바이트, session은 null이면0, 문자열이면1+길이+UTF8이다. 원본 고정 벡터는 Tests/checks/provider-call-bridge/vectors.json이다.
 
-Target은 profileId/leafId/guestId/url/timeOrigin의5필드다. targetHash는 Node 문서의 ccr-provider-target-v1 JSON 배열과 timeOrigin binary64BE 인코딩을 그대로 사용한다. exact href를 origin/path로 줄이거나 허용되지 않은 query/hash를 해시해 승인하지 않는다.
+기존 webguest Target은 profileId/leafId/guestId/url/timeOrigin의5필드다. targetHash는 Node 문서의 ccr-provider-target-v1 JSON 배열과 timeOrigin binary64BE 인코딩을 그대로 사용한다. exact href를 origin/path로 줄이거나 허용되지 않은 query/hash를 해시해 승인하지 않는다.
+
+순정 Codex 준비 Target은 schema/providerKind/providerInstanceId/threadId/voiceSessionId/targetHash의 정확한6필드다. schema는 ccr-codex-realtime-target-v1, providerKind는 codex-app-server다. 세 식별자는 UUID 형식을 검증하되 원문 대소문자와 바이트를 보존한다. targetHash는 UTF8 JSON 배열 `[schema,providerKind,providerInstanceId,threadId,voiceSessionId]`의 SHA256 소문자16진수이며, 내부 targetHash와 외부 challenge.targetHash가 계산값과 모두 일치해야 한다. 고정 벡터는 Tests/checks/provider-call-bridge/native-target-vectors.json이다. 다른 provider, 혼합·추가·누락 필드나 변조된 해시는 거절한다.
+
+실제 시작 뒤 관측한 realtimeSessionId와 version은 Core의 별도 상태·이벤트에 결속하며 준비 Target이나 그 해시에 추가하지 않는다. 준비 Target과 실제 세션을 얻기 위해 미리 통화를 시작하지 않는다. Host의 typed Target 및 결과 decoder 지원은 실제 app-server 통화 시작·음성 전달·물리 입출력 보호의 수용을 뜻하지 않는다. Node Acquire/Follow는 기존 targetHash·request digest·기기 증거·음성 lease 계약을 그대로 사용한다.
 
 Host는 challenge 송신 h0+challenge.remaining과 Node Acquire 송신 n0+Node.remaining의 min을 취하고 이후 기한을 늘리지 않는다. 서명 remaining은 그 기한−현재 Host monotonic의 내림이다. Core는 자기 c0 기준 min(원 challenge만료,c0+signedRemaining,전체 operation만료)를 최초 guest inspect의g0/수신hInspect로 환산한다. 수신시각에 remaining을 더하거나 서로 다른 clock epoch를 빼지 않는다. guest 마지막 만료 검사와 click 사이에는 await/타이머가 없다.
 
