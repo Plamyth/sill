@@ -205,8 +205,8 @@ public struct AudioForwardingSnapshot: Codable, Sendable {
         }
         public init(pairedDeviceId: AudioForwardingDeviceID, intentId: UUID, intentRevision: AudioForwardingRevision,
                     intentGeneration: UUID, inputDesired: Bool, outputDesired: Bool,
-                    sentryDesired: Bool = true, localMutedDesired: Bool = true) throws {
-            guard intentRevision.value > 0, sentryDesired, localMutedDesired else { throw AudioForwardingFailure.invalidIntent }
+                    sentryDesired: Bool = false, localMutedDesired: Bool = true) throws {
+            guard intentRevision.value > 0, localMutedDesired else { throw AudioForwardingFailure.invalidIntent }
             self.pairedDeviceId = pairedDeviceId; self.intentId = intentId; self.intentRevision = intentRevision
             self.intentGeneration = intentGeneration; self.inputDesired = inputDesired; self.outputDesired = outputDesired
             self.sentryDesired = sentryDesired; self.localMutedDesired = localMutedDesired
@@ -221,7 +221,7 @@ public struct AudioForwardingSnapshot: Codable, Sendable {
             outputDesired = try c.decode(Bool.self, forKey: .outputDesired)
             sentryDesired = try c.decode(Bool.self, forKey: .sentryDesired)
             localMutedDesired = try c.decode(Bool.self, forKey: .localMutedDesired)
-            guard intentRevision.value > 0, sentryDesired, localMutedDesired else { throw AudioForwardingFailure.invalidIntent }
+            guard intentRevision.value > 0, localMutedDesired else { throw AudioForwardingFailure.invalidIntent }
         }
     }
     public let schemaVersion: Int

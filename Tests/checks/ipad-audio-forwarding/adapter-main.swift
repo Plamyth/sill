@@ -403,6 +403,71 @@ struct AdapterChecks {
         check(guarded.forwardingContextReadiness["desiredScopePresent"] == false && guarded.forwardingContextReadiness["sourceNotNone"] == false &&
               guarded.forwardingContextReadiness["contextMatchesForwardingState"] == false,
               "retired scope reports absence without inherited context authority")
+        // A synthetic Node intent25 has optional Sentry=false and required local mute=true.
+        let optional = StreamClient()
+        optional.desiredAudioSetConnection(optional.connection)
+        let optionalPeer = optional.connection!
+        var optionalList = list
+        optionalList.audioPrivacy = .init(version:2,protected:true)
+        optionalList.microphone = nil
+        optional.fixtureObserve(optionalList)
+        let optionalObserve = optional.command()
+        let nodeIntent = try AudioForwardingSnapshot.Intent(pairedDeviceId:device,intentId:UUID(),intentRevision:.init(1),
+            intentGeneration:UUID(),inputDesired:true,outputDesired:true,sentryDesired:false,localMutedDesired:true)
+        let nodeSnapshot = try AudioForwardingSnapshot(revision:.init(25),intent:nodeIntent,binding:nil)
+        let nodeState = try AudioForwardingState(requestID:optionalObserve.requestID,operation:.observe,
+            catalog:catalog(nodeSnapshot,intent:1,binding:0),result:nil)
+        let nodeMessage = StreamMessage(kind:.forwardingState,timestamp:0,isKeyframe:false,payload:Wire.encode(nodeState))
+        optionalPeer.forwardingInFlight = 0
+        _ = optional.receiveAudioForwarding(StreamMessage.parseHeader(nodeMessage.serialized().prefix(StreamMessage.headerLength))!,nodeMessage.payload,from:optionalPeer)
+        await flush()
+        check(optional.audioForwarding.phase == .ready && optional.audioForwardingWire == nil && optional.audioForwarding.pendingRequestID == nil,
+              "actual218 sentryfalse observe decodes and drains its matched wire")
+        check(optional.audioForwarding.lastReceivedSummary?["operation"] == "observe" && optional.audioForwarding.snapshot?.intent?.sentryDesired == false,
+              "sentryfalse current shape is preserved without inferred protection")
+        optional.desiredAudio.set(.microphone,desired:true);optional.desiredAudio.set(.playback,desired:true)
+        optional.cancelDesiredAudioRequest()
+        let optionalStop = optional.command(), stopIntent = optionalStop.intent!
+        check(optionalStop.operation == .submit && stopIntent.action == .stop && stopIntent.expectedRevision.value == 25
+              && stopIntent.intentId == nodeIntent.intentId && !stopIntent.inputDesired && !stopIntent.outputDesired,
+              "actual OFF creates one correlated stop against observed intent25")
+        let offIntent = try AudioForwardingSnapshot.Intent(pairedDeviceId:device,intentId:stopIntent.intentId,intentRevision:stopIntent.intentRevision,
+            intentGeneration:nodeIntent.intentGeneration,inputDesired:false,outputDesired:false,sentryDesired:false,localMutedDesired:true)
+        let offBinding = AudioForwardingBinding(pairedDeviceId:device,intentGeneration:offIntent.intentGeneration,bindingEpoch:UUID(),
+            transportId:stopIntent.transportId,transportKind:.native,operationId:optionalStop.requestID,phase:.off,configuration:configuration)
+        let offSnapshot = try AudioForwardingSnapshot(revision:.init(26),intent:offIntent,binding:offBinding)
+        let offState = try AudioForwardingState(requestID:optionalStop.requestID,operation:.submit,catalog:nil,result:.accepted(offSnapshot))
+        let offMessage = StreamMessage(kind:.forwardingState,timestamp:0,isKeyframe:false,payload:Wire.encode(offState))
+        optionalPeer.forwardingInFlight = 0
+        _ = optional.receiveAudioForwarding(StreamMessage.parseHeader(offMessage.serialized().prefix(StreamMessage.headerLength))!,offMessage.payload,from:optionalPeer)
+        await flush()
+        check(optional.audioForwarding.phase == .ready && optional.audioForwarding.binding?.phase == .off && optional.audioForwardingWire == nil,
+              "actual matching sentryfalse off ACK finishes normal stop")
+        check(!optional.desiredAudio.selection.microphone && !optional.desiredAudio.selection.playback
+              && !optional.desiredAudioPermits(.microphone) && !optional.desiredAudioPermits(.playback),
+              "normal stop keeps both media gates closed")
+        let unprotected = StreamClient()
+        unprotected.desiredAudioSetConnection(unprotected.connection)
+        var unprotectedList = optionalList;unprotectedList.audioPrivacy = .init(version:2,protected:false)
+        unprotected.fixtureObserve(unprotectedList)
+        let unprotectedObserve = unprotected.command()
+        unprotected.receive(try .init(requestID:unprotectedObserve.requestID,operation:.observe,catalog:catalog(empty,intent:0,binding:0),result:nil))
+        unprotected.setDesiredAudioSelection(.init(microphone:true,playback:true))
+        let startRequest = unprotected.command(), sr = startRequest.intent!
+        let activeIntent = try AudioForwardingSnapshot.Intent(pairedDeviceId:device,intentId:sr.intentId,intentRevision:sr.intentRevision,
+            intentGeneration:UUID(),inputDesired:true,outputDesired:true,sentryDesired:false,localMutedDesired:true)
+        let activeBinding = AudioForwardingBinding(pairedDeviceId:device,intentGeneration:activeIntent.intentGeneration,bindingEpoch:UUID(),
+            transportId:sr.transportId,transportKind:.native,operationId:startRequest.requestID,phase:.active,configuration:configuration)
+        let activeSnapshot = try AudioForwardingSnapshot(revision:.init(sr.expectedRevision.value+1),intent:activeIntent,binding:activeBinding)
+        unprotected.receive(try .init(requestID:startRequest.requestID,operation:.submit,catalog:nil,result:.accepted(activeSnapshot)))
+        check(unprotected.audioForwarding.phase == .active && unprotected.desiredAudio.privacy != .protected,
+              "optional Sentry is independent of actual privacy protection")
+        check(!unprotected.desiredAudioPermits(.microphone) && !unprotected.desiredAudioPermits(.playback)
+              && unprotected.microphoneAttempts == 0 && unprotected.subscriptions.filter(\.enabled).isEmpty,
+              "accepted active sentryfalse never permits unprotected microphone or playback")
+        unprotected.clock.now = 3.01
+        check(!unprotected.audioForwarding.permits(.playback,in:unprotected.audioForwardingContext!,now:unprotected.clock.now),
+              "optional Sentry does not extend the existing three-second lease")
         print("실제 iPad 어댑터·가짜 전송/시계 검사 \(checks)개 통과. 실제 미디어·기기·네트워크 없음.")
     }
 }

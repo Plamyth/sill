@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "requestID": "33333333-3333-4333-8333-333333333333",
+  "operation": "observe",
+  "catalog": {
+    "schemaVersion": 2,
+    "principal": {
+      "kind": "cable",
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "authorizationGeneration": "44444444-4444-4444-8444-444444444444"
+    },
+    "role": "viewer",
+    "bootstrap": {
+      "credential": {
+        "pairedDeviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "pairingGeneration": "44444444-4444-4444-8444-444444444444",
+        "credential": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "ownCursor": {
+        "intentRevision": "1",
+        "bindingRevision": "0"
+      },
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": "25",
+        "intent": {
+          "pairedDeviceId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "intentId": "11111111-1111-4111-8111-111111111111",
+          "intentRevision": "1",
+          "intentGeneration": "22222222-2222-4222-8222-222222222222",
+          "inputDesired": true,
+          "outputDesired": true,
+          "sentryDesired": false,
+          "localMutedDesired": true
+        },
+        "binding": null
+      }
+    }
+  },
+  "result": null
+}
