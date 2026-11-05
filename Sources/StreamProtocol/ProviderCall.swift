@@ -123,9 +123,10 @@ public struct ProviderCallResult: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case requestId, status, reason, callSessionId, provider, mediaProtection
     }
-    public init(requestId: UUID, status: Status, reason: String, callSessionId: String? = nil) throws {
+    public init(requestId: UUID, status: Status, reason: String, callSessionId: String? = nil,
+                provider: String = "chatgpt-dots-webguest") throws {
         self.requestId = requestId; self.status = status; self.reason = reason; self.callSessionId = callSessionId
-        provider = "chatgpt-dots-webguest"; mediaProtection = "not_attested"
+        self.provider = provider; mediaProtection = "not_attested"
         try validate()
     }
     public init(from decoder: Decoder) throws {
@@ -140,7 +141,7 @@ public struct ProviderCallResult: Codable, Sendable {
         try validate()
     }
     private func validate() throws {
-        guard provider == "chatgpt-dots-webguest", mediaProtection == "not_attested",
+        guard ["chatgpt-dots-webguest", "codex-app-server"].contains(provider), mediaProtection == "not_attested",
               reason.range(of: "^[a-z_]{1,80}$", options: .regularExpression) != nil,
               callSessionId.map({ !$0.isEmpty && $0.utf16.count <= 128 }) ?? true else {
             throw ProviderCallWireFailure.invalidResult

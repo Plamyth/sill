@@ -10,6 +10,11 @@ let request = try ProviderCallRequest(requestId: UUID(), action: .start, expecte
 func response(_ status: ProviderCallResult.Status, request: ProviderCallRequest = request, session: String? = nil) throws -> ProviderCallState {
     try .init(request: request, result: .init(requestId: request.requestId, status: status, reason: "fixture_result", callSessionId: session))
 }
+let nativeResult = try ProviderCallResult(requestId: request.requestId, status: .started,
+    reason: "native_started", callSessionId: "native-session", provider: "codex-app-server")
+let nativeRoundtrip = try JSONDecoder().decode(ProviderCallResult.self, from: JSONEncoder().encode(nativeResult))
+expect(nativeRoundtrip.provider == "codex-app-server" && nativeRoundtrip.mediaProtection == "not_attested",
+       "native result preserves exact provider without media attestation")
 var now = 100.0
 var model = IPadProviderCall(connection: first, clock: { now })
 expect(IPadCallTarget.defaultTarget == .nativeCodex, "default target is native Codex")
@@ -24,6 +29,8 @@ expect(model.query() == nil && model.manualQuery() == nil, "query requires origi
 expect(model.perform(request)?.operation == .perform, "explicit perform")
 let original = model.pending!
 expect(model.perform(request) == nil && model.query() == nil, "single physical slot")
+expect(!model.receive(try ProviderCallState(request: request, result: nativeRoundtrip), from: first),
+       "native provider cannot satisfy the Dots request or drain its slot")
 expect(!model.receive(try response(.started), from: second), "old TLS cannot drain")
 let other = try ProviderCallRequest(requestId: UUID(), action: .start, expectedLeaseRevision: .init(7),
     pairedDeviceId: device, desiredInput: true, desiredOutput: true, callSessionId: nil)
