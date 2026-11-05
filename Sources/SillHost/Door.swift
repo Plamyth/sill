@@ -254,6 +254,7 @@ final class Door: @unchecked Sendable {
                   let socket = OwnerBootstrapSocket.capture(c, trust: trust, purpose: .session, deadline: p.admissionUntil) else {
                 refuse(id, "unpaired"); c.cancel(); return
             }
+            guard socket.permitsSession(at: kind) else { socket.cancel(); refuse(id, "unpaired"); c.cancel(); return }
             pending[id]?.ownerSocket = socket
             judge(socket) { [weak self] evidence in
                 self?.queue.async { [weak self] in self?.admitOwnerSession(id, c, fp, socket, evidence) }
@@ -330,7 +331,8 @@ final class Door: @unchecked Sendable {
 
     private func admitOwnerSession(_ id: ObjectIdentifier, _ c: NWConnection, _ fp: Data,
                                    _ socket: OwnerBootstrapSocket, _ evidence: OwnerBootstrapSocket.Evidence?) {
-        guard pending[id]?.ownerSocket === socket, checkOrigin(id, c), let server, evidence != nil else {
+        guard socket.permitsSession(at: kind),
+              pending[id]?.ownerSocket === socket, checkOrigin(id, c), let server, evidence != nil else {
             socket.cancel(); refuse(id, "unpaired"); c.cancel(); return
         }
         server.gate(c) { [weak self] hello in
@@ -352,7 +354,11 @@ final class Door: @unchecked Sendable {
                 case .remote:
                     let label = OriginPolicy.label(origin, interface: p.interface, serviceName: p.interface.flatMap { snapshot.serviceNames[$0] }) ?? "by address"
                     server.serve(c, route: .remote(origin: origin, label: label, fingerprint: fp, name: name), hello: hello,
-                                 admitted: { print("원격 소유 기기가 연결되었습니다. \(name) (\(c.endpoint))") })
+                                 admissionCurrent: socket.binding.usb == nil ? nil : { socket.usbSessionIsCurrent(in: self.trust, evidence: evidence!) },
+                                 admitted: {
+                                     print("원격 소유 기기가 연결되었습니다. \(name) (\(c.endpoint))")
+                                     if let line = socket.takeUSBAdmissionLog() { print(line) }
+                                 })
                 case .home:
                     let peer = ClientRoute.Peer(fingerprint: fp, name: name, cableDevice: nil)
                     server.serve(c, route: .home(origin, peer: peer), hello: hello,

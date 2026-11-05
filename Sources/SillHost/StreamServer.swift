@@ -82,6 +82,7 @@ final class StreamServer {
     }
     private final class Client {
         let connection: NWConnection
+        var admissionCurrent: (() -> Bool)?
         let screenDemandIncarnation = UUID()
         var screenDemandIdentity: RemoteScreenDemandObservation.Source?
         var screenDemandExpiresAt: TimeInterval = 0
@@ -180,6 +181,7 @@ final class StreamServer {
 
     /// The network queue: both doors, their connections, the verify blocks and the timers.
     let queue: DispatchQueue
+    private let connectionQueueKey = DispatchSpecificKey<Bool>()
     private var clients: [ObjectIdentifier: Client] = [:]
     private var remoteAudioEpoch: UInt64 = 0
     private let remoteAudioDrain = DispatchGroup()
@@ -388,6 +390,7 @@ final class StreamServer {
         let reported = pointerSampler == nil ? samplePointer(now: now) : []
         let data = StreamMessage(kind: .tick, timestamp: now, isKeyframe: false, payload: Data()).serialized()
         for (id, client) in clients where client.role.isViewer && client.connection.state == .ready {
+            guard admissionIsCurrent(client) else { continue }
             // A kind 26 just sent keeps its link awake this turn.
             if reported.contains(id) { continue }
             // Over TLS every record costs CPU (the remote plan's H20): skip a tick right after
@@ -450,6 +453,7 @@ final class StreamServer {
                 sendReport(report)
             }
             func sendReport(_ report: MacPointer) {
+                guard admissionIsCurrent(client) else { return }
                 guard report != client.lastPointer else { return }
                 client.lastPointer = report
                 let data = StreamMessage(kind: .macPointer, timestamp: now, isKeyframe: false, payload: Wire.encode(report)).serialized()
@@ -612,6 +616,7 @@ final class StreamServer {
         if test, Self.testLoopback { print("Test listener: loopback only (SILL_TEST_LOOPBACK); reach this host at 127.0.0.1.") }
         listener = try Self.makeListener(peerToPeer: false, port: nil, tls: door?.tlsOptions(), loopback: test && Self.testLoopback)
         listener.service = makeService()
+        queue.setSpecific(key: connectionQueueKey, value: true)
         wire(listener)
         door?.server = self
     }
@@ -1230,8 +1235,9 @@ final class StreamServer {
     /// client connected" line), then its hello, when the gate read one (`took`). A remote session has
     /// no link (its card names the route, "through Tailscale"); a home one's link is read at
     /// registration and then follows the path, as the plain door's does. On `queue`.
-    func serve(_ connection: NWConnection, route: ClientRoute, hello: Hello?, admitted: () -> Void = {}) {
+    func serve(_ connection: NWConnection, route: ClientRoute, hello: Hello?, admissionCurrent: (() -> Bool)? = nil, admitted: () -> Void = {}) {
         let client = Client(connection)
+        client.admissionCurrent = admissionCurrent
         client.route = route
         client.role = route.encrypted && route.pairedName != nil && hello == nil ? .awaitingHello : .viewer
         // As its route says: every session a Door admits is TLS (a remote one, or a home one with its
@@ -1259,6 +1265,13 @@ final class StreamServer {
                 guard link != client.link else { return }
                 client.link = link
                 self.onClientRouteChanged?(connection, link)
+            }
+        }
+        guard admissionCurrent?() ?? true else { connection.cancel(); return }
+        if admissionCurrent != nil {
+            connection.pathUpdateHandler = { [weak self, weak client] _ in
+                guard let self, let client else { return }
+                _ = self.admissionIsCurrent(client)
             }
         }
         register(client)
@@ -1537,6 +1550,7 @@ final class StreamServer {
         lastSweepAt = now
         var waiting: [Client] = []
         for client in clients.values {
+            guard admissionIsCurrent(client) else { continue }
             let second = LinkJudge.Second(sent: client.sentThisSecond, withheld: client.withheldThisSecond, taken: client.takenThisSecond,
                                           waiting: client.pendingBytes, heard: client.lastHeardAt > since)
             client.sentThisSecond = 0
@@ -1837,6 +1851,23 @@ final class StreamServer {
         else { lastRemoteKeyframeRequest = now }
     }
 
+    private func admissionIsCurrent(_ client: Client) -> Bool {
+        guard client.admissionCurrent?() ?? true else {
+            client.connection.cancel()
+            return false
+        }
+        return true
+    }
+
+    func connectionIsCurrent(_ connection: NWConnection) -> Bool {
+        let check = {
+            guard let client = self.clients[ObjectIdentifier(connection)], client.connection === connection,
+                  connection.state == .ready else { return false }
+            return self.admissionIsCurrent(client)
+        }
+        return DispatchQueue.getSpecific(key: connectionQueueKey) == true ? check() : queue.sync(execute: check)
+    }
+
     /// Each connection its own message (the devices' settings states, kind 16, one per connection):
     /// a registered, ready connection gets its own; any other is skipped without a word, as
     /// `broadcast` skips it, where `send(_:to:)` would print "send: no client for …" (a state can be
@@ -1951,7 +1982,7 @@ final class StreamServer {
     private func receiveLoop(_ client: Client) {
         let c = client.connection
         c.receive(minimumIncompleteLength: StreamMessage.headerLength, maximumLength: StreamMessage.headerLength) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
+            guard let self, self.admissionIsCurrent(client) else { return }
             guard let data, let header = StreamMessage.parseHeader(data) else {
                 // EOF or a read error: the client closed (or was killed). Nothing else would notice
                 // while no frames are being sent, so cancel here; the state handler prints and forgets it.
@@ -1969,6 +2000,7 @@ final class StreamServer {
                 return
             }
             let deliver = { (payload: Data) in
+                guard self.admissionIsCurrent(client) else { return }
                 if header.kind == .providerCallControl {
                     self.receiveProvider(payload, from: client)
                     self.receiveLoop(client)
@@ -2374,6 +2406,7 @@ final class StreamServer {
     private static let graceAfterConnect: TimeInterval = 8.0
 
     private func send(_ raw: Data, to client: Client, isFrame: Bool = false, isKeyframe: Bool = false) {
+        guard admissionIsCurrent(client) else { return }
         var raw = raw
         guard let header = StreamMessage.parseHeader(raw), client.role.sends(header.kind) else { return }
         guard sentryAdmission.allowsWire(raw, for: ObjectIdentifier(client.connection),

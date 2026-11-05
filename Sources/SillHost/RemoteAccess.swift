@@ -923,6 +923,10 @@ package final class RemoteAccess {
             server?.closeSessions(Goodbye.removed, matching: { $0.fingerprint == key })
         }
         guard trust.snapshot.ownerCandidates[socket.binding.fingerprint] != nil else { return nil }
+        if socket.binding.usb != nil {
+            guard let registry = ownerRegistry else { return nil }
+            return socket.registeredUSBEvidence(store: store, identity: identity, registry: registry, devices: paired)
+        }
         let sensor = ownerSensor.independent()
         guard case .success(let proof) = await sensor.principal(for: socket.binding),
               !Task.isCancelled, socket.isLive else { return nil }

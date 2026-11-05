@@ -3,6 +3,17 @@ import Security
 import StreamProtocol
 @testable import SillHostCore
 
+private extension OwnerBootstrapSocket.Evidence {
+    var sensor: TailnetDeviceAccess {
+        guard case .tailnet(let sensor, _) = self else { preconditionFailure("Tailnet fixture required") }
+        return sensor
+    }
+    var proof: TailnetDeviceAccess.Proof {
+        guard case .tailnet(_, let proof) = self else { preconditionFailure("Tailnet fixture required") }
+        return proof
+    }
+}
+
 #if OWNER_PUBLIC_PROFILE_NO_PRINCIPAL
 private func rejectPublicPrincipal(_ profile: TailnetDeviceAccess.PublicProfile) -> String { profile.principal }
 #endif
@@ -1405,6 +1416,211 @@ final class OwnerBootstrapChecks {
         print("전체 저장 실패 반례: bootstrap=false, 현재 권한=0, 재시작 권한=0, fresh proof 없는 serve=0, 새 소켓 proof로 별도 인증 성공.")
     }
 
+    private func usbBinding(cable: InterfaceSnapshot.CableReading? = nil, source: String = "fe80::2",
+                            scope: String? = "en14", local: String = "fe80::1", localScope: String? = "en14",
+                            own: Set<[UInt8]> = []) -> OwnerBootstrapSocket.Binding? {
+        let reading = cable ?? InterfaceSnapshot.CableReading(registered: true, usbDevice: true, ncm: true,
+            vendor: CableLink.appleVendor, product: 1, productName: "iPad", serial: "USB-TEST", session: 1)
+        return OwnerBootstrapSocket.usbRouteBinding(generation: UUID(), fingerprint: binding().fingerprint,
+            source: IPBytes.parse(source)!, scope: scope, local: local, localScope: localScope,
+            entries: [.init(name: "en14", address: IPBytes.parse("fe80::1")!, prefixBits: 64,
+                up: true, pointToPoint: false, loopback: false)], own: own, cable: reading)
+    }
+
+    func testUSBRouteBinding() throws {
+        let first = try require(usbBinding())
+        expectEqual(first.usb?.deviceID, CableLink.deviceID(serial: "USB-TEST"))
+        expectEqual(first.usb?.plugSession, 1)
+        for source in ["169.254.1.2", "192.168.1.2", "100.64.0.2", "::1", "fd00::2"] {
+            expectNil(usbBinding(source: source))
+        }
+        for scope in [nil, "en0", "awdl0", "lo0", "utun9"] as [String?] { expectNil(usbBinding(scope: scope)) }
+        expectNil(usbBinding(localScope: "en0"))
+        expectNil(usbBinding(localScope: nil))
+        expectNil(usbBinding(local: "fe80::3"))
+        expectNil(usbBinding(local: "192.168.1.1"))
+        expectNil(usbBinding(own: [IPBytes.parse("fe80::2")!]))
+        var cable = InterfaceSnapshot.CableReading(registered: true, usbDevice: true, ncm: true,
+            vendor: CableLink.appleVendor, product: 1, productName: "iPad", serial: "USB-TEST", session: 1)
+        for mode in 0...8 {
+            var bad = cable
+            switch mode {
+            case 0: bad.registered = false
+            case 1: bad.usbDevice = false
+            case 2: bad.ncm = false
+            case 3: bad.vendor = 1
+            case 4: bad.productName = "Mac"
+            case 5: bad.serial = nil
+            case 6: bad.serial = ""
+            case 7: bad.session = nil
+            default: bad.deviceMode = true
+            }
+            expectNil(usbBinding(cable: bad))
+        }
+        cable.session = 2
+        expectFalse(first.usb == usbBinding(cable: cable)?.usb)
+        cable.session = 1; cable.serial = "OTHER"
+        expectFalse(first.usb == usbBinding(cable: cable)?.usb)
+    }
+
+    @MainActor func testUSBRegisteredSession() async throws {
+        for mode in 0...20 {
+            let (store, host) = try await sessionHost()
+            let b = try require(usbBinding()), live = LiveFlag()
+            let writes = store.writes, registryWrites = store.registryWrites
+            let socket = OwnerBootstrapSocket.fixture(binding: b, trust: host.trust,
+                purpose: mode == 1 ? .bootstrap : .session,
+                deadline: mode == 2 ? 0 : DispatchTime.now().uptimeNanoseconds + 10_000_000_000,
+                current: { live.get() })
+            expectFalse(socket.permitsSession(at: .home))
+            expectEqual(socket.permitsSession(at: .remote), mode != 1)
+            let evidence = await host.ownerSessionEvidence(for: socket)
+            if mode <= 2 {
+                if mode == 0 {
+                    expectTrue(admit(socket, box: host.trust, evidence: evidence))
+                    expectFalse(admit(socket, box: host.trust, evidence: evidence))
+                    expectFalse(host.trust.snapshot.doorTrust(b.fingerprint).paired)
+                    expectEqual(DoorPolicy.atReady(.home, alpn: RemoteTLS.sessionALPN,
+                        host.trust.snapshot.doorTrust(b.fingerprint), remoteSessions: 0), .ownerNeedsProof)
+                } else { expectNil(evidence) }
+            } else {
+                let valid = try require(evidence)
+                switch mode {
+                case 3: socket.cancel()
+                case 4: live.set(false)
+                case 5: host.trust.update { $0.ownerBootstrapEpoch = UUID() }
+                case 6: host.trust.update { $0.ownerCandidates[b.fingerprint] = nil }
+                case 7: host.trust.update {
+                    let old = $0.ownerCandidates[b.fingerprint]!
+                    $0.ownerCandidates[b.fingerprint] = .init(principal: old.principal, generation: UUID(), name: old.name)
+                }
+                case 8: store.registryMissing = true
+                case 9: store.readRegistryFailure = true
+                case 10, 11, 12, 13:
+                    let identity = try require(host.identity)
+                    var registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+                    if mode == 10 { registry.bindings[0].state = .revoked }
+                    if mode == 11 { registry.bindings[0].state = .pending }
+                    if mode == 12 { registry.bindings = [] }
+                    if mode == 13 { registry.bindings[0] = .init(principal: String(repeating: "a", count: 64), fingerprint: registry.bindings[0].fingerprint, state: .active) }
+                    try registry.save(store: store, identity: identity)
+                case 14:
+                    var devices = try store.loadPaired(); devices[0].ownerActivationPending = true
+                    try store.savePaired(devices)
+                case 15: try store.savePaired([])
+                case 16:
+                    var different = b; different.usb = .init(deviceID: b.usb!.deviceID, plugSession: 2)
+                    let other = OwnerBootstrapSocket.fixture(binding: different, trust: host.trust, purpose: .session)
+                    expectFalse(admit(other, box: host.trust, evidence: valid))
+                    continue
+                case 17:
+                    var different = b; different = .init(generation: different.generation, fingerprint: binding(2).fingerprint,
+                        sourceIP: different.sourceIP, localIP: different.localIP, interface: different.interface, usb: different.usb)
+                    let other = OwnerBootstrapSocket.fixture(binding: different, trust: host.trust, purpose: .session)
+                    expectFalse(admit(other, box: host.trust, evidence: valid))
+                    continue
+                case 18:
+                    expectFalse(socket.admit(in: host.trust, evidence: valid, allowed: { _ in
+                        host.trust.update { $0.ownerBootstrapEpoch = UUID() }; return true
+                    }) { _ in fail("변경된 epoch로 serve") })
+                    continue
+                case 19:
+                    expectFalse(socket.admit(in: host.trust, evidence: valid, allowed: { _ in
+                        live.set(false); return true
+                    }) { _ in fail("교체된 plug로 serve") })
+                    continue
+                default:
+                    expectFalse(socket.admit(in: host.trust, evidence: valid, allowed: { _ in
+                        try? store.savePaired([]); return true
+                    }) { _ in fail("변경된 등록으로 serve") })
+                    continue
+                }
+                expectFalse(admit(socket, box: host.trust, evidence: valid))
+            }
+            if mode < 10 { expectEqual(store.writes, writes); expectEqual(store.registryWrites, registryWrites) }
+        }
+    }
+
+    @MainActor func testUSBInitialRegistryAndGateExpiry() async throws {
+        for mode in 0...7 {
+            let (store, host) = try await sessionHost(), b = try require(usbBinding())
+            let identity = try require(host.identity)
+            if mode <= 5 {
+                var registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+                switch mode {
+                case 0: registry.bindings[0].state = .revoked
+                case 1: registry.bindings[0].state = .pending
+                case 2: registry.bindings = []
+                case 3:
+                    registry.bindings[0] = .init(principal: String(repeating: "b", count: 64),
+                        fingerprint: registry.bindings[0].fingerprint, state: .active)
+                case 4:
+                    let foreign = RemoteAccess(store: FaultStore())
+                    var other = OwnerBootstrapRegistry(macID: foreign.identity!.macID)
+                    other.bindings = registry.bindings
+                    try other.save(store: store.memory, identity: foreign.identity!)
+                default:
+                    var devices = try store.loadPaired(); devices[0].ownerActivationPending = true
+                    try store.savePaired(devices)
+                }
+                if mode < 4 { try registry.save(store: store, identity: identity) }
+            }
+            let socket = OwnerBootstrapSocket.fixture(binding: b, trust: host.trust, purpose: .session,
+                deadline: DispatchTime.now().uptimeNanoseconds + 200_000_000)
+            if mode <= 5 { let evidence = await host.ownerSessionEvidence(for: socket); expectNil(evidence); continue }
+            if mode == 6 {
+                let evidence = try require(await host.ownerSessionEvidence(for: socket))
+                expectFalse(socket.admit(in: host.trust, evidence: evidence, allowed: { _ in
+                    Thread.sleep(forTimeInterval: 0.25); return true
+                }) { _ in fail("만료 후 USB serve") })
+            } else {
+                let task = Task { @MainActor in await host.ownerSessionEvidence(for: socket) }
+                task.cancel()
+                let evidence = await task.value
+                expectNil(evidence)
+            }
+        }
+    }
+
+    @MainActor func testUSBSessionLifetimeAndAdmissionLog() async throws {
+        for mode in 0...6 {
+            let (store, host) = try await sessionHost(), b = try require(usbBinding()), live = LiveFlag()
+            let socket = OwnerBootstrapSocket.fixture(binding: b, trust: host.trust, purpose: .session,
+                deadline: DispatchTime.now().uptimeNanoseconds + 200_000_000, current: { live.get() })
+            let evidence = try require(await host.ownerSessionEvidence(for: socket))
+            expectNil(socket.takeUSBAdmissionLog())
+            expectFalse(socket.usbSessionIsCurrent(in: host.trust, evidence: evidence))
+            expectTrue(admit(socket, box: host.trust, evidence: evidence))
+            let log = try require(socket.takeUSBAdmissionLog())
+            expectTrue(log.contains("phase=admitted interface=en14"))
+            expectTrue(log.contains("socketGeneration=\(b.generation)"))
+            expectTrue(log.contains("plugSession=1 tlsFingerprintSHA256="))
+            expectFalse(log.contains("USB-TEST"))
+            expectFalse(log.contains(Base64URL.encode(b.fingerprint)))
+            expectNil(socket.takeUSBAdmissionLog())
+            try await Task.sleep(nanoseconds: 250_000_000)
+            expectFalse(socket.isLive)
+            expectTrue(socket.usbSessionIsCurrent(in: host.trust, evidence: evidence))
+            switch mode {
+            case 0: live.set(false)
+            case 1: host.trust.update { $0.ownerBootstrapEpoch = UUID() }
+            case 2: host.trust.update {
+                let old = $0.ownerCandidates[b.fingerprint]!
+                $0.ownerCandidates[b.fingerprint] = .init(principal: old.principal, generation: UUID(), name: old.name)
+            }
+            case 3:
+                let identity = try require(host.identity)
+                var registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+                registry.bindings[0].state = .revoked
+                try registry.save(store: store, identity: identity)
+            case 4: try store.savePaired([])
+            case 5: socket.cancel()
+            default: store.registryMissing = true
+            }
+            expectFalse(socket.usbSessionIsCurrent(in: host.trust, evidence: evidence))
+        }
+    }
+
     private func admit(_ socket: OwnerBootstrapSocket, box: TrustBox, evidence: OwnerBootstrapSocket.Evidence?,
                        sessions: Int = 0, serve: () -> Void = {}) -> Bool {
         socket.admit(in: box, evidence: evidence, allowed: { snapshot in
@@ -1805,6 +2021,13 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testPairedReadbackAndRemovalFailures() } catch { fail("testPairedReadbackAndRemovalFailures 예외") }
         do { try await checks.testTamperedMissingRegistryFailClosedOnlyForOwner() } catch { fail("testTamperedMissingRegistryFailClosedOnlyForOwner 예외") }
         do { try await checks.testExplicitPairingRemainsIndependentOfAutomaticRevocation() } catch { fail("testExplicitPairingRemainsIndependentOfAutomaticRevocation 예외") }
+        let usbBefore = CheckCounts.shared.result
+        do { try await checks.testUSBSessionLifetimeAndAdmissionLog() } catch { fail("USB 수명·수용 로그 검사 예외: \(error)") }
+        do { try await checks.testUSBInitialRegistryAndGateExpiry() } catch { fail("USB 최초등록·기한 검사 예외: \(error)") }
+        do { try checks.testUSBRouteBinding() } catch { fail("USB 경로 검사 예외: \(error)") }
+        do { try await checks.testUSBRegisteredSession() } catch { fail("USB 등록 세션 검사 예외: \(error)") }
+        let usbAfter = CheckCounts.shared.result
+        print("이번 USB 추가 계약 검사 \(usbAfter.0 - usbBefore.0)개 통과, \(usbAfter.1 - usbBefore.1)개 실패.")
         checks.testProductionRouteBindingRequiresTailnetTunnelAndFreshGeneration()
         do { try await checks.testLastCheckAfterReservationDeniesChangedSocket() } catch { fail("testLastCheckAfterReservationDeniesChangedSocket 예외") }
         do { try await checks.testMissingRegistryAndForeignSignatureDenyOnlyAutomaticTrust() } catch { fail("testMissingRegistryAndForeignSignatureDenyOnlyAutomaticTrust 예외") }

@@ -1172,6 +1172,7 @@ package final class StreamCoordinator {
     // MARK: Client messages
 
     private func handle(_ message: StreamMessage, from connection: NWConnection) async {
+        guard server.connectionIsCurrent(connection) else { return }
         if message.kind == .activateSentry {
             await activateSentry(message, from: connection)
             return
@@ -1550,7 +1551,7 @@ package final class StreamCoordinator {
 
     private func sourcePeerIsLive(_ connection: NWConnection, participation: UUID? = nil) -> Bool {
         let id = ObjectIdentifier(connection)
-        guard connections[id] === connection, case .ready = connection.state,
+        guard server.connectionIsCurrent(connection), connections[id] === connection, case .ready = connection.state,
               let token = inputFence.participationToken(for: id) else { return false }
         return participation == nil || participation == token
     }
@@ -2119,6 +2120,10 @@ package final class StreamCoordinator {
     }
 
     private func applyAdmittedInput(_ event: InputEvent, rect: CGRect, device: KeyStrokes.Device, epoch: VideoEpoch?) {
+        guard let connection = connections[device], server.connectionIsCurrent(connection) else {
+            injector.releaseInput(of: device)
+            return
+        }
         if injector.isUpOfSomethingDown(event, from: device) {
             injector.apply(event, in: .null, from: device)
             return
@@ -2147,7 +2152,8 @@ package final class StreamCoordinator {
         let isPeer = lane != nil
         return .init(device: device, epoch: epoch, isCurrent: { [weak self, weak lane] in
             guard let self, isCurrent(), !self.shuttingDown,
-                  self.server.sentryAdmission.allowsActions(device), self.connections[device]?.state == .ready else { return false }
+                  self.server.sentryAdmission.allowsActions(device), let connection = self.connections[device],
+                  self.server.connectionIsCurrent(connection) else { return false }
             if isPeer {
                 guard let lane else { return false }
                 return self.peerStreams[device] === lane && !lane.isClosed && lane.epoch == epoch &&
@@ -3012,6 +3018,7 @@ package final class StreamCoordinator {
     }
 
     private func gestureIsCurrent(_ pending: PendingGesture) -> Bool {
+        guard server.connectionIsCurrent(pending.connection) else { return false }
         let id = ObjectIdentifier(pending.connection)
         guard !Task.isCancelled, case .ready = pending.connection.state else { return false }
         let context: GestureDesktopContext
@@ -3408,7 +3415,7 @@ package final class StreamCoordinator {
         let route = routes[id]
         let paired = route?.fingerprint.map { remote?.isPaired($0) == true } ?? false
         return AudioRoutingPolicy.authorized(encrypted: route?.encrypted == true, paired: paired,
-            connected: connections[id] === connection && connection.state == .ready,
+            connected: connections[id] === connection && connection.state == .ready && server.connectionIsCurrent(connection),
             synthetic: synthetic, shuttingDown: shuttingDown)
     }
 
@@ -3755,10 +3762,10 @@ extension StreamCoordinator {
                     return
                 }
                 guard self.peerStreams[id] === lane, self.connections[id] === connection,
-                      connection.state == .ready, self.server.sentryAdmission.allowsActions(id), let epoch = lane.epoch,
+                      self.server.connectionIsCurrent(connection), self.server.sentryAdmission.allowsActions(id), let epoch = lane.epoch,
                       lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) != nil else { return }
                 guard await self.preparePeerInteraction(lane, epoch: epoch, event: scoped.event),
-                      self.server.sentryAdmission.allowsActions(id), !turn.cancelled, self.peerStreams[id] === lane,
+                      self.server.connectionIsCurrent(connection), self.server.sentryAdmission.allowsActions(id), !turn.cancelled, self.peerStreams[id] === lane,
                       let rect = lane.inputRect(generation: scoped.generation, epoch: scoped.videoEpoch) else { return }
                 #if PEER_STREAM_CONTRACT
                 self.contractPeerInputs.append(lane.source)
@@ -4096,7 +4103,7 @@ extension StreamCoordinator {
     private func handleProvider(_ exchange: StreamServer.ProviderExchange, connection: NWConnection,
                                 route: ClientRoute) async {
         let id = ObjectIdentifier(connection)
-        guard !synthetic, !shuttingDown, exchange.isCurrent, connection.state == .ready,
+        guard !synthetic, !shuttingDown, exchange.isCurrent, server.connectionIsCurrent(connection), connection.state == .ready,
               route.encrypted, let fingerprint = route.fingerprint,
               remote?.isPaired(fingerprint) == true,
               let peer = remote?.forwardingPeer(fingerprint: fingerprint),
@@ -4109,7 +4116,7 @@ extension StreamCoordinator {
         else if route.origin != .internet { kind = .localNetwork }
         else { server.sendProviderState(nil, to: connection, ticket: exchange.ticket); return }
         let current = { [weak self, weak connection] in
-            guard let self, let connection, !self.shuttingDown, connection.state == .ready,
+            guard let self, let connection, !self.shuttingDown, self.server.connectionIsCurrent(connection), connection.state == .ready,
                   self.forwardingClients[id]?.generation == session.generation,
                   self.remote?.isPaired(fingerprint) == true,
                   let latest = self.remote?.forwardingPeer(fingerprint: fingerprint) else { return false }
@@ -4130,7 +4137,7 @@ extension StreamCoordinator {
     private func handleForwarding(_ exchange: StreamServer.ForwardingExchange, connection: NWConnection,
                                   route: ClientRoute, role: AudioForwardingCatalog.Role) async {
         let id = ObjectIdentifier(connection)
-        guard !synthetic, !shuttingDown, exchange.isCurrent, connection.state == .ready,
+        guard !synthetic, !shuttingDown, exchange.isCurrent, server.connectionIsCurrent(connection), connection.state == .ready,
               route.encrypted, let fingerprint = route.fingerprint,
               remote?.isPaired(fingerprint) == true,
               let peer = remote?.forwardingPeer(fingerprint: fingerprint) else {
@@ -4149,7 +4156,7 @@ extension StreamCoordinator {
         let principal = AudioForwardingCatalog.Principal(kind: kind, id: peer.id,
             authorizationGeneration: peer.pairingGeneration)
         let current = { [weak self, weak connection] in
-            guard let self, let connection, !self.shuttingDown, connection.state == .ready,
+            guard let self, let connection, !self.shuttingDown, self.server.connectionIsCurrent(connection), connection.state == .ready,
                   self.forwardingClients[id]?.generation == session.generation,
                   self.remote?.isPaired(fingerprint) == true,
                   let latest = self.remote?.forwardingPeer(fingerprint: fingerprint) else { return false }

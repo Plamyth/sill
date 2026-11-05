@@ -20,6 +20,19 @@ def digest():
     return result.hexdigest()
 
 
+socket_source = (root / "Sources/SillHost/OwnerBootstrapSocket.swift").read_text()
+door_source = (root / "Sources/SillHost/Door.swift").read_text()
+server_source = (root / "Sources/SillHost/StreamServer.swift").read_text()
+coordinator_source = (root / "Sources/SillHost/StreamCoordinator.swift").read_text()
+lifetime = socket_source.split("func usbSessionIsCurrent", 1)[1].split("func takeUSBAdmissionLog", 1)[0]
+assert "deadline" not in lifetime and "current()" in lifetime and "ownerBootstrapEpoch" in lifetime
+assert "socket.usbSessionIsCurrent(in: self.trust, evidence: evidence!)" in door_source
+assert "if let line = socket.takeUSBAdmissionLog()" in door_source
+for anchor in ["private func send(_ raw:", "private func receiveLoop", "let deliver =", "private func sweep()"]:
+    assert "admissionIsCurrent(client)" in server_source.split(anchor, 1)[1].split("\n    }", 1)[0]
+assert coordinator_source.count("server.connectionIsCurrent(connection)") >= 6
+print("USB central send/receive/sweep/input/provider/relay-current source wiring passed (not runtime acceptance)", flush=True)
+
 before = digest()
 env = dict(os.environ)
 env["SDKROOT"] = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip()
