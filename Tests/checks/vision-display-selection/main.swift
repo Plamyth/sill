@@ -824,9 +824,9 @@ check(!persistentB.matches(macID: "mac-A", catalog: .init(removed)), "P1 removed
 var duplicate = restart; duplicate.displayInventoryID = UUID(); duplicate.displays![0].id = 333
 duplicate = stableCatalog(duplicate, identities: [physicalB, physicalB])
 check(!persistentB.matches(macID: "mac-A", catalog: .init(duplicate)), "P1 duplicate stable identity cannot auto-restore")
-var legacy = model(); legacy.windowTarget = targetB; legacy.observe(.init(newerInventory))
-let freshLegacy = command(legacy)
-check(legacy.begin(freshLegacy, macID: "mac-A").code == .releasing, "P1 legacy fresh explicit selection recovers existing window")
+var legacyRecovery = model(); legacyRecovery.windowTarget = targetB; legacyRecovery.observe(.init(newerInventory))
+let freshLegacy = command(legacyRecovery)
+check(legacyRecovery.begin(freshLegacy, macID: "mac-A").code == .releasing, "P1 legacy fresh explicit selection recovers existing window")
 var foreign = model(); foreign.windowTarget = targetB; foreign.observe(.init(newerInventory))
 check(foreign.begin(command(foreign), macID: "mac-B").code == .staleScope, "P1 explicit recovery cannot switch authenticated Mac")
 
