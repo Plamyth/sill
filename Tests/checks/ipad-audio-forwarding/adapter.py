@@ -202,6 +202,25 @@ def method(file, name):
     end = s.index('\n    }', start) + len('\n    }')
     return select_platform(s[start:end], vision=False, ios=True)
 transport = 'extension StreamClient {\n' + method('StreamClient+Audio.swift', 'sendRemoteAudio') + '\n' + method('StreamClient+Microphone.swift', 'sendMicrophoneControl') + '\n' + method('StreamClient+Microphone.swift', 'microphoneInterrupted') + '\n}\n'
+timer_mode = sys.argv[3] if len(sys.argv) > 3 else ''
+if timer_mode in ('microphone-timers', 'microphone-timers-legacy'):
+    microphone = (root/'iOSClient/StreamClient+Microphone.swift').read_text()
+    start = microphone.index('            case .send(let peer, let control):')
+    end = microphone.index('            case .beginCapture(', start)
+    body = microphone[start:end].split('\n', 1)[1]
+    if timer_mode == 'microphone-timers-legacy':
+        assert body.count('deadline: .now() + 12') == 1
+        body = body.replace('deadline: .now() + 12', 'deadline: .now() + 6', 1)
+    body = body.replace('DispatchQueue.main.asyncAfter(deadline:', 'recordMicrophoneTimer(control, deadline:')
+    fixture = fixture.replace('case .send(let peer, let control): sendMicrophoneControl(control, to: peer)',
+                              'case .send(let peer, let control): fixtureMicrophoneSend(peer, control)')
+    fixture = fixture.replace('func beginRemoteAudioRequest() { remoteAudioControl.toggle() }',
+                              method('StreamClient+Audio.swift', 'beginRemoteAudioRequest').strip())
+    fixture = fixture.replace('func observeAudioDiagnostics() {}',
+                              'var microphoneReceipt: MicrophoneReceipt?\n var microphoneTimers: [(operation: MicrophoneControl.Operation, request: UUID, seconds: Double)] = []\n func observeAudioDiagnostics() {}')
+    fixture = fixture.replace('func connectionChanged() {}',
+                              'enum ReceptionKind { case microphoneReceipt }\n func received(_ kind: ReceptionKind, hostTimestamp: Double) {}\n func connectionChanged() {}')
+    transport += '\nextension StreamClient {\n func fixtureMicrophoneSend(_ peer: ObjectIdentifier, _ control: MicrophoneControl) {\n var pendingStops: [(ObjectIdentifier, MicrophoneControl)] = []\n' + body + '\n for (peer, control) in pendingStops { sendMicrophoneControl(control, to: peer) }\n }\n func recordMicrophoneTimer(_ control: MicrophoneControl, deadline: DispatchTime, execute action: @escaping @Sendable () -> Void) {\n microphoneTimers.append((control.operation, control.requestID, Double(deadline.uptimeNanoseconds) / 1_000_000_000 - Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000))\n DispatchQueue.main.asyncAfter(deadline: deadline, execute: action)\n }\n' + method('StreamClient+Microphone.swift', 'receiveMicrophone') + '\n}\n'
 screen = (root/'iOSClient/StreamScreen.swift').read_text()
 callbacks = ''
 for event, name in [('routeChangeNotification', 'routeChanged'), ('interruptionNotification', 'interrupted'), ('mediaServicesWereResetNotification', 'mediaReset')]:
@@ -218,4 +237,4 @@ for event, name in [('routeChangeNotification', 'routeChanged'), ('interruptionN
 flags=['-module-cache-path',str(out/'cache'),'-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out)]
 files=['IPadProviderCall.swift','IPadAudioForwarding.swift','IPadDesiredAudio.swift','IPadAudioAdmission.swift','IPadMicrophonePolicy.swift','IPadRemoteAudioController.swift','IPadAudioRoutePolicy.swift']
 subprocess.run(['xcrun','swiftc','-parse-as-library',*flags,*[str(root/'iOSClient'/f) for f in files],str(out/'Adapter.swift'),str(Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).with_name('adapter-main.swift')),'-o',str(out/'adapter-check')],check=True)
-subprocess.run([str(out/'adapter-check')],check=True)
+subprocess.run([str(out/'adapter-check'), *(['--expect-six'] if timer_mode == 'microphone-timers-legacy' else [])],check=True)
