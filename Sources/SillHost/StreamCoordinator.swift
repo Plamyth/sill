@@ -4157,7 +4157,8 @@ extension StreamCoordinator {
         let admission = await forwardingRuntime?.providerSession(context)
         let reply = await providerRuntime?.exchange(exchange.control, context: context, session: admission)
         let request = exchange.control.request
-        let unavailable = try? ProviderCallResult(requestId: request.requestId, status: .failed, reason: "audio_session_unavailable")
+        let unavailable = try? ProviderCallResult(requestId: request.requestId, status: .failed, reason: "audio_session_unavailable",
+                                                  provider: exchange.control.providerKind.rawValue)
         let fallback = unavailable.flatMap { try? ProviderCallState(request: request, result: $0) }
         server.sendProviderState(context.isCurrent() ? reply ?? fallback : nil, to: connection, ticket: exchange.ticket)
     }
