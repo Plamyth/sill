@@ -14,6 +14,7 @@ enum CheckError: Error { case setup(String) }
     var calls: [String] = [], effects = 0, signatures = 0
     var onCall: ((String) -> Void)?
     var observedProof: [String: Any] = [:]
+    var challengeInput: [String: Any] = [:]
     init(_ request: ProviderCallRequest, _ fixture: Fixture, ttl: Int = 1500, nativeTarget: [String: Any]? = nil) throws {
         self.request = request; self.fixture = fixture
         let target: [String: Any] = nativeTarget ?? ["profileId": "codex-control-room-chatgpt-dots", "leafId": "leaf-a",
@@ -46,7 +47,16 @@ enum CheckError: Error { case setup(String) }
         var reply = challenge.filter { !["target", "guestNowMs", "remainingMilliseconds"].contains($0.key) }
         reply["requestDigest"] = self.request.digest
         switch op {
-        case "provider.challenge": reply = challenge
+        case "provider.challenge":
+            challengeInput = input
+            let expectedKeys: Set<String> = input["schemaVersion"] as? Int == 2 ?
+                ["op", "schemaVersion", "request", "expectedProviderKind"] : ["op", "schemaVersion", "request"]
+            guard Set(input.keys) == expectedKeys,
+                  input["schemaVersion"] as? Int == 1 ||
+                    (input["schemaVersion"] as? Int == 2 && input["expectedProviderKind"] as? String == "codex-app-server") else {
+                throw CheckError.setup("challenge request schema")
+            }
+            reply = challenge
         case "provider.identity", "provider.dispatch":
             let envelope = input["envelope"] as! [String: String]
             let payload = Base64URL.decode(envelope["payload"]!)!
@@ -98,12 +108,50 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
     let runtime: ProviderCallRuntime
 }
 
+
+func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
+    let request = try ProviderCallRequest(requestId: UUID(uuidString: "12345678-1234-1234-1234-123456789abc")!,
+        action: .start, expectedLeaseRevision: .init(7), pairedDeviceId: .init(hex: String(repeating: "a", count: 64))!,
+        desiredInput: true, desiredOutput: true, callSessionId: nil)
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let expected = "{\"action\":\"start\",\"callSessionId\":null,\"desiredInput\":true,\"desiredOutput\":true,\"expectedLeaseRevision\":\"7\",\"pairedDeviceId\":\"" + String(repeating: "a", count: 64) + "\",\"requestId\":\"12345678-1234-1234-1234-123456789abc\"}"
+    check("legacy seven-field bytes unchanged", try encoder.encode(request) == Data(expected.utf8))
+    check("legacy digest matches independent Python vector", request.digest == "fc8f6bd9a873d10ed9a63804d84a6407a8d0ec86755d5c89a22490e259ab04c9")
+    for op in [ProviderCallControl.Operation.perform, .query] {
+        let legacy = ProviderCallControl(operation: op, request: request)
+        let legacyBytes = try encoder.encode(legacy)
+        let legacyExpected = "{\"operation\":\"" + op.rawValue + "\",\"request\":" + expected + ",\"schemaVersion\":1}"
+        check("legacy control three-field bytes unchanged", legacyBytes == Data(legacyExpected.utf8))
+        let native = ProviderCallControl(operation: op, request: request, providerKind: .nativeCodex)
+        let bytes = try encoder.encode(native)
+        let decoded = try JSONDecoder().decode(ProviderCallControl.self, from: bytes)
+        check("native roundtrip binds selector and unchanged request", decoded.schemaVersion == 2 &&
+            decoded.providerKind == .nativeCodex && decoded.expectedProviderKind == .nativeCodex && decoded.request == request)
+        var object = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        check("native control is exactly four fields", Set(object.keys) == ["schemaVersion", "operation", "request", "expectedProviderKind"])
+        for (key, value) in [("schemaVersion", 1 as Any), ("schemaVersion", 3 as Any),
+            ("expectedProviderKind", "chatgpt-dots-webguest" as Any), ("expectedProviderKind", "grok" as Any),
+            ("expectedProviderKind", NSNull() as Any), ("extra", true as Any), ("operation", "start" as Any)] {
+            var invalid = object; invalid[key] = value
+            let raw = try JSONSerialization.data(withJSONObject: invalid)
+            check("invalid schema selector or extra key rejected", (try? JSONDecoder().decode(ProviderCallControl.self, from: raw)) == nil)
+        }
+        object.removeValue(forKey: "expectedProviderKind")
+        check("schema2 requires selector key", (try? JSONDecoder().decode(ProviderCallControl.self,
+            from: JSONSerialization.data(withJSONObject: object))) == nil)
+        object["schemaVersion"] = 1; object["expectedProviderKind"] = NSNull()
+        check("schema1 refuses even null selector", (try? JSONDecoder().decode(ProviderCallControl.self,
+            from: JSONSerialization.data(withJSONObject: object))) == nil)
+    }
+}
+
 @main struct Checks {
     @MainActor static func main() async throws {
         var checks: [[String: Any]] = [], facts: [[String: Any]] = []
         func check(_ name: String, _ value: Bool) {
             checks.append(["name": name, "passed": value]); print("\(value ? "PASS" : "FAIL") \(name)")
         }
+        try selectorWireChecks(check)
         func wait(_ condition: () -> Bool) async throws {
             let until = ContinuousClock.now.advanced(by: .seconds(6))
             while !condition(), ContinuousClock.now < until { try await Task.sleep(for: .milliseconds(5)) }
@@ -134,12 +182,13 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
             return .init(fixture: f, peer: p, session: session, request: r, core: core, runtime: runtime)
         }
         func perform(_ a: Setup, request: ProviderCallRequest? = nil, context: AudioForwardingConnectionContext? = nil,
-                     session: ProviderCallSession? = nil) async -> ProviderCallState? {
-            await a.runtime.exchange(.init(operation: .perform, request: request ?? a.request),
+                     session: ProviderCallSession? = nil, kind: ProviderCallKind = .chatgptDots) async -> ProviderCallState? {
+            await a.runtime.exchange(.init(operation: .perform, request: request ?? a.request, providerKind: kind),
                 context: context ?? viewer(a.peer), session: session ?? a.session)
         }
-        func query(_ a: Setup, request: ProviderCallRequest? = nil, context: AudioForwardingConnectionContext? = nil) async -> ProviderCallState? {
-            await a.runtime.exchange(.init(operation: .query, request: request ?? a.request),
+        func query(_ a: Setup, request: ProviderCallRequest? = nil, context: AudioForwardingConnectionContext? = nil,
+                   kind: ProviderCallKind = .chatgptDots) async -> ProviderCallState? {
+            await a.runtime.exchange(.init(operation: .query, request: request ?? a.request, providerKind: kind),
                 context: context ?? viewer(a.peer), session: a.session)
         }
         let nativeFile = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -148,13 +197,45 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
         for (index, row) in (nativeRows["vectors"] as! [[String: Any]]).enumerated() {
             let target = row["target"] as! [String: Any]
             let a = try await setup("native-signed-\(index)", nativeTarget: target)
-            let state = await perform(a)
+            let state = await perform(a, kind: .nativeCodex)
             check("native target passes existing signed dispatch and result readback", state?.result.status == .started &&
                 state?.result.provider == "codex-app-server" && state?.result.mediaProtection == "not_attested")
             check("native dispatch binds exact prepared hash after two signatures", a.core.signatures == 2 && a.core.effects == 1 &&
                 a.core.observedProof["targetHash"] as? String == target["targetHash"] as? String)
             check("native readback uses existing identity then dispatch then result order",
                 a.core.calls == ["provider.challenge", "provider.identity", "provider.dispatch", "provider.result"])
+            check("native challenge request is exactly schema2 selector", a.core.challengeInput["schemaVersion"] as? Int == 2 &&
+                a.core.challengeInput["expectedProviderKind"] as? String == "codex-app-server" && a.core.challengeInput.count == 4)
+            check("native same selector query returns cached result", (await query(a, kind: .nativeCodex))?.result.status == .started)
+            let legacyPerform = await perform(a), legacyQuery = await query(a)
+            check("native ID cannot become legacy perform or query", legacyPerform?.result.reason == "request_id_conflict" &&
+                legacyQuery?.result.reason == "request_id_conflict" && a.core.effects == 1)
+            await a.fixture.finish()
+        }
+        let nativeTarget = (nativeRows["vectors"] as! [[String: Any]])[0]["target"] as! [String: Any]
+        for native in [false, true] {
+            let kind: ProviderCallKind = native ? .nativeCodex : .chatgptDots
+            let a = try await setup("selector-wrong-challenge-\(native)", nativeTarget: native ? nil : nativeTarget)
+            let value = await perform(a, kind: kind)
+            check("selector refuses other challenge before identity or Node authority", value?.result.status == .failed &&
+                value?.result.provider == kind.rawValue && a.core.calls == ["provider.challenge"] &&
+                a.core.signatures == 0 && a.core.effects == 0 && count(a.fixture, "forwardingProviderAcquire") == 0)
+            await a.fixture.finish()
+            let b = try await setup("selector-wrong-result-\(native)", nativeTarget: native ? nativeTarget : nil)
+            b.core.corruptStage = "provider.result"; b.core.corruptField = "result"
+            b.core.corruptValue = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ProviderCallResult(
+                requestId: b.request.requestId, status: .started, reason: "wrong_provider",
+                callSessionId: "wrong-session", provider: native ? "chatgpt-dots-webguest" : "codex-app-server")))
+            let wrong = await perform(b, kind: kind)
+            check("selector refuses cross-provider result without retry or fallback", wrong?.result.status == .unknown &&
+                wrong?.result.provider == kind.rawValue && b.core.effects == 1 && b.core.calls.count == 4)
+            await b.fixture.finish()
+        }
+        do {
+            let a = try await setup("native-stop", action: .stop, nativeTarget: nativeTarget)
+            let stopped = await perform(a, kind: .nativeCodex), cached = await query(a, kind: .nativeCodex)
+            check("native stop and query retain selector", stopped?.result.status == .stopped &&
+                cached?.result.status == .stopped && a.core.effects == 1)
             await a.fixture.finish()
         }
         do {
@@ -165,6 +246,11 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
             check("Release reply pending has no Core result read", !c.calls.contains("provider.result"))
             check("actual Acquire then Dispatch before Core delivery", count(f, "forwardingProviderAcquire") == 1 && count(f, "forwardingProviderDispatch") == 1 && c.effects == 1)
             check("actual identity and dispatch signatures verified", c.signatures == 2)
+            check("legacy challenge retains exact schema1 three keys", c.challengeInput.count == 3 &&
+                c.challengeInput["schemaVersion"] as? Int == 1 && c.challengeInput["expectedProviderKind"] == nil)
+            let swappedPerform = await perform(a, kind: .nativeCodex), swappedQuery = await query(a, kind: .nativeCodex)
+            check("pending selector substitution has no effect", swappedPerform?.result.reason == "request_id_conflict" &&
+                swappedQuery?.result.reason == "request_id_conflict" && c.effects == 1)
             check("pending duplicate perform has no new effect", (await perform(a))?.result.status == .pending && c.effects == 1)
             _ = await f.http("/release")
             let value = await task.value

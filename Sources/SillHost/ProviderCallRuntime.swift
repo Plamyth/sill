@@ -16,6 +16,7 @@ final class ProviderCallRuntime {
     private final class Record {
         enum Stage { case preflight, authority }
         let request: ProviderCallRequest
+        let providerKind: ProviderCallKind
         let generation: UUID
         weak var relay: LocalAudioRelay?
         let authority: LocalAudioRelay.ProviderAuthorityIdentity
@@ -24,11 +25,11 @@ final class ProviderCallRuntime {
         var lastQueryAt: TimeInterval?
         var queries = 0
         var result: ProviderCallResult
-        init(_ request: ProviderCallRequest, generation: UUID, session: ProviderCallSession,
+        init(_ request: ProviderCallRequest, providerKind: ProviderCallKind, generation: UUID, session: ProviderCallSession,
              authority: LocalAudioRelay.ProviderAuthorityIdentity) throws {
-            self.request = request; self.generation = generation
+            self.request = request; self.providerKind = providerKind; self.generation = generation
             relay = session.relay; self.authority = authority
-            result = try ProviderCallResult(requestId: request.requestId, status: .pending, reason: "provider_pending")
+            result = try ProviderCallResult(requestId: request.requestId, status: .pending, reason: "provider_pending", provider: providerKind.rawValue)
         }
     }
     private var records: [UUID: Record] = [:]
@@ -53,29 +54,29 @@ final class ProviderCallRuntime {
         guard context.role == .viewer, context.isCurrent(), request.pairedDeviceId == context.peer.id,
               let session, session.admitted(), let authority = session.relay.providerAuthorityIdentity else { return nil }
         if let prior = records[request.requestId] {
-            guard prior.request == request, prior.generation == context.peer.pairingGeneration else {
-                return state(request, .failed, "request_id_conflict")
+            guard prior.request == request, prior.providerKind == control.providerKind, prior.generation == context.peer.pairingGeneration else {
+                return state(control, .failed, "request_id_conflict")
             }
             guard prior.relay === session.relay, prior.authority == authority else {
-                return state(request, .unknown, "provider_authority_changed")
+                return state(control, .unknown, "provider_authority_changed")
             }
             if control.operation == .query, prior.result.status == .pending {
                 let now = ProcessInfo.processInfo.systemUptime
                 guard now - prior.startedAt < 10, prior.queries < 4,
                       prior.lastQueryAt.map({ now - $0 >= 0.5 }) ?? true else {
-                    return state(request, .unknown, "provider_query_budget_exhausted")
+                    return state(control, .unknown, "provider_query_budget_exhausted")
                 }
                 prior.lastQueryAt = now; prior.queries += 1
             }
             return try? ProviderCallState(request: request, result: prior.result)
         }
-        guard control.operation == .perform else { return state(request, .unknown, "provider_result_unavailable") }
-        guard request.matches(session.snapshot) else { return state(request, .failed, "audio_lease_changed") }
+        guard control.operation == .perform else { return state(control, .unknown, "provider_result_unavailable") }
+        guard request.matches(session.snapshot) else { return state(control, .failed, "audio_lease_changed") }
         guard records.values.filter({ $0.request.pairedDeviceId == request.pairedDeviceId && $0.stage == .preflight }).count < 4 else {
-            return state(request, .failed, "provider_preflight_busy")
+            return state(control, .failed, "provider_preflight_busy")
         }
-        guard records.count < 256 else { return state(request, .failed, "request_capacity") }
-        guard let record = try? Record(request, generation: context.peer.pairingGeneration,
+        guard records.count < 256 else { return state(control, .failed, "request_capacity") }
+        guard let record = try? Record(request, providerKind: control.providerKind, generation: context.peer.pairingGeneration,
                                       session: session, authority: authority) else { return nil }
         records[request.requestId] = record
         defer { if record.stage == .preflight { records.removeValue(forKey: request.requestId) } }
@@ -85,8 +86,10 @@ final class ProviderCallRuntime {
         return try? ProviderCallState(request: request, result: result)
     }
 
-    private func state(_ request: ProviderCallRequest, _ status: ProviderCallResult.Status, _ reason: String) -> ProviderCallState? {
-        guard let result = try? ProviderCallResult(requestId: request.requestId, status: status, reason: reason) else { return nil }
+    private func state(_ control: ProviderCallControl, _ status: ProviderCallResult.Status, _ reason: String) -> ProviderCallState? {
+        let request = control.request
+        guard let result = try? ProviderCallResult(requestId: request.requestId, status: status, reason: reason,
+            provider: control.providerKind.rawValue) else { return nil }
         return try? ProviderCallState(request: request, result: result)
     }
 
@@ -94,7 +97,7 @@ final class ProviderCallRuntime {
                          session: ProviderCallSession) async throws -> ProviderCallResult {
         let request = record.request
         func result(_ status: ProviderCallResult.Status, _ reason: String) throws -> ProviderCallResult {
-            try ProviderCallResult(requestId: request.requestId, status: status, reason: reason)
+            try ProviderCallResult(requestId: request.requestId, status: status, reason: reason, provider: record.providerKind.rawValue)
         }
         let current = { !Task.isCancelled && context.isCurrent() && session.admitted() &&
             record.relay === session.relay && record.authority == session.relay.providerAuthorityIdentity }
@@ -110,9 +113,13 @@ final class ProviderCallRuntime {
             defer { socket.invalidate() }
             guard current() else { throw ProviderCallFailure.superseded }
             let challengeStarted = ProcessInfo.processInfo.systemUptime
-            let challenge = try await socket.exchange(ChallengeRequest(request: request), as: ProviderCallChallenge.self,
+            let challenge = try await socket.exchange(ChallengeRequest(request: request, providerKind: record.providerKind), as: ProviderCallChallenge.self,
                 until: min(overall, challengeStarted + 1.5))
             try challenge.validate(request)
+            switch (record.providerKind, challenge.target) {
+            case (.nativeCodex, .nativeTarget), (.chatgptDots, .webGuest): break
+            default: throw ProviderCallFailure.invalidTarget
+            }
             let challengeExpiry = challengeStarted + Double(challenge.remainingMilliseconds) / 1000
             guard current() else { throw ProviderCallFailure.superseded }
             let signer = ProviderCallSigner(identity: identity)
@@ -149,6 +156,7 @@ final class ProviderCallRuntime {
             let readback = try await socket.exchange(ResultRequest(challenge: challenge, request: request),
                 as: ResultReply.self, until: overall)
             try readback.validate(challenge, request: request)
+            guard readback.result.provider == record.providerKind.rawValue else { throw ProviderCallFailure.invalidTarget }
             guard current(), let final = await session.readSnapshot(), current(),
                   providerSameSnapshot(final, session.snapshot), request.matches(final) else {
                 throw ProviderCallFailure.superseded
@@ -168,8 +176,14 @@ final class ProviderCallRuntime {
 
 private struct ChallengeRequest: Encodable {
     let op = "provider.challenge"
-    let schemaVersion = 1
+    let schemaVersion: Int
     let request: ProviderCallRequest
+    let expectedProviderKind: ProviderCallKind?
+    init(request: ProviderCallRequest, providerKind: ProviderCallKind) {
+        self.request = request
+        schemaVersion = providerKind == .nativeCodex ? 2 : 1
+        expectedProviderKind = providerKind == .nativeCodex ? providerKind : nil
+    }
 }
 private struct ProofRequest: Encodable {
     let op: String

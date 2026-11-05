@@ -93,22 +93,41 @@ public struct ProviderCallRequest: Codable, Equatable, Sendable {
     }
 }
 
+public enum ProviderCallKind: String, Codable, Sendable {
+    case chatgptDots = "chatgpt-dots-webguest"
+    case nativeCodex = "codex-app-server"
+}
+
 public struct ProviderCallControl: Codable, Sendable {
     public enum Operation: String, Codable, Sendable { case perform, query }
     public let schemaVersion: Int
     public let operation: Operation
     public let request: ProviderCallRequest
-    private enum CodingKeys: String, CodingKey { case schemaVersion, operation, request }
-    public init(operation: Operation, request: ProviderCallRequest) {
-        schemaVersion = 1; self.operation = operation; self.request = request
+    public let expectedProviderKind: ProviderCallKind?
+    public var providerKind: ProviderCallKind { expectedProviderKind ?? .chatgptDots }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, operation, request, expectedProviderKind }
+    public init(operation: Operation, request: ProviderCallRequest, providerKind: ProviderCallKind = .chatgptDots) {
+        schemaVersion = providerKind == .nativeCodex ? 2 : 1
+        expectedProviderKind = providerKind == .nativeCodex ? providerKind : nil
+        self.operation = operation; self.request = request
     }
     public init(from decoder: Decoder) throws {
-        try providerCallKeys(decoder, required: ["schemaVersion", "operation", "request"])
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion == 1 || schemaVersion == 2 else { throw ProviderCallWireFailure.invalidRequest }
+        try providerCallKeys(decoder, required: schemaVersion == 1 ?
+            ["schemaVersion", "operation", "request"] : ["schemaVersion", "operation", "request", "expectedProviderKind"])
         operation = try c.decode(Operation.self, forKey: .operation)
         request = try c.decode(ProviderCallRequest.self, forKey: .request)
-        guard schemaVersion == 1 else { throw ProviderCallWireFailure.invalidRequest }
+        expectedProviderKind = schemaVersion == 2 ? try c.decode(ProviderCallKind.self, forKey: .expectedProviderKind) : nil
+        guard schemaVersion == 1 || expectedProviderKind == .nativeCodex else { throw ProviderCallWireFailure.invalidRequest }
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(schemaVersion, forKey: .schemaVersion)
+        try c.encode(operation, forKey: .operation)
+        try c.encode(request, forKey: .request)
+        try c.encodeIfPresent(expectedProviderKind, forKey: .expectedProviderKind)
     }
 }
 
