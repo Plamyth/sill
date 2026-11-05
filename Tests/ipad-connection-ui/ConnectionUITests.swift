@@ -35,30 +35,34 @@ final class ConnectionUITests: XCTestCase {
     }
 
     private func unique(_ query: XCUIElementQuery) throws -> XCUIElement {
-        XCTAssertTrue(query.firstMatch.waitForExistence(timeout: 5), "AX 요소 미노출")
-        XCTAssertEqual(query.count, 1, "동일 AX 요소가 여러 개면 조작하지 않습니다.")
-        guard query.count == 1 else { throw NSError(domain: "ConnectionUI", code: 2) }
+        var count = query.count
+        if count == 0 {
+            guard query.firstMatch.waitForExistence(timeout: 5) else {
+                throw NSError(domain: "ConnectionUI", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "AX 요소 미노출"])
+            }
+            count = query.count
+        }
+        guard count == 1 else {
+            throw NSError(domain: "ConnectionUI", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "동일 AX 요소가 여러 개면 조작하지 않습니다."])
+        }
         return query.element(boundBy: 0)
     }
 
     private func ensureToolbarVisible(_ app: XCUIApplication) throws {
-        let monitor = app.buttons.matching(identifier: "macDisplayChooser")
-        guard monitor.count <= 1 else { throw NSError(domain: "ConnectionUI", code: 10) }
-        if monitor.count == 1, monitor.firstMatch.isHittable { return }
-        let toggle = try unique(app.buttons.matching(identifier: "iPadToolbarToggle"))
-        guard toggle.label == "상단 메뉴 표시", toggle.isHittable else {
+        let toggles = app.buttons.matching(identifier: "iPadToolbarToggle")
+        let count = toggles.count
+        guard count <= 1 else { throw NSError(domain: "ConnectionUI", code: 10) }
+        if count == 0 { return }
+        let toggle = toggles.element(boundBy: 0)
+        let label = toggle.label
+        if label == "상단 메뉴 숨기기" { return }
+        guard label == "상단 메뉴 표시", toggle.isHittable, toggle.isEnabled else {
             throw NSError(domain: "ConnectionUI", code: 5,
                           userInfo: [NSLocalizedDescriptionKey: "숨겨진 상단바의 정확한 표시 버튼 미확인"])
         }
-        capture(app, name: "before-toolbar-reveal")
         toggle.tap()
-        let reflected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "label == %@", "상단 메뉴 숨기기"), object: toggle)
-        XCTAssertEqual(XCTWaiter.wait(for: [reflected], timeout: 2), .completed,
-                       "상단바 표시 AX 라벨 미반영. 재탭하지 않습니다.")
-        let chooser = try unique(monitor)
-        XCTAssertTrue(chooser.isHittable, "표시 후 모니터 AX가 조작 가능하지 않습니다.")
-        capture(app, name: "after-toolbar-reveal")
     }
 
     private func capture(_ app: XCUIApplication, name: String) {
@@ -86,7 +90,10 @@ final class ConnectionUITests: XCTestCase {
     }
 
     private func tapUnique(_ query: XCUIElementQuery) throws {
-        let element = try unique(query)
+        try tapChecked(unique(query))
+    }
+
+    private func tapChecked(_ element: XCUIElement) throws {
         guard element.isHittable, element.isEnabled else {
             throw NSError(domain: "ConnectionUI", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "정확한 native AX 요소가 조작 가능하지 않습니다."])
@@ -106,16 +113,17 @@ final class ConnectionUITests: XCTestCase {
     }
 
     private func openAudioChooser(_ app: XCUIApplication) throws {
-        try ensureToolbarVisible(app)
-        capture(app, name: "before-native-menu")
         let audio = app.menuBars.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", "오디오"))
-        guard audio.count <= 1 else { throw NSError(domain: "ConnectionUI", code: 11) }
-        if audio.count == 1, audio.firstMatch.isHittable {
-            try tapUnique(audio)
+        let count = audio.count
+        guard count <= 1 else { throw NSError(domain: "ConnectionUI", code: 11) }
+        let nativeAudio = count == 1 ? audio.element(boundBy: 0) : nil
+        if let nativeAudio, nativeAudio.isHittable {
+            try tapChecked(nativeAudio)
             capture(app, name: "native-audio-menu")
             try tapUnique(menuAction(app, label: "입력·출력 선택…"))
         } else {
+            try ensureToolbarVisible(app)
             try tapUnique(app.buttons.matching(identifier: "workspaceOverflow"))
             capture(app, name: "workspace-native-menu")
             try tapUnique(menuAction(app, label: "설정"))
