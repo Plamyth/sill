@@ -178,14 +178,19 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
             let snapshot = box.snapshot
             guard purpose == .session, binding.usb != nil, consumed, !cancelled,
                   trust === box, snapshot.remoteAccess, snapshot.ownerBootstrapEpoch == epoch,
-                  let candidate, snapshot.ownerCandidates[binding.fingerprint] == candidate,
+                  let candidate, currentCandidate(snapshot),
                   evidence.principal == candidate.principal, current() else { return false }
             return evidence.withCurrent(binding: binding) {
                 let latest = box.snapshot
                 return current() && !cancelled && latest.remoteAccess && latest.ownerBootstrapEpoch == epoch
-                    && latest.ownerCandidates[binding.fingerprint] == candidate
+                    && currentCandidate(latest)
             }
         }
+    }
+
+    private func currentCandidate(_ snapshot: TrustSnapshot) -> Bool {
+        guard let candidate, let latest = snapshot.ownerCandidates[binding.fingerprint] else { return false }
+        return latest.principal == candidate.principal && latest.generation == candidate.generation
     }
 
     func takeUSBAdmissionLog() -> String? {

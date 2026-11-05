@@ -1560,7 +1560,12 @@ final class OwnerBootstrapChecks {
             expectTrue(socket.usbSessionIsCurrent(in: host.trust, evidence: evidence))
             var changed = try store.loadPaired()
             switch mode {
-            case 0: changed[0].name = "이름 수정"; changed[0].model = "iPad99,1"
+            case 0:
+                changed[0].name = "이름 수정"; changed[0].model = "iPad99,1"
+                host.trust.update {
+                    let old = $0.ownerCandidates[b.fingerprint]!
+                    $0.ownerCandidates[b.fingerprint] = .init(principal: old.principal, generation: old.generation, name: "이름 수정 (iPad99,1)")
+                }
             case 1: changed[0].cableDevice = b.usb!.deviceID
             case 2:
                 changed.append(PairedDevice(fingerprint: Base64URL.encode(binding(2).fingerprint),
