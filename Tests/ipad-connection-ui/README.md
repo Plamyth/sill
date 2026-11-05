@@ -147,3 +147,18 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild build-for-te
 `test04DisableIPadAudio`는 기존 media 승인 gate 후 실행 중 canonical 앱만 activate한다. 정확한 오디오 NavigationBar가 없을 때만 03과 같은 기존 openAudioChooser 경로로 창을 열고 requireAudioChooser를 확인한다. 그 뒤 exact Button identifier와 정확한 label이 일치하는 요소를 유일성·hittable·enabled 검사 후 한 번 누른다. picker·스크롤·좌표·키·launch fallback은 없다. desired가 true인 경우에도 01/02의 OFF gate를 거짓으로 열지 않는다. 기존 selectOff helper는 완전히 제거한다. 탭 직후와 10초 후 screenshot/native AX를 첨부하며 실제 desired/intent/engine 중지 수용은 부모 metadata로 판정한다. 버튼이 없거나 가려졌으면 실패하고 추정 복구하지 않는다.
 
 03 ON 메서드와 01/02는 변경하지 않는다. 세 flag는 기본 0, default allowlist는 01/02뿐이다. 04 실행은 부모가 별도 xctestrun 복사본에서 04만 선택하고 media 승인 후 수행한다. 새 ON·Host·기기 실행·설치는 이번 작업에서 0이다. 새 서명 후보는 `signedcandidate/explicit-stop`에 분리하고 기존 Team/profile을 사용한다. 제품 앱의 새 서명·설치 시점과 실제 stop 버튼 노출은 부모가 조율한다. 독립 비작성 검수·빌드/서명 결과와 정확한 파일 SHA는 이 경로의 candidate-receipt.json에 기록한다.
+
+
+## 05 독립 모니터 메뉴 AX 관측
+
+사용자 인계의 actual iPad83 / source `c18c5fec44d68fdce96b594035146e0a05c36121` / PID3571, Node intent28 false/false, final binding off, capture/engine false와 Host241 고정은 이 후보의 실행 전제다. 이 작업은 해당 runtime을 새로 조회하거나 실행하지 않았다. 부모가 client-start 후보를 다른 WT에서 소유하며 이 작업은 제품·Host·기기 쓰기와 ON 시험을 하지 않는다.
+
+c18c의 `StreamScreen.swift` 1692~1758을 읽기 대조했다. `macDisplayChooser`의 accessibilityValue는 display 이름이며, 항목 label은 순번·이름·해상도·주 모니터 표시다. display.id는 SwiftUI ForEach identity와 selectDisplay 인자로만 쓰이고 메뉴 항목 accessibilityIdentifier로 별도 노출하지 않는다. 05는 이름을 ID로 쓰거나 선택하지 않는다. 실제 숫자 display/sourceID는 미노출로 기록하고 raw AX identifier가 빈 경우 그대로 보존한다. USB 연결·확장 sourceID·새 영상은 이 UI 근거만으로 수용하지 않는다.
+
+`test05ReadMonitorMenuAX`는 기존 일반 승인+오디오 OFF 실측 gate로만 이미 실행 중 canonical 앱을 activate한다. 정확 ‘오디오 입력·출력’ NavigationBar가 유일하게 있으면 그 bar 안의 정확 ‘닫기’ Button만 unique/hittable/enabled 확인 후 한 번 누르고 사라짐을 확인한다. 없으면 닫기를 누르지 않는다. 제품 close는 기존 acknowledge/authorization 정리 동작을 포함하며 미디어 toggle을 호출하지 않는다. 뒤에서 toolbar toggle 필요시 한 번 표시하고 exact macDisplayChooser의 **‘Mac 모니터 선택’ label**을 확인한다. 미지원 상태의 ‘Mac 데스크탑 전체 표시’ 버튼은 source 전환을 하므로 누르지 않는다.
+
+현재 AX value를 읽고 chooser 버튼만 한 번 열며, ‘Mac 모니터 선택’ 제목을 포함한 유일한 native ScrollView 안의 메뉴 항목 identifier/label/value/enabled를 최대64개 읽는다. 항목 tap·scroll·선택·source 전환·Mac 클릭·키·오디오 toggle·launch/terminate는 없다. JSON, screenshot, native AX를 첨부하고 항목이 없으면 근거를 남긴 뒤 실패한다. 선택 메뉴는 열린 채 남는다. 01~04 코드는 유지한다.
+
+기본 변환 allowlist는 계속 01/02다. `prepare_destination.py GENERATED OUTPUT --test05-only`는 별도 05 단독 UseDestinationArtifacts 계약을 만들며 세 gate는 모두0으로 둔다. 부모가 동일 기기 `00008112-00116854362BC01E`와 actual source c18c/build83/PID3571, Root lease, 오디오 OFF metadata를 직전에 재확인한 경우에만 일반 승인과 OFF flag를1로 둔다. media flag는0을 유지한다. 이 단독 계약에는 정상 앱 launch arguments/environment가 없다.
+
+부모는 실행 전후 AUT source commit/tree/build/PID와 선택 sourceID·권한·키·설정의 동일성을 기존 readback으로 대조하고, 실제 달라진 값이 있으면 원인 미확인으로 남긴다. 테스트는 AX에서 노출되지 않는 SourceHash/UDID/권한을 추정 검증하지 않는다. 새 앱·bundleID·key/profile/권한은 만들지 않는다. 후보 산출물은 `signedcandidate/monitor-read05`, 기존 TeamZPTXHJ866D/profile40b0이며 서명·설치·실기 UI 수용의 부모 조율과 구분한다. 이번 작업은 runner build/서명까지만, 실제 설치·실행은0이다. 제품과 Host를 쓰지 않는 비작성 독립 검수 결과를 영수증에 연결하고 최종 동일대상·SourceHash·flags·권한 불변 검사와 실기 수용은 부모가 연결한다.
