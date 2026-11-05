@@ -4,6 +4,13 @@ import StreamProtocol
 enum VisionCallTarget: String, CaseIterable {
     case nativeCodex, chatgptDots, grok
 
+    var providerKind: ProviderCallKind? {
+        switch self {
+        case .nativeCodex: return .nativeCodex
+        case .chatgptDots: return .chatgptDots
+        case .grok: return nil
+        }
+    }
     var title: String {
         switch self {
         case .nativeCodex: return "Mac Codex 음성"
@@ -14,7 +21,7 @@ enum VisionCallTarget: String, CaseIterable {
 }
 
 // This consumes an authenticated producer observation. It cannot create a challenge,
-// grant media authority, or select a provider on the existing seven-field wire.
+// grant media authority, or enable provider control.
 struct VisionNativePreparedCall {
     struct Fence: Equatable {
         let connection: UUID
@@ -73,6 +80,8 @@ struct VisionProviderCall {
     private(set) var connection: UUID
     private(set) var target: VisionCallTarget
     private(set) var supported = false
+    private(set) var nativeSupported = false
+    private(set) var requestProviderKind: ProviderCallKind?
     private(set) var hostKey: String?
     private(set) var pending: Pending?
     private(set) var request: ProviderCallRequest?
@@ -98,51 +107,67 @@ struct VisionProviderCall {
         target = next
         return true
     }
+    var targetSupported: Bool {
+        switch target {
+        case .nativeCodex: return nativeSupported
+        case .chatgptDots: return supported
+        case .grok: return false
+        }
+    }
+    var selectedResult: ProviderCallResult? {
+        result?.provider == target.providerKind?.rawValue ? result : nil
+    }
     var canPerform: Bool {
-        target == .chatgptDots && supported && pending == nil &&
+        targetSupported && pending == nil &&
             (request == nil || result.map { [.started, .stopped, .failed, .unsupported].contains($0.status) } == true)
     }
-    mutating func observe(connection next: UUID, capability: Int?, hostKey: String?) {
+    mutating func observe(connection next: UUID, capability: Int?, hostKey: String?, providerCallKinds: [String]? = nil) {
         let trusted = hostKey.flatMap { $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil ? $0 : nil }
         guard let trusted else {
-            supported = false
+            supported = false; nativeSupported = false
             nativePreparation = nil
             if connection != next { disconnected(); connection = next }
             return
         }
         if self.hostKey != trusted {
-            guard pending == nil || connection != next else { supported = false; return }
+            guard pending == nil || connection != next else { supported = false; nativeSupported = false; return }
             self = VisionProviderCall(connection: next, target: target, clock: clock)
             self.hostKey = trusted
         }
         if connection != next { disconnected(); connection = next }
         supported = capability == 1
+        nativeSupported = supported && providerCallKinds?.contains(ProviderCallKind.nativeCodex.rawValue) == true
     }
     mutating func disconnected() {
         nativePreparation = nil
-        supported = false
+        supported = false; nativeSupported = false
         pending = nil
-        if let request, result == nil || result?.status == .pending {
-            result = try? .init(requestId: request.requestId, status: .unknown, reason: "provider_connection_changed")
+        if let request, let kind = requestProviderKind, result == nil || result?.status == .pending {
+            result = try? .init(requestId: request.requestId, status: .unknown, reason: "provider_connection_changed",
+                provider: kind.rawValue)
         }
     }
     mutating func perform(_ value: ProviderCallRequest) -> ProviderCallControl? {
         let now = clock()
-        guard canPerform, now.isFinite, now >= 0 else { return nil }
-        request = value; result = nil; firstSentAt = now; queries = 0; lastQueryAt = nil
-        return enqueue(.init(operation: .perform, request: value), now: now)
+        guard canPerform, let kind = target.providerKind, now.isFinite, now >= 0 else { return nil }
+        guard value.action != .stop || (requestProviderKind == kind && selectedResult?.status == .started &&
+            selectedResult?.callSessionId == value.callSessionId && value.callSessionId != nil) else { return nil }
+        request = value; requestProviderKind = kind
+        result = nil; firstSentAt = now; queries = 0; lastQueryAt = nil
+        return enqueue(.init(operation: .perform, request: value, providerKind: kind), now: now)
     }
     mutating func query() -> ProviderCallControl? {
         let now = clock()
-        guard target == .chatgptDots, supported, pending == nil, let request, let firstSentAt,
+        guard targetSupported, let kind = target.providerKind, requestProviderKind == kind,
+              pending == nil, let request, let firstSentAt,
               result == nil || result?.status == .pending || result?.status == .unknown else { return nil }
         guard now.isFinite, now >= firstSentAt, now - firstSentAt < 10, queries < 4 else {
-            result = try? .init(requestId: request.requestId, status: .unknown, reason: "provider_query_budget_exhausted")
+            result = try? .init(requestId: request.requestId, status: .unknown, reason: "provider_query_budget_exhausted", provider: kind.rawValue)
             return nil
         }
         guard lastQueryAt.map({ now >= $0 && now - $0 >= 0.5 }) ?? true else { return nil }
         queries += 1; lastQueryAt = now
-        return enqueue(.init(operation: .query, request: request), now: now)
+        return enqueue(.init(operation: .query, request: request, providerKind: kind), now: now)
     }
     private mutating func enqueue(_ control: ProviderCallControl, now: TimeInterval) -> ProviderCallControl {
         pending = .init(control: control, connection: connection, sentAt: now,
@@ -155,28 +180,30 @@ struct VisionProviderCall {
         guard let pending, incoming == connection, pending.connection == incoming,
               state.requestDigest == pending.control.request.digest,
               state.result.requestId == pending.control.request.requestId,
-              state.result.provider == "chatgpt-dots-webguest",
+              state.result.provider == pending.control.providerKind.rawValue,
+              requestProviderKind == pending.control.providerKind, target.providerKind == pending.control.providerKind,
               now.isFinite, now >= pending.sentAt, now < pending.expiresAt else { return false }
         guard state.result.status != .started || pending.control.request.action == .start,
               state.result.status != .stopped || pending.control.request.action == .stop else { return false }
         self.pending = nil
-        result = supported ? state.result : try? .init(requestId: pending.control.request.requestId,
-            status: .unknown, reason: "provider_authentication_unverified")
+        result = targetSupported ? state.result : try? .init(requestId: pending.control.request.requestId,
+            status: .unknown, reason: "provider_authentication_unverified", provider: pending.control.providerKind.rawValue)
         return true
     }
     mutating func drain(_ state: ProviderCallState, from incoming: UUID) -> Bool {
-        supported = false
+        supported = false; nativeSupported = false
         return receive(state, from: incoming)
     }
     mutating func timeout(_ pending: Pending) -> Bool {
         guard self.pending?.connection == pending.connection,
               self.pending?.sentAt == pending.sentAt,
-              self.pending?.control.request == pending.control.request else { return false }
+              self.pending?.control.request == pending.control.request,
+              self.pending?.control.providerKind == pending.control.providerKind else { return false }
         let now = clock()
         guard !now.isFinite || now < pending.sentAt || now >= pending.expiresAt else { return false }
         self.pending = nil
-        supported = false
-        result = try? .init(requestId: pending.control.request.requestId, status: .unknown, reason: "provider_response_timeout")
+        supported = false; nativeSupported = false
+        result = try? .init(requestId: pending.control.request.requestId, status: .unknown, reason: "provider_response_timeout", provider: pending.control.providerKind.rawValue)
         return true
     }
     mutating func discardNativePreparation() { nativePreparation = nil }
@@ -194,22 +221,21 @@ struct VisionProviderCall {
         return true
     }
     var message: String {
-        switch target {
-        case .nativeCodex:
-            return nativePreparation == nil ? "Mac Codex 음성의 원격 시작·종료는 미확인입니다." :
-                "Mac Codex 음성 대상은 확인했지만 대상 지정 전송 계약은 아직 준비되지 않았습니다."
-        case .grok: return "Grok 통화의 원격 시작·종료는 미확인입니다."
-        case .chatgptDots: break
+        guard target != .grok else { return "Grok 통화의 원격 시작·종료는 미확인입니다." }
+        let name = target == .nativeCodex ? "Mac Codex 음성" : "Dots 통화"
+        if pending != nil { return "\(name) 상태를 확인하고 있습니다." }
+        guard let result = selectedResult else {
+            return targetSupported ? "\(name)와 음성 입출력 상태는 각각 확인합니다." :
+                target == .nativeCodex ? "Mac Codex 음성의 원격 시작·종료는 미확인입니다." :
+                "이 Mac 연결은 Dots 통화 제어를 지원하지 않습니다."
         }
-        if pending != nil { return "Dots 통화 상태를 확인하고 있습니다." }
-        guard let result else { return supported ? "Dots 통화와 음성 입출력 상태는 각각 확인합니다." : "이 Mac 연결은 Dots 통화 제어를 지원하지 않습니다." }
         switch result.status {
-        case .started: return "Mac의 Dots 통화 화면에서 시작을 확인했습니다."
-        case .stopped: return "Mac의 Dots 통화 화면에서 종료를 확인했습니다."
-        case .pending: return "Dots 통화 결과를 기다립니다. 대상은 확인 후 바꿀 수 있습니다."
-        case .unsupported: return "현재 Mac의 Dots 통화 화면에서는 이 동작을 확인할 수 없습니다."
-        case .failed: return "Dots 통화 명령을 완료하지 못했습니다. Mac의 Dots 화면을 확인하세요."
-        case .unknown: return "Dots 통화 결과를 확인하지 못했습니다. 자동 재시도하지 않습니다. Mac의 Dots 화면을 확인하세요."
+        case .started: return "Mac의 \(name) 시작을 확인했습니다."
+        case .stopped: return "Mac의 \(name) 종료를 확인했습니다."
+        case .pending: return "\(name) 결과를 기다립니다. 대상은 확인 후 바꿀 수 있습니다."
+        case .unsupported: return "현재 Mac에서는 \(name) 동작을 확인할 수 없습니다."
+        case .failed: return "\(name) 명령을 완료하지 못했습니다. Mac을 확인하세요."
+        case .unknown: return "\(name) 결과를 확인하지 못했습니다. 자동 재시도하지 않습니다."
         }
     }
 }
@@ -239,24 +265,23 @@ extension StreamClient {
     }
 
     var visionProviderCanStart: Bool {
-        visionProviderCall.target == .chatgptDots &&
-            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status != .started &&
+        VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID &&
+            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.selectedResult?.status != .started &&
             visionForwarding?.binding != nil && visionAudioIntentContext.admitted
     }
     var visionProviderCanStop: Bool {
-        visionProviderCall.target == .chatgptDots &&
-            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.result?.status == .started &&
-            visionProviderCall.result?.callSessionId != nil && visionForwarding?.providerCallSnapshot != nil && visionAudioIntentContext.admitted
+        VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID &&
+            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.selectedResult?.status == .started &&
+            visionProviderCall.selectedResult?.callSessionId != nil && visionForwarding?.providerCallSnapshot != nil && visionAudioIntentContext.admitted
     }
     func performVisionProviderCall(_ action: ProviderCallRequest.Action) {
-        guard visionProviderCall.target == .chatgptDots,
-              action == .start ? visionProviderCanStart : visionProviderCanStop,
+        guard action == .start ? visionProviderCanStart : visionProviderCanStop,
               let peer = connection, authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
               let model = visionForwarding, let snapshot = model.providerCallSnapshot,
               let request = try? ProviderCallRequest(requestId: UUID(), action: action,
                 expectedLeaseRevision: snapshot.revision, pairedDeviceId: model.device,
                 desiredInput: visionForwardingDesire.microphone, desiredOutput: visionForwardingDesire.playback,
-                callSessionId: action == .stop ? visionProviderCall.result?.callSessionId : nil),
+                callSessionId: action == .stop ? visionProviderCall.selectedResult?.callSessionId : nil),
               let control = visionProviderCall.perform(request) else { return }
         sendVisionProviderCall(control, to: peer)
     }
@@ -267,7 +292,8 @@ extension StreamClient {
     }
     private func sendVisionProviderCall(_ control: ProviderCallControl, to peer: NWConnection) {
         let generation = visionAudioIntentConnection
-        guard visionProviderCall.target == .chatgptDots,
+        guard control.providerKind == visionProviderCall.target.providerKind,
+              VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID,
               visionProviderCall.connection == generation, let pending = visionProviderCall.pending else { return }
         let payload = Wire.encode(control)
         guard !payload.isEmpty, payload.count <= StreamMessage.clientPayloadLimit(for: .providerCallControl) else { return }
@@ -288,6 +314,7 @@ extension StreamClient {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak peer] in
             guard let self, let peer, self.connection === peer, self.visionAudioIntentConnection == generation,
                   self.authenticatedVisionMacAudioPeer == ObjectIdentifier(peer), self.visionAudioIntentContext.admitted,
+                  VisionRemoteAudioStore.shared.model.owner == self.visionAudioOwnerID,
                   let control = self.visionProviderCall.query() else { return }
             self.sendVisionProviderCall(control, to: peer)
         }
@@ -299,6 +326,8 @@ extension StreamClient {
                   data.count <= StreamMessage.hostPayloadLimit(for: .providerCallState),
                   let state = Wire.decode(ProviderCallState.self, from: data) else { return }
             guard self.authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
+                  self.visionAudioIntentContext.admitted,
+                  VisionRemoteAudioStore.shared.model.owner == self.visionAudioOwnerID,
                   self.visionProviderCall.hostKey == self.visionAudioTrustedHostKey else {
                 _ = self.visionProviderCall.drain(state, from: self.visionAudioIntentConnection)
                 return

@@ -75,6 +75,7 @@ _ = call.perform(start)
 check(call.receive(try .init(request: start, result: .init(requestId: start.requestId, status: .started,
     reason: "fixture_started", callSessionId: "same-call")), from: connection), "기존 통화 시작 결과를 확인함")
 let client = StreamClient(call, forwarding)
+VisionRemoteAudioStore.shared.model.owner = client.visionAudioOwnerID
 let validStop = try ProviderCallRequest(requestId: UUID(), action: .stop, expectedLeaseRevision: off.revision,
     pairedDeviceId: device, desiredInput: false, desiredOutput: false, callSessionId: "same-call")
 check(validStop.matches(off), "Host는 최신 OFF 원장의 통화 종료를 허용함")
@@ -88,6 +89,7 @@ check(!client.sent[0].request.desiredInput && !client.sent[0].request.desiredOut
     !client.visionForwarding!.permits(.microphone) && !client.visionForwarding!.permits(.playback), "종료는 음성 입출력을 다시 켜지 않음")
 let expired = StreamClient(call, forwarding)
 let blocked = StreamClient(call, forwarding)
+VisionRemoteAudioStore.shared.model.owner = blocked.visionAudioOwnerID
 blocked.visionAudioIntentContext.inputBlocked = true
 check(!blocked.visionProviderCanStop, "차단된 화면은 OFF 상태에서도 종료 권한을 얻지 않음")
 blocked.performVisionProviderCall(.stop)
@@ -95,12 +97,14 @@ check(blocked.sent.isEmpty, "차단된 화면은 종료를 송신하지 않음")
 var changing = forwarding
 changing.select(.init(playback: true, microphone: true))
 let switching = StreamClient(call, changing)
+VisionRemoteAudioStore.shared.model.owner = switching.visionAudioOwnerID
 check(!switching.visionProviderCanStop, "새 음성 선택 중 이전 OFF 원장을 사용하지 않음")
 switching.performVisionProviderCall(.stop)
 check(switching.sent.isEmpty, "대상 전환 중 종료를 송신하지 않음")
 var suspended = forwarding
 suspended.suspend()
 check(StreamClient(call, suspended).visionProviderCanStop == false, "중단된 연결은 OFF 원장을 재사용하지 않음")
+VisionRemoteAudioStore.shared.model.owner = expired.visionAudioOwnerID
 now += VisionAudioForwarding.freshness
 check(!expired.visionProviderCanStop, "오래된 OFF 원장은 종료를 허용하지 않음")
 expired.performVisionProviderCall(.stop)
@@ -206,3 +210,26 @@ let changedBinding = try AudioForwardingBinding(pairedDeviceId: device, intentGe
 let changedEpoch = try AudioForwardingSnapshot(revision: off.revision, intent: off.intent, binding: changedBinding)
 check(!preparation.isCurrent(fence(context, changedEpoch)!, now: 101), "같은 revision의 binding epoch 변경도 준비 대상을 무효화함")
 print("PASS: production native 소비 메서드·peer·owner·revision·binding epoch 회귀")
+
+now = 101
+var nativeControlCall = VisionProviderCall(connection: connection, clock: { now })
+nativeControlCall.observe(connection: connection, capability: 1, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+_ = nativeControlCall.perform(start)
+check(nativeControlCall.receive(try .init(request: start, result: nativeResult), from: connection), "native 시작의 동일 selector 응답")
+let nativeClient = StreamClient(nativeControlCall, forwarding)
+VisionRemoteAudioStore.shared.model.owner = nativeClient.visionAudioOwnerID
+check(nativeClient.visionProviderCanStop, "native도 최신 OFF 원장에서 종료 가능함")
+nativeClient.performVisionProviderCall(.stop)
+check(nativeClient.sent.count == 1 && nativeClient.sent[0].providerKind == .nativeCodex &&
+    nativeClient.sent[0].request.callSessionId == tuple[4] && nativeClient.sent[0].request.matches(off), "native 종료는 실제 세션과 OFF 원장을 보존함")
+let wrongOwner = StreamClient(nativeControlCall, forwarding)
+check(!wrongOwner.visionProviderCanStop, "다른 창 소유자는 native 종료 불가")
+wrongOwner.performVisionProviderCall(.stop)
+check(wrongOwner.sent.isEmpty, "다른 창은 native 종료 전송 불가")
+let nativeExpired = StreamClient(nativeControlCall, forwarding)
+VisionRemoteAudioStore.shared.model.owner = nativeExpired.visionAudioOwnerID
+now = 104
+check(!nativeExpired.visionProviderCanStop, "오래된 원장은 native 종료 불가")
+nativeExpired.performVisionProviderCall(.stop)
+check(nativeExpired.sent.isEmpty, "오래된 원장으로 native 전송 없음")
+print("PASS: native selector의 실제 종료 메서드와 소유권·최신성 회귀. 외부 효과 0")

@@ -249,3 +249,119 @@ selection.observe(connection: second, capability: 1, hostKey: hostKey)
 expect(selection.target == .nativeCodex && selection.request == nil && !selection.canPerform,
        "new trusted Mac clears old Dots state and keeps native selection")
 print("PASS \(checks) total client checks; original Dots 68, new target checks \(checks - regressionChecks); actual provider, app, device, audio effects 0")
+
+
+func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
+    let request = try ProviderCallRequest(requestId: UUID(uuidString: "12345678-1234-1234-1234-123456789abc")!,
+        action: .start, expectedLeaseRevision: .init(7), pairedDeviceId: .init(hex: String(repeating: "a", count: 64))!,
+        desiredInput: true, desiredOutput: true, callSessionId: nil)
+    let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let expected = "{\"action\":\"start\",\"callSessionId\":null,\"desiredInput\":true,\"desiredOutput\":true,\"expectedLeaseRevision\":\"7\",\"pairedDeviceId\":\"" + String(repeating: "a", count: 64) + "\",\"requestId\":\"12345678-1234-1234-1234-123456789abc\"}"
+    check("legacy seven-field bytes unchanged", try encoder.encode(request) == Data(expected.utf8))
+    check("legacy digest matches independent Python vector", request.digest == "fc8f6bd9a873d10ed9a63804d84a6407a8d0ec86755d5c89a22490e259ab04c9")
+    for op in [ProviderCallControl.Operation.perform, .query] {
+        let legacy = ProviderCallControl(operation: op, request: request)
+        let legacyBytes = try encoder.encode(legacy)
+        let legacyExpected = "{\"operation\":\"" + op.rawValue + "\",\"request\":" + expected + ",\"schemaVersion\":1}"
+        check("legacy control three-field bytes unchanged", legacyBytes == Data(legacyExpected.utf8))
+        let native = ProviderCallControl(operation: op, request: request, providerKind: .nativeCodex)
+        let bytes = try encoder.encode(native)
+        let decoded = try JSONDecoder().decode(ProviderCallControl.self, from: bytes)
+        check("native roundtrip binds selector and unchanged request", decoded.schemaVersion == 2 &&
+            decoded.providerKind == .nativeCodex && decoded.expectedProviderKind == .nativeCodex && decoded.request == request)
+        var object = try JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+        check("native control is exactly four fields", Set(object.keys) == ["schemaVersion", "operation", "request", "expectedProviderKind"])
+        for (key, value) in [("schemaVersion", 1 as Any), ("schemaVersion", 3 as Any),
+            ("expectedProviderKind", "chatgpt-dots-webguest" as Any), ("expectedProviderKind", "grok" as Any),
+            ("expectedProviderKind", NSNull() as Any), ("extra", true as Any), ("operation", "start" as Any)] {
+            var invalid = object; invalid[key] = value
+            let raw = try JSONSerialization.data(withJSONObject: invalid)
+            check("invalid schema selector or extra key rejected", (try? JSONDecoder().decode(ProviderCallControl.self, from: raw)) == nil)
+        }
+        object.removeValue(forKey: "expectedProviderKind")
+        check("schema2 requires selector key", (try? JSONDecoder().decode(ProviderCallControl.self,
+            from: JSONSerialization.data(withJSONObject: object))) == nil)
+        object["schemaVersion"] = 1; object["expectedProviderKind"] = NSNull()
+        check("schema1 refuses even null selector", (try? JSONDecoder().decode(ProviderCallControl.self,
+            from: JSONSerialization.data(withJSONObject: object))) == nil)
+    }
+}
+
+try selectorWireChecks { name, value in expect(value, name) }
+
+now = 1000
+var nativeCall = VisionProviderCall(connection: first, clock: { now })
+for kinds in [nil, [], ["chatgpt-dots-webguest"], ["grok"], ["CODEX-APP-SERVER"]] as [[String]?] {
+    nativeCall.observe(connection: first, capability: 1, hostKey: hostKey, providerCallKinds: kinds)
+    expect(!nativeCall.canPerform && nativeCall.perform(request) == nil, "native requires exact explicit capability")
+}
+nativeCall.observe(connection: first, capability: 2, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+expect(!nativeCall.canPerform, "native kind alone cannot upgrade unknown protocol capability")
+nativeCall.observe(connection: first, capability: 1, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+expect(nativeCall.canPerform && nativeCall.nativePreparation == nil, "explicit selector capability uses normal control without prepared seam")
+let nativeControl = nativeCall.perform(request)!
+expect(nativeControl.schemaVersion == 2 && nativeControl.providerKind == .nativeCodex && nativeControl.request == request,
+    "native perform changes only outer selector")
+func nativeResponse(_ status: ProviderCallResult.Status, request value: ProviderCallRequest = request,
+                    session: String? = "native-session") throws -> ProviderCallState {
+    try .init(request: value, result: .init(requestId: value.requestId, status: status,
+        reason: "fixture_native", callSessionId: session, provider: "codex-app-server"))
+}
+expect(!nativeCall.receive(try response(.started), from: first), "native request refuses Dots result")
+expect(!nativeCall.receive(try nativeResponse(.started), from: second), "native refuses stale connection")
+expect(!nativeCall.receive(try nativeResponse(.started, request: changed), from: first), "native refuses stale digest")
+expect(!nativeCall.selectTarget(.chatgptDots), "native pending control preserves selector")
+expect(nativeCall.receive(try nativeResponse(.pending), from: first), "native pending result is incomplete")
+now += 0.5
+let nativeQuery = nativeCall.query()!
+expect(nativeQuery.schemaVersion == 2 && nativeQuery.providerKind == .nativeCodex && nativeQuery.request == request,
+    "native query retains exact original selector and seven fields")
+expect(!nativeCall.receive(try response(.started), from: first), "native query refuses Dots recovery")
+expect(nativeCall.receive(try nativeResponse(.started), from: first), "native result accepted on matching query")
+let nativeStop = try ProviderCallRequest(requestId: UUID(), action: .stop, expectedLeaseRevision: .init(7),
+    pairedDeviceId: device, desiredInput: true, desiredOutput: true, callSessionId: "native-session")
+expect(nativeCall.selectTarget(.chatgptDots), "completed native allows explicit selection")
+expect(nativeCall.perform(nativeStop) == nil && nativeCall.selectedResult == nil, "Dots cannot stop retained native session")
+expect(nativeCall.selectTarget(.nativeCodex), "return to native session")
+expect(nativeCall.perform(nativeStop)?.providerKind == .nativeCodex, "native stop preserves selected provider")
+expect(!nativeCall.receive(try nativeResponse(.started, request: nativeStop), from: first), "native stop cannot adopt start ACK")
+expect(nativeCall.receive(try nativeResponse(.stopped, request: nativeStop), from: first), "native stop readback accepted")
+expect(nativeCall.result?.mediaProtection == "not_attested", "native result does not attest media")
+
+now = 1100
+nativeCall = VisionProviderCall(connection: first, clock: { now })
+nativeCall.observe(connection: first, capability: 1, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+_ = nativeCall.perform(request)
+nativeCall.disconnected()
+nativeCall.observe(connection: second, capability: 1, hostKey: hostKey)
+expect(nativeCall.query() == nil, "reconnect without explicit native capability cannot recover")
+nativeCall.observe(connection: second, capability: 1, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+now += 0.5
+expect(nativeCall.query()?.providerKind == .nativeCodex && nativeCall.firstSentAt == 1100, "native reconnect keeps original selector and deadline")
+expect(!nativeCall.receive(try nativeResponse(.started), from: first), "native reconnect rejects old TLS response")
+expect(nativeCall.receive(try nativeResponse(.pending), from: second), "native recovery stays pending")
+for _ in 1..<4 {
+    now += 0.5
+    expect(nativeCall.query()?.providerKind == .nativeCodex, "native query count bound")
+    expect(nativeCall.receive(try nativeResponse(.pending), from: second), "native query remains incomplete")
+}
+now += 0.5
+expect(nativeCall.query() == nil && nativeCall.result?.status == .unknown && nativeCall.result?.provider == "codex-app-server",
+    "native query exhaustion never becomes Dots")
+
+now = 1200
+nativeCall = VisionProviderCall(connection: first, clock: { now })
+nativeCall.observe(connection: first, capability: 1, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+_ = nativeCall.perform(request)
+let nativePending = nativeCall.pending!
+now = 1210
+expect(!nativeCall.receive(try nativeResponse(.started), from: first), "native expired response rejected")
+expect(nativeCall.timeout(nativePending) && nativeCall.result?.provider == "codex-app-server", "native timeout preserves provider")
+nativeCall.observe(connection: second, capability: 1, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+expect(nativeCall.query() == nil && nativeCall.firstSentAt == 1200, "native reconnect cannot renew freshness")
+nativeCall.observe(connection: first, capability: 1, hostKey: String(repeating: "f", count: 64), providerCallKinds: ["codex-app-server"])
+expect(nativeCall.request == nil && nativeCall.result == nil && nativeCall.canPerform, "different trusted host clears native identity")
+_ = nativeCall.perform(request)
+expect(nativeCall.drain(try nativeResponse(.started), from: first) && nativeCall.result?.status == .unknown && !nativeCall.nativeSupported,
+    "native untrusted response drains without adopting authority")
+print("PASS FINAL \(checks) selector and client checks; actual provider, device, audio effects 0")
