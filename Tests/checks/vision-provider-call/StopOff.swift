@@ -57,7 +57,7 @@ func observe(_ model: inout VisionAudioForwarding, _ value: AudioForwardingSnaps
     let catalog = try AudioForwardingCatalog(principal: .init(kind: .cable, id: device,
         authorizationGeneration: generation), role: .viewer, bootstrap: .init(credential:
             .init(pairedDeviceId: device, pairingGeneration: generation, credential: String(repeating: "a", count: 43)),
-            ownCursor: .init(intentRevision: .init(1), bindingRevision: .init(1)), snapshot: value))
+            ownCursor: .init(intentRevision: value.intent?.intentRevision ?? .init(1), bindingRevision: .init(1)), snapshot: value))
     model.receive(try .init(requestID: control.requestID, operation: .observe, catalog: catalog, result: nil), from: connection)
 }
 let original = try AudioForwardingIntentRequest(pairedDeviceId: device, intentId: UUID(), intentRevision: .init(1),
