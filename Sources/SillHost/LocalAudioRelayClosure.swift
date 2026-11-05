@@ -2,11 +2,11 @@ import Foundation
 
 enum LocalAudioRelayClosure {
     private static let serverHashes: [String: String] = [
-        "server/audio-forwarding-authority.js": "ad9bc1a57242af3b981b9c1f46fd5adb76b9bafdd3c7a9e790158fd5b853188b",
+        "server/audio-forwarding-authority.js": "562086303150b8a1368067a30e9ea0ae99a18c4b0fd942bb12abfe5b5f713fca",
         "server/audio-forwarding-journal.js": "4a9f59926f385019f0e83716ca9840c6cc5c3cbc5e1259322c9e9fb82fce27dc",
         "server/audio-forwarding-proxy.js": "b7cdb3504785a315a2c1ed304e0d62583c60506f70c8fad0f56231c1337ff48c",
         "server/audio-router.py": "a755159ae8c56c1bb902716ad4ffac6c7819782c62f017b14edc22bed88b59e0",
-        "server/audio-session.js": "6d8e589c80e3c7faef785f50bc9d04fe95440539b9bdadaa946b6204e55f4e7e",
+        "server/audio-session.js": "5f577bf8aea6ebc7e638599f35b88d296cd8fd7d07d8949710ac80ddefc85a6f",
         "server/common-release.js": "3e623cb451ed1cbe1b3139ff3bc752c4fcba2f26cdba96fc495888579393f7a0",
         "server/control-events-relay.js": "aff9047a4f58cddf10b265bdda9556de659867c9846dd08479778158cb59e51b",
         "server/control-privacy-policy.js": "6c7ab01210c7e1dbaddf0b85e9b23555626019b750e03b0436cb4ebef4f22700",
@@ -23,7 +23,8 @@ enum LocalAudioRelayClosure {
         "server/mobile-pc-status.js": "fd1be7219f22ad8eecf1a8511330fa44332911f0efd689d37c924883c61068ec",
         "server/mobile-surface.js": "dda60d218dfdac028fbc94acffd9d4082abfe5b346ac4f7fea753010caf6ed68",
         "server/mobile-update.js": "604a8caa47ad2b9a74a64b67fda5a49be2054b61c17369161129b6cc09ffc1a4",
-        "server/native-audio-control.js": "87fa4e798d51102e8dca620444fd579571082aa6ba7a2d07b3e1b8c8916b710f",
+        "server/native-audio-control.js": "9f5961e031824be747d4034c3b1552af053a6ed8a0a345ae9887094a28a36ac0",
+        "server/relay-pcm-binding.js": "f6285097a008c4421fdba879b7d8751aaa6b6ff0d887d344f29892fdd4a03a6e",
         "server/shared-cards-model.js": "4fa19ac7edc61f14e9128e28cf4d723556d683bcc54625c2472527f769b85d8c",
         "server/shared-cards-surface.js": "64f7a7f9057e451a592f6e1d1aa69aaf5d2dba824d1de3b6702f3c3c12084575",
     ]
