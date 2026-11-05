@@ -15,6 +15,9 @@ from mutants import MUTANTS
 
 def main():
     root, output = (Path(p).resolve() for p in sys.argv[1:3])
+    receiver_only = sys.argv[3:] == ['--receiver-only']
+    if sys.argv[3:] and not receiver_only:
+        raise SystemExit('Unknown check selection')
     if output == root or root in output.parents:
         raise SystemExit('OUTPUT must be outside ROOT')
     output.mkdir(parents=True, exist_ok=True)
@@ -23,6 +26,8 @@ def main():
     started = time.monotonic()
     record = {'scope': 'actual receiver, wire, owned-block HAL sink with inert unit/object seams, extracted authenticated dispatch; no native IO or call proof',
               'commands': [], 'mutants': [], 'assertions': 0, 'exitCode': 2}
+    if receiver_only:
+        record['scope'] = 'actual receiver, wire, owned-block HAL sink and cleanup entry; inert seams only; excludes server/catalog/owner integration'
     source_hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                      for folder in ['Sources', 'Tests/checks/microphone-uplink']
                      for p in (root / folder).rglob('*') if p.is_file()}
@@ -62,7 +67,8 @@ def main():
                    + paths + ['-emit-module-path', str(output / (name + '.swiftmodule')), '-o', str(output / (name + '.o'))], label)
 
     try:
-        files, manifest = fixture(root)
+        files, manifest = fixture(root, receiver_only=receiver_only)
+        mutants = [m for m in MUTANTS if not receiver_only or (m[1] in files and m[4] in files['Main.swift'])]
         record['extractionSHA256'] = manifest
         for name, source in files.items():
             path = generated / name
@@ -89,7 +95,7 @@ def main():
         if code or not match:
             raise RuntimeError('baseline runtime failed\n' + log)
         record['assertions'] = int(match[1])
-        for name, target, old, new, witness in MUTANTS:
+        for name, target, old, new, witness in mutants:
             entry = {'name': name, 'witness': witness, 'anchorMatches': files[target].count(old), 'caught': False}
             record['mutants'].append(entry)
             if entry['anchorMatches'] != 1:
@@ -115,9 +121,9 @@ def main():
                 code, log = compile_module('StreamProtocol', [str(generated / n) for n in protocol], name + '-restore')
                 if code:
                     raise RuntimeError('protocol restore failed\n' + log)
-        record['mutationCount'] = len(MUTANTS)
+        record['mutationCount'] = len(mutants)
         record['mutationsCaught'] = sum(m['caught'] for m in record['mutants'])
-        record['exitCode'] = 0 if record['mutationsCaught'] == len(MUTANTS) else 1
+        record['exitCode'] = 0 if record['mutationsCaught'] == len(mutants) else 1
     except Exception as error:
         record['error'] = str(error)
     finally:

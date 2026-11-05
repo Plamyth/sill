@@ -138,6 +138,7 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         catalogReplayTests()
         await pluginDiscoveryTests()
         await cleanupRecoveryTests()
+        await preparationWatchdogTests()
         let f = Fixture()
         let start = f.start(); f.receiver.control(start, fingerprint: Data([1])); await settle()
         expect(f.prepares == 1 && f.receiver.phase == .active, "duplicate-one-prepare")
@@ -246,6 +247,81 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         await nativeTests()
         await integrationTests()
         print("RESULT_ASSERTIONS \(assertions)")
+    }
+
+    @MainActor static func preparationWatchdogTests() async {
+        let delayed = Fixture(delayed: true)
+        _ = delayed.start()
+        await until({ delayed.continuation != nil }, "preparing-watchdog-entered")
+        let startedAt = delayed.now
+        delayed.now = startedAt + 2_071_123_125
+        delayed.receiver.checkWatchdog()
+        expect(delayed.receiver.phase == .preparing && delayed.render?.isOpen == true,
+               "preparing-survives-active-idle")
+        expect(!delayed.receiver.frame(packet(delayed.binding, grant: delayed.grantID),
+                                       fingerprint: Data([1]), arrived: delayed.now), "preparing-no-pcm-admission")
+        delayed.now = startedAt + 7_524_205_875
+        delayed.receiver.checkWatchdog()
+        expect(delayed.receiver.phase == .preparing, "preparing-within-client-budget")
+        delayed.finishPrepare()
+        await until({ delayed.receiver.phase == .active }, "delayed-prepare-active")
+        delayed.receiver.checkWatchdog()
+        expect(delayed.receiver.phase == .active, "active-idle-rebased-after-prepare")
+        delayed.now += 2_000_000_000
+        delayed.receiver.checkWatchdog()
+        expect(delayed.receiver.phase == .active, "active-idle-two-second-boundary")
+        expect(delayed.receiver.frame(packet(delayed.binding, grant: delayed.grantID),
+                                      fingerprint: Data([1]), arrived: delayed.now), "delayed-prepare-first-frame")
+        delayed.now += 2_000_000_000
+        delayed.receiver.checkWatchdog()
+        expect(delayed.receiver.phase == .active, "active-idle-rebased-after-frame")
+        delayed.now += 1
+        delayed.receiver.checkWatchdog()
+        await until({ delayed.receiver.phase == .off }, "delayed-active-idle-cleaned")
+        expect(delayed.sink.closes == 1, "delayed-active-idle-one-close")
+
+        for tickBeforeCompletion in [true, false] {
+            let timeout = Fixture(delayed: true)
+            _ = timeout.start()
+            await until({ timeout.continuation != nil }, "preparing-timeout-entered")
+            timeout.now += 10_000_000_000
+            if tickBeforeCompletion { timeout.receiver.checkWatchdog() }
+            if tickBeforeCompletion {
+                expect(timeout.receiver.phase == .retiring && timeout.render?.isOpen == false && timeout.sink.closes == 0,
+                       "preparing-budget-retires-pending-resource")
+            }
+            timeout.finishPrepare()
+            await until({ timeout.receiver.phase == .off }, "preparing-budget-late-cleanup")
+            expect(timeout.sink.closes == 1 && !timeout.states.contains(where: { $0.phase == .active }),
+                   "preparing-budget-never-enables-late-success")
+        }
+
+        let cancelled = Fixture(delayed: true)
+        let request = cancelled.start()
+        await until({ cancelled.continuation != nil }, "delayed-cancellation-entered")
+        cancelled.now += 3_000_000_000
+        cancelled.receiver.checkWatchdog()
+        cancelled.receiver.control(MicrophoneControl(operation: .stop, requestID: request.requestID,
+                                                     scope: cancelled.binding), fingerprint: Data([1]))
+        expect(cancelled.receiver.phase == .retiring && cancelled.render?.isOpen == false, "delayed-normal-cancel-closes-gate")
+        cancelled.finishPrepare()
+        await until({ cancelled.receiver.phase == .off }, "delayed-normal-cancel-cleaned")
+        expect(cancelled.sink.closes == 1 && !cancelled.states.contains(where: { $0.phase == .active }), "delayed-normal-cancel-no-enabled")
+
+        for loss in ["grant", "connection", "proof", "clock"] {
+            let invalid = Fixture(delayed: true)
+            _ = invalid.start()
+            await until({ invalid.continuation != nil }, "preparing-loss-entered")
+            if loss == "grant" { invalid.owner.grant!.revoke() }
+            if loss == "connection" { invalid.allow = false }
+            if loss == "proof" { invalid.render!.close() }
+            if loss == "clock" { invalid.now -= 1 }
+            invalid.receiver.checkWatchdog()
+            expect(invalid.receiver.phase == .retiring && invalid.render?.isOpen == false, "preparing-\(loss)-loss-closes-gate")
+            invalid.finishPrepare()
+            await until({ invalid.receiver.phase == .off }, "preparing-loss-cleaned")
+            expect(invalid.sink.closes == 1 && !invalid.states.contains(where: { $0.phase == .active }), "preparing-\(loss)-loss-no-enabled")
+        }
     }
 
     @MainActor static func cancellationTests() async {

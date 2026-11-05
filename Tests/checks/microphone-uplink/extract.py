@@ -13,9 +13,31 @@ def block(text, marker):
     return text[start:end]
 
 
-def fixture(root):
+def fixture(root, receiver_only=False):
     root = Path(root).resolve()
     here = root / 'Tests/checks/microphone-uplink'
+    if receiver_only:
+        paths = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
+        paths += [root / ('Sources/SillHost/' + name + '.swift') for name in
+                  ['HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink']]
+        files = {str(path.relative_to(root)): path.read_text() for path in paths}
+        for name in ['Network.swift', 'FakeHAL.swift']:
+            files[name] = (here / name).read_text()
+        main = (here / 'Main.swift').read_text()
+        entry = block(main, '@MainActor static func main()')
+        for call in ['catalogReplayTests()', 'await pluginDiscoveryTests()', 'await integrationTests()']:
+            assert entry.count(call) == 1, call
+            entry = entry.replace(call, '')
+        methods = [block(main, '@MainActor static func ' + name + '(') for name in
+                   ['preparationWatchdogTests', 'cancellationTests', 'nativeTests', 'pausedValidation',
+                    'cleanupRecoveryTests', 'retainedBlockLifetime']]
+        files['Main.swift'] = main[:main.index('@main struct Check')] + '@main struct Check {\n' + entry + '\n' + '\n'.join(methods) + '\n}\n'
+        coordinator = (root / 'Sources/SillHost/StreamCoordinator.swift').read_text()
+        files['Cleanup.swift'] = ('import Foundation\n@MainActor final class CoordinatorHarness {\n'
+            'let microphoneReceiver: HostMicrophoneReceiver\n'
+            'init(_ receiver: HostMicrophoneReceiver) { microphoneReceiver = receiver }\n'
+            + block(coordinator, 'package func retryMicrophoneCleanup(') + '\n}\n')
+        return files, {name: hashlib.sha256(value.encode()).hexdigest() for name, value in files.items()}
     paths = ['Sources/StreamProtocol/' + name + '.swift' for name in
              ['StreamMessage', 'AudioRouting', 'Switcher', 'MicrophoneUplink', 'Viewport', 'Compatibility', 'Input', 'Pointer', 'SafeText']]
     paths += ['Sources/SillHost/' + name + '.swift' for name in
