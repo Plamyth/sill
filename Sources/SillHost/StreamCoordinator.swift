@@ -2069,7 +2069,7 @@ package final class StreamCoordinator {
         server.commitVideo(epoch, catalog: listMessage(), admission: source == .desktop ? publicationAdmission : sourcePublicationAdmission,
             screenDemandIdentity: screenDemandIdentity) { [weak enc] in enc?.requestKeyframe() }
         if let desktopSelection {
-            print("[디스플레이 캡처] displayID=\(desktopSelection.displayID) inventoryID=\(desktopSelection.inventoryID.uuidString) videoEpoch=\(epoch.id) inputGeneration=\(generation) width=\(width) height=\(height)")
+            print("[디스플레이 캡처] phase=publicationRequested displayID=\(desktopSelection.displayID) inventoryID=\(desktopSelection.inventoryID.uuidString) videoEpoch=\(epoch.id) inputGeneration=\(generation) width=\(width) height=\(height)")
         }
         print("Streaming \(describe) at \(width)×\(height), \(fps) fps, \(streamBitrate / 1_000_000) Mbps")
         status.update {
