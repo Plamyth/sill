@@ -4,6 +4,11 @@ import StreamProtocol
 
 @MainActor
 final class VisionAppSession: ObservableObject {
+    private static var displayOpenings = VisionDisplaySelection.OpeningIntents()
+
+    static func issueDisplayOpening(_ target: VisionDisplaySelection.WindowTarget) -> VisionDisplaySelection.WindowTarget? {
+        displayOpenings.issue(target, now: ProcessInfo.processInfo.systemUptime)
+    }
     let client: StreamClient
     let input = VisionInputSession()
     let stats = ClientStatsReporter()
@@ -33,6 +38,9 @@ final class VisionAppSession: ObservableObject {
         client = StreamClient()
         #endif
         client.visionDisplaySelection.windowTarget = target
+        if let target, Self.displayOpenings.consume(target, now: ProcessInfo.processInfo.systemUptime) {
+            client.visionDisplaySelection.admitInitialWindowSelection(target)
+        }
         if !VisionReleaseTestContext.usesSceneLifecycle {
             message = "시뮬레이터 격리 테스트입니다. Mac 연결은 사용하지 않습니다."
             return

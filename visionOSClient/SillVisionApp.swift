@@ -212,7 +212,8 @@ struct SillVisionWorkspace: View {
                           let displayID = target.resolvedDisplayID(macID: client.session?.macID, catalog: client.visionDisplaySelection.catalog),
                           client.visionDisplaySelection.windowTarget(macID: client.session?.macID, displayID: displayID) == target,
                           client.visionDisplaySelection.observedDisplay != target.displayID else { return }
-                    openWindow(id: "mac", value: target)
+                    guard let opening = VisionAppSession.issueDisplayOpening(target) else { return }
+                    openWindow(id: "mac", value: opening)
                     newWindowChooserShown = false
                 }
             }, choose: { _ in }, cancel: {}, close: { newWindowChooserShown = false })

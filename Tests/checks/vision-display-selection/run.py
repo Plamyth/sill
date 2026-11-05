@@ -65,7 +65,8 @@ def prepare(root):
         'UI uses structured command': 'client.selectVisionDisplay(command)' in view and 'requestID: UUID(), displayID: display.id, token: token' in chooser,
         'new window picker preserves audio and current source': all(term not in block(view, 'private func openAdditionalDisplayChooser()') for term in
             ['setVisionDisplayModal', 'clearDraft', 'visionAudio', 'microphoneSourceWillChange', 'selectVisionDisplay']),
-        'window uses typed target value': 'for: VisionDisplaySelection.WindowTarget.self' in view and 'openWindow(id: "mac", value: target)' in view and 'openWindow(id: "mac")' not in view,
+        'window uses typed explicit opening value': 'for: VisionDisplaySelection.WindowTarget.self' in view and
+            'VisionAppSession.issueDisplayOpening(target)' in view and 'openWindow(id: "mac", value: opening)' in view and 'openWindow(id: "mac")' not in view,
         'pending and modal gate native input': '!client.visionDisplaySelection.inputBlocked' in (root / 'visionOSClient/VisionInputSession.swift').read_text(),
         'pending gates source and draft': '!visionDisplaySelection.inputBlocked' in request and '!visionDisplaySelection.inputBlocked' in block(stream, 'func captureVisionTextTarget()'),
         'automatic paths guarded for Vision': '#if os(visionOS)\n                if self.visionDisplaySelection.blocksDesktopRequest' in stream,

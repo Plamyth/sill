@@ -9,6 +9,7 @@ struct VisionDisplaySelection {
         let inventoryID: UUID
         let displayID: UInt32
         var stableDisplayIdentity: String? = nil
+        var openingID: UUID? = nil
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             guard lhs.macID == rhs.macID else { return false }
@@ -44,6 +45,39 @@ struct VisionDisplaySelection {
     }
     var windowTarget: WindowTarget?
     private var manualWindowTarget: WindowTarget?
+    private var initialWindowTarget: WindowTarget?
+
+    struct OpeningIntents {
+        private var pending: [UUID: (WindowTarget, TimeInterval)] = [:]
+        mutating func issue(_ target: WindowTarget, now: TimeInterval) -> WindowTarget? {
+            guard now.isFinite, now >= 0 else { return nil }
+            pending = pending.filter { now >= $0.value.1 && now - $0.value.1 < 15 }
+            var value = target
+            let id = UUID()
+            value.openingID = id
+            pending[id] = (value, now)
+            return value
+        }
+        mutating func consume(_ target: WindowTarget, now: TimeInterval) -> Bool {
+            guard let id = target.openingID, let (issued, at) = pending.removeValue(forKey: id),
+                  now.isFinite, now >= at, now - at < 15 else { return false }
+            return issued.macID == target.macID && issued.launchID == target.launchID &&
+                issued.inventoryID == target.inventoryID && issued.displayID == target.displayID &&
+                issued.stableDisplayIdentity == target.stableDisplayIdentity
+        }
+    }
+
+    mutating func admitInitialWindowSelection(_ target: WindowTarget) {
+        guard peerEpoch == nil, windowTarget == target else { return }
+        initialWindowTarget = target
+    }
+
+    private func initialSelectionMatches(macID: String, catalog: Catalog) -> Bool {
+        guard let target = initialWindowTarget, target == windowTarget else { return false }
+        return target.macID == macID && target.launchID == catalog.launchID &&
+            target.inventoryID == catalog.inventory &&
+            catalog.displays?.contains(where: { $0.id == target.displayID }) == true
+    }
 
     func windowTarget(macID: String?, displayID: UInt32) -> WindowTarget? {
         guard let macID, !macID.isEmpty, let catalog, catalog.capability == 1,
@@ -223,7 +257,8 @@ struct VisionDisplaySelection {
               let token else { return nil }
         let target: DisplayInfo?
         if let windowTarget {
-            guard independentWindowsAvailable, windowTarget.stableDisplayIdentity != nil,
+            guard independentWindowsAvailable,
+                  windowTarget.stableDisplayIdentity != nil || initialSelectionMatches(macID: macID, catalog: catalog),
                   windowTarget.matches(macID: macID, catalog: catalog) else { return nil }
             target = choices.first { $0.id == windowTarget.resolvedDisplayID(macID: macID, catalog: catalog) }
             if let previous = automaticInventories[inventory],
@@ -304,6 +339,7 @@ struct VisionDisplaySelection {
     mutating func bind(peerEpoch: UUID?) {
         guard self.peerEpoch != peerEpoch else { return }
         cancel(.peerChanged)
+        if self.peerEpoch != nil { initialWindowTarget = nil }
         self.peerEpoch = peerEpoch; catalog = nil; revision &+= 1
         manualWindowTarget = nil
         unresolved = false; modernSeen = false
@@ -424,7 +460,7 @@ struct VisionDisplaySelection {
             else if windowTarget != nil && !independentWindowsAvailable { code = .unsupportedCapability }
             else if let windowTarget,
                     command.automaticRevision != nil && !windowTarget.matches(macID: windowTarget.macID, catalog: catalog) { code = .staleScope }
-            else if let windowTarget,
+            else if command.automaticRevision != nil, let windowTarget,
                     let resolved = windowTarget.resolvedDisplayID(macID: windowTarget.macID, catalog: catalog),
                     resolved != command.displayID { code = .staleScope }
             else if !choices.contains(where: { $0.id == command.displayID }) { code = .unknownDisplay }
@@ -447,6 +483,9 @@ struct VisionDisplaySelection {
             if command.automaticRevision == nil {
                 windowTarget = self.windowTarget(macID: macID, displayID: command.displayID)
                 manualWindowTarget = windowTarget
+            } else if initialSelectionMatches(macID: target.macID, catalog: catalog) {
+                manualWindowTarget = target
+                initialWindowTarget = nil
             }
         }
         if let presented, catalog.epoch == presented, catalog.source == .desktop,

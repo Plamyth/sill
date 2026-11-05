@@ -791,7 +791,7 @@ var swapped = presentedB; swapped.activeDisplayID = 11
 windowB.observeVisionDisplays(swapped, from: peerB)
 check(!windowB.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: targetEpoch), "source replacement hides foreign display even with a presented epoch")
 let wrongPinnedCommand = VisionDisplaySelection.Command(requestID: UUID(), displayID: 11, token: windowB.visionDisplaySelection.token!)
-check(windowB.visionDisplaySelection.preview(wrongPinnedCommand).code == .staleScope, "manual and adjacent selection cannot retarget a pinned window")
+check(windowB.visionDisplaySelection.preview(wrongPinnedCommand).code == .ready, "fresh manual selection can retarget a pinned window")
 let (reopenedB, reopenedPeer) = client()
 reopenedB.session = .init(macID: "mac-A"); reopenedB.trustedDisplayPeer = true
 reopenedB.visionDisplaySelection.windowTarget = restoredB
@@ -877,6 +877,53 @@ check(recoveringClient.visionDisplaySelection.windowTargetPresented(macID: "mac-
 recoveringClient.bindVisionDisplays(to: nil)
 recoveringClient.observeVisionDisplays(legacyPresented, from: recoveringPeer)
 check(!recoveringClient.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: legacyEpoch), "P1 legacy manual admission never survives peer replacement")
+
+var openingIntents = VisionDisplaySelection.OpeningIntents()
+let openingTarget = openingIntents.issue(legacyTarget, now: 100)!
+check(openingIntents.consume(openingTarget, now: 101), "explicit window opening is consumed once")
+check(!openingIntents.consume(openingTarget, now: 102), "window opening replay has no authority")
+let expiredOpening = openingIntents.issue(legacyTarget, now: 103)!
+check(!openingIntents.consume(expiredOpening, now: 118), "expired window opening cannot authorize restored scene")
+let alteredOpening = openingIntents.issue(legacyTarget, now: 120)!
+var alteredTarget = alteredOpening
+alteredTarget = .init(macID: "foreign-Mac", launchID: alteredTarget.launchID,
+                      inventoryID: alteredTarget.inventoryID, displayID: alteredTarget.displayID,
+                      stableDisplayIdentity: nil, openingID: alteredTarget.openingID)
+check(!openingIntents.consume(alteredTarget, now: 121), "opening cannot be reassigned to another Mac")
+
+let newVirtual = StreamClient()
+newVirtual.session = .init(macID: "mac-A"); newVirtual.trustedDisplayPeer = true
+newVirtual.visionDisplaySelection.windowTarget = openingTarget
+newVirtual.visionDisplaySelection.admitInitialWindowSelection(openingTarget)
+let virtualPeer = NWConnection(); newVirtual.connection = virtualPeer
+newVirtual.admitVisionDisplays(lease: VisionWindowLease(window: UUID()), foreground: true)
+var initialVirtualCatalog = legacyCatalog
+initialVirtualCatalog.active = .none
+initialVirtualCatalog.launchID = openingTarget.launchID
+initialVirtualCatalog.displayInventoryID = openingTarget.inventoryID
+newVirtual.observeVisionDisplays(initialVirtualCatalog, from: virtualPeer)
+check(newVirtual.visionDisplaySelection.pending?.command.displayID == 22,
+      "first explicit virtual window requests its chosen screen without a second selection")
+newVirtual.releaseCallbacks.last!(true); drain()
+var freshVirtualPresented = legacyPresented
+freshVirtualPresented.launchID = openingTarget.launchID
+freshVirtualPresented.displayInventoryID = openingTarget.inventoryID
+newVirtual.observeVisionDisplays(freshVirtualPresented, from: virtualPeer)
+newVirtual.visionInputBinding = .presented(legacyEpoch); newVirtual.confirmVisionDisplayPresentation()
+check(newVirtual.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: legacyEpoch),
+      "first virtual window admits only its freshly observed video epoch")
+newVirtual.bindVisionDisplays(to: nil)
+newVirtual.observeVisionDisplays(initialVirtualCatalog, from: virtualPeer)
+check(newVirtual.visionDisplaySelection.pending == nil,
+      "virtual opening authority does not survive peer replacement")
+
+var retarget = model(); retarget.windowTarget = persistentB
+retarget.observe(.init(currentB))
+let toA = command(retarget, 11)
+check(retarget.begin(toA, macID: "mac-A").code == .releasing && retarget.windowTarget?.displayID == 11,
+      "valid B window accepts explicit A through the normal release transaction")
+check(!retarget.windowTargetPresented(macID: "mac-A", epoch: originalEpoch),
+      "explicit retarget never admits the old B image as A")
 
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
