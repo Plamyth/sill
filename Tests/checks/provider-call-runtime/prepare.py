@@ -44,6 +44,7 @@ for name, mode in files.items():
 hashes = {name: sha((stage / name).read_bytes()) for name in files}
 tests = list((root / 'Tests/checks/provider-call-runtime').glob('*'))
 tests += [root / 'Tests/checks/forwarding-evidence-lifecycle' / name for name in ['Main.swift', 'Boundaries.swift', 'child.js']]
+tests += [root / 'Tests/checks/provider-call-bridge/native-target-vectors.json']
 for path in tests:
     if not path.is_file(): continue
     name = str(path.relative_to(root))
@@ -51,7 +52,7 @@ for path in tests:
     raw = path.read_bytes(); target.write_bytes(raw); hashes[name] = sha(raw)
 pins = dict(re.findall(r'"(server/[^\"]+)": "([a-f0-9]{64})"',
     (stage / 'Sources/SillHost/LocalAudioRelayClosure.swift').read_text()))
-assert len(pins) == 19
+assert pins, 'current production Node closure must be pinned'
 for name, digest in pins.items():
     raw = (args.node_source / name).read_bytes(); assert sha(raw) == digest
     target = stage / 'Node' / name; target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(raw)

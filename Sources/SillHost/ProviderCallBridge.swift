@@ -30,7 +30,62 @@ enum ProviderCallFailure: Error {
 }
 
 
-struct ProviderCallTarget: Decodable, Equatable {
+enum ProviderCallTarget: Decodable, Equatable {
+    case webGuest(WebGuestTarget)
+    case nativeTarget(CodexRealtimeTarget)
+
+    private enum CodingKeys: String, CodingKey { case providerKind }
+    init(from decoder: Decoder) throws {
+        if try decoder.container(keyedBy: CodingKeys.self).contains(.providerKind) {
+            self = .nativeTarget(try CodexRealtimeTarget(from: decoder))
+        } else {
+            self = .webGuest(try WebGuestTarget(from: decoder))
+        }
+    }
+    func hash() throws -> String {
+        switch self {
+        case .webGuest(let target): return try target.hash()
+        case .nativeTarget(let target): return try target.hash()
+        }
+    }
+}
+
+struct CodexRealtimeTarget: Decodable, Equatable {
+    let schema: String
+    let providerKind: String
+    let providerInstanceId: String
+    let threadId: String
+    let voiceSessionId: String
+    let targetHash: String
+    private enum CodingKeys: String, CodingKey, CaseIterable {
+        case schema, providerKind, providerInstanceId, threadId, voiceSessionId, targetHash
+    }
+    init(from decoder: Decoder) throws {
+        try providerExactKeys(decoder, required: Set(CodingKeys.allCases.map(\.rawValue)))
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = try c.decode(String.self, forKey: .schema)
+        providerKind = try c.decode(String.self, forKey: .providerKind)
+        providerInstanceId = try c.decode(String.self, forKey: .providerInstanceId)
+        threadId = try c.decode(String.self, forKey: .threadId)
+        voiceSessionId = try c.decode(String.self, forKey: .voiceSessionId)
+        targetHash = try c.decode(String.self, forKey: .targetHash)
+        _ = try hash()
+    }
+    func hash() throws -> String {
+        guard schema == "ccr-codex-realtime-target-v1", providerKind == "codex-app-server",
+              [providerInstanceId, threadId, voiceSessionId].allSatisfy({ raw in
+                  guard let id = UUID(uuidString: raw) else { return false }
+                  return id.uuidString.lowercased() == raw.lowercased()
+              }) else { throw ProviderCallFailure.invalidTarget }
+        let bytes = try JSONSerialization.data(withJSONObject:
+            [schema, providerKind, providerInstanceId, threadId, voiceSessionId], options: [.withoutEscapingSlashes])
+        let computed = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        guard targetHash == computed else { throw ProviderCallFailure.invalidTarget }
+        return computed
+    }
+}
+
+struct WebGuestTarget: Decodable, Equatable {
     let profileId: String
     let leafId: String
     let guestId: UInt64

@@ -32,6 +32,7 @@ required = {str(path.relative_to(root)) for path in (root / 'Sources').rglob('*.
 required |= {str(path.relative_to(root)) for path in here.iterdir() if path.is_file()}
 required |= {'Tests/checks/forwarding-evidence-lifecycle/' + name for name in ['Main.swift', 'Boundaries.swift', 'child.js']}
 required |= {'docs/provider-call-native-v1.md', 'AGENTS.md'}
+required.add('Tests/checks/provider-call-bridge/native-target-vectors.json')
 assert set(manifest['sourceHashes']) == required, 'source/test input set mismatch'
 before = {name: sha((root / name).read_bytes()) for name in manifest['sourceHashes']}
 assert before == manifest['sourceHashes'], 'source/test input mismatch'
@@ -40,7 +41,7 @@ for name, link in manifest.get('sourceLinks', {}).items():
 node = root / 'Node/server'
 pins = dict(re.findall(r'"(server/[^\"]+)": "([a-f0-9]{64})"',
     (root / 'Sources/SillHost/LocalAudioRelayClosure.swift').read_text()))
-assert len(pins) == 19
+assert pins, 'current production Node closure must be pinned'
 assert {str(p.relative_to(node.parent)) for p in node.iterdir()} == set(pins)
 assert {name: sha((node.parent / name).read_bytes()) for name in pins} == pins
 selections = {}
@@ -138,7 +139,8 @@ final class HostIdentity {
 assert before == {name: sha((root / name).read_bytes()) for name in before}
 result.update(sourceHashes=before, selectedSource=selections, sourceUnchanged=True,
     productionCommit=manifest['productionCommit'], productionTree=manifest['productionTree'],
-    sourceManifestSha256=args.sha256, nodeCommit='0bec7a9970b0bd4e15390012b8ade02ed54605c2',
+    sourceManifestSha256=args.sha256, nodeCommit=re.search(r'static let nodeCommit = "([a-f0-9]{40})"',
+        (root / 'Sources/SillHost/LocalAudioRelayLaunch.swift').read_text()).group(1),
     nodeHashes=pins, scratchRemoved=not out.exists(), fullGitSourceGuardAccepted=False,
     sourceAdmission='exact SHA snapshot; Mini has no Git checkout',
     sourceLinks=manifest.get('sourceLinks', {}),

@@ -8,16 +8,21 @@ enum CheckError: Error { case setup(String) }
     let request: ProviderCallRequest
     let fixture: Fixture
     let challenge: [String: Any]
+    let provider: String
     var corruptStage = "", corruptField = "", corruptValue: Any = ""
     var hold = "", waiting = false, resume = false
     var calls: [String] = [], effects = 0, signatures = 0
     var onCall: ((String) -> Void)?
     var observedProof: [String: Any] = [:]
-    init(_ request: ProviderCallRequest, _ fixture: Fixture, ttl: Int = 1500) throws {
+    init(_ request: ProviderCallRequest, _ fixture: Fixture, ttl: Int = 1500, nativeTarget: [String: Any]? = nil) throws {
         self.request = request; self.fixture = fixture
-        let target: [String: Any] = ["profileId": "codex-control-room-chatgpt-dots", "leafId": "leaf-a",
+        let target: [String: Any] = nativeTarget ?? ["profileId": "codex-control-room-chatgpt-dots", "leafId": "leaf-a",
             "guestId": 17, "url": "https://chatgpt.com/dots/leaf-a", "timeOrigin": 1_700_000_000_123.5]
         let typed: ProviderCallTarget = try decode(target)
+        switch typed {
+        case .webGuest: provider = "chatgpt-dots-webguest"
+        case .nativeTarget: provider = "codex-app-server"
+        }
         challenge = ["schemaVersion": 1, "challenge": Base64URL.encode(Data(repeating: 7, count: 32)),
             "coreGeneration": UUID().uuidString.lowercased(), "requestId": request.requestId.uuidString.lowercased(),
             "target": target, "targetHash": try typed.hash(), "guestNowMs": 42.5, "remainingMilliseconds": ttl]
@@ -64,7 +69,7 @@ enum CheckError: Error { case setup(String) }
             }
             let result = try ProviderCallResult(requestId: self.request.requestId,
                 status: self.request.action == .start ? .started : .stopped, reason: "fixture_readback",
-                callSessionId: "fixture-session")
+                callSessionId: "fixture-session", provider: provider)
             reply["result"] = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result))
         default: throw CheckError.setup(op)
         }
@@ -108,7 +113,8 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
             f.events(1).components(separatedBy: "\"method\":\"\(method)\"").count - 1
         }
         func setup(_ name: String, ttl: Int = 1500, recovery: Bool = true,
-                   action: ProviderCallRequest.Action = .start, peer: Peer? = nil) async throws -> Setup {
+                   action: ProviderCallRequest.Action = .start, peer: Peer? = nil,
+                   nativeTarget: [String: Any]? = nil) async throws -> Setup {
             let f = try Fixture(name), p = peer ?? Peer("ab")
             guard await f.runtime.start(), let initial = await f.observe(p) else { throw CheckError.setup(name) }
             let intent = try AudioForwardingIntentRequest(pairedDeviceId: p.id, intentId: UUID(),
@@ -123,7 +129,7 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
             guard let session = await f.runtime.providerSession(viewer(p)) else { throw CheckError.setup("actual providerSession") }
             let r = try ProviderCallRequest(requestId: UUID(), action: action, expectedLeaseRevision: session.snapshot.revision,
                 pairedDeviceId: p.id, desiredInput: true, desiredOutput: true, callSessionId: action == .stop ? "fixture-session" : nil)
-            let core = try Core(r, f, ttl: ttl)
+            let core = try Core(r, f, ttl: ttl, nativeTarget: nativeTarget)
             let runtime = ProviderCallRuntime(identity: try HostIdentity(), recoveryReady: { recovery }, open: { _, _ in core })
             return .init(fixture: f, peer: p, session: session, request: r, core: core, runtime: runtime)
         }
@@ -135,6 +141,21 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
         func query(_ a: Setup, request: ProviderCallRequest? = nil, context: AudioForwardingConnectionContext? = nil) async -> ProviderCallState? {
             await a.runtime.exchange(.init(operation: .query, request: request ?? a.request),
                 context: context ?? viewer(a.peer), session: a.session)
+        }
+        let nativeFile = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("provider-call-bridge/native-target-vectors.json")
+        let nativeRows = try JSONSerialization.jsonObject(with: Data(contentsOf: nativeFile)) as! [String: Any]
+        for (index, row) in (nativeRows["vectors"] as! [[String: Any]]).enumerated() {
+            let target = row["target"] as! [String: Any]
+            let a = try await setup("native-signed-\(index)", nativeTarget: target)
+            let state = await perform(a)
+            check("native target passes existing signed dispatch and result readback", state?.result.status == .started &&
+                state?.result.provider == "codex-app-server" && state?.result.mediaProtection == "not_attested")
+            check("native dispatch binds exact prepared hash after two signatures", a.core.signatures == 2 && a.core.effects == 1 &&
+                a.core.observedProof["targetHash"] as? String == target["targetHash"] as? String)
+            check("native readback uses existing identity then dispatch then result order",
+                a.core.calls == ["provider.challenge", "provider.identity", "provider.dispatch", "provider.result"])
+            await a.fixture.finish()
         }
         do {
             let a = try await setup("ordered-release"), c = a.core, f = a.fixture

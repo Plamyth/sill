@@ -11,9 +11,11 @@ with tempfile.TemporaryDirectory(prefix='provider-bridge-') as temporary:
     subprocess.run(swift+['-emit-library','-emit-module','-module-name','StreamProtocol',
         *map(str,sorted((root/'Sources/StreamProtocol').glob('*.swift'))),'-o',str(output/'libStreamProtocol.dylib'),
         '-emit-module-path',str(output/'StreamProtocol.swiftmodule')],check=True)
-    model = (root/'Sources/SillHost/ProviderCallBridge.swift').read_text()
-    model = model[:model.index('struct ProviderCallSignedEnvelope:')]
+    bridge = (root/'Sources/SillHost/ProviderCallBridge.swift').read_text()
+    model = bridge[:bridge.index('struct ProviderCallSignedEnvelope:')]
+    model += bridge[bridge.index('struct ProviderCallChallenge:'):bridge.index('private struct ProviderIdentityBody:')]
     (output/'Models.swift').write_text(model)
     subprocess.run(swift+['-I',str(output),'-L',str(output),'-lStreamProtocol',str(output/'Models.swift'),
-        str(root/'Tests/checks/provider-call-bridge/Main.swift'),'-o',str(output/'checks')],check=True)
+        str(root/'Tests/checks/provider-call-bridge/Main.swift'),
+        str(root/'Tests/checks/provider-call-bridge/NativeTargets.swift'),'-o',str(output/'checks')],check=True)
     subprocess.run([str(output/'checks')],env={**os.environ,'DYLD_LIBRARY_PATH':str(output)},check=True)

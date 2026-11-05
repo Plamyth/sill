@@ -30,6 +30,10 @@ import StreamProtocol
         let raw = original.replacingOccurrences(of: "\"callSessionId\":null", with: "\"callSessionId\":\"\\uD800\"")
         check(raw != original, "surrogate fixture actually changes input bytes")
         check((try? JSONDecoder().decode(ProviderCallRequest.self, from: Data(raw.utf8))) == nil, "unpaired UTF16 is rejected before digest encoding")
-        print("PASS \(count) provider request/encoding assertions; no host/key/device/audio actions")
+        print("PASS \(count) provider request/encoding assertions")
+        let prior = count
+        try nativeTargets(request: JSONDecoder().decode(ProviderCallRequest.self,
+            from: JSONSerialization.data(withJSONObject: base)))
+        print("PASS \(count - prior) typed target/result assertions; no host/key/device/audio actions")
     }
 }

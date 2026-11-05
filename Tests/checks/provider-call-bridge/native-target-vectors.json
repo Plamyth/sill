@@ -1,0 +1,35 @@
+{
+  "contractConfirmedWithCoreOwner": true,
+  "vectors": [
+    {
+      "target": {
+        "schema": "ccr-codex-realtime-target-v1",
+        "providerKind": "codex-app-server",
+        "providerInstanceId": "675e086f-9672-4f3f-a8d2-ff690ac6cae0",
+        "threadId": "01a13005-ff61-7780-b0e8-6dc171de1c9d",
+        "voiceSessionId": "a3c96a77-bf2a-4c10-9937-8096e843643e",
+        "targetHash": "f9ad2dcbdbb7cc56768603bc5a05935bd613fa71dea4c53419a8dc13d2da0ff2"
+      },
+      "canonicalUTF8": "[\"ccr-codex-realtime-target-v1\",\"codex-app-server\",\"675e086f-9672-4f3f-a8d2-ff690ac6cae0\",\"01a13005-ff61-7780-b0e8-6dc171de1c9d\",\"a3c96a77-bf2a-4c10-9937-8096e843643e\"]",
+      "sha256": "f9ad2dcbdbb7cc56768603bc5a05935bd613fa71dea4c53419a8dc13d2da0ff2"
+    },
+    {
+      "target": {
+        "schema": "ccr-codex-realtime-target-v1",
+        "providerKind": "codex-app-server",
+        "providerInstanceId": "675E086F-9672-4F3F-A8D2-FF690AC6CAE0",
+        "threadId": "01A13005-FF61-7780-B0E8-6DC171DE1C9D",
+        "voiceSessionId": "A3C96A77-BF2A-4C10-9937-8096E843643E",
+        "targetHash": "c58ba9f8033a8b8194c8dd91b77fd0ed675b4fadb52eeeb5926ada373cffedbd"
+      },
+      "canonicalUTF8": "[\"ccr-codex-realtime-target-v1\",\"codex-app-server\",\"675E086F-9672-4F3F-A8D2-FF690AC6CAE0\",\"01A13005-FF61-7780-B0E8-6DC171DE1C9D\",\"A3C96A77-BF2A-4C10-9937-8096E843643E\"]",
+      "sha256": "c58ba9f8033a8b8194c8dd91b77fd0ed675b4fadb52eeeb5926ada373cffedbd"
+    }
+  ],
+  "rejectIdentifiers": [
+    "",
+    "../thread",
+    "thread with space",
+    "{675e086f-9672-4f3f-a8d2-ff690ac6cae0}"
+  ]
+}
