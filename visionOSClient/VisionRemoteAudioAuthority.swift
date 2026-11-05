@@ -117,6 +117,73 @@ final class VisionRemoteAudioStore {
         self.defaults = defaults
         model = VisionRemoteAudioAuthority(intent: .load(defaults))
     }
+    private struct ProviderCallRecord {
+        var owner: UUID?
+        var revision: UUID
+        var state: VisionProviderCall.HandoffState
+    }
+    private var providerCalls: [String: ProviderCallRecord] = [:]
+    private var providerCallTickets: [UUID: UUID] = [:]
+
+    private func providerCallPeerIsCurrent(_ client: StreamClient) -> Bool {
+        guard model.owner == client.visionAudioOwnerID,
+              client.visionAudioIntentContext.admitted,
+              let peer = client.connection,
+              client.authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
+              let key = client.visionAudioTrustedHostKey,
+              key.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              model.contexts[client.visionAudioOwnerID]?.hostKey == key,
+              model.contexts[client.visionAudioOwnerID]?.scope == client.visionAudioIntentContext.scope,
+              client.visionProviderCall.hostKey == key,
+              client.visionProviderCall.connection == client.visionAudioIntentConnection else { return false }
+        return true
+    }
+
+    func providerCallIsCurrent(_ client: StreamClient) -> Bool {
+        guard providerCallPeerIsCurrent(client), let key = client.visionAudioTrustedHostKey,
+              let record = providerCalls[key] else { return false }
+        return record.owner == client.visionAudioOwnerID && providerCallTickets[client.visionAudioOwnerID] == record.revision
+    }
+
+    @discardableResult
+    func reconcileProviderCall(_ client: StreamClient) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard providerCallPeerIsCurrent(client), let key = client.visionAudioTrustedHostKey else { return false }
+        if providerCallIsCurrent(client) { return true }
+        let id = client.visionAudioOwnerID
+        if var record = providerCalls[key] {
+            record.owner = id; record.revision = UUID()
+            providerCalls[key] = record
+            providerCallTickets[id] = record.revision
+            client.visionProviderCall.restoreHandoff(record.state)
+        } else {
+            let revision = UUID()
+            providerCalls[key] = .init(owner: id, revision: revision, state: client.visionProviderCall.handoffState)
+            providerCallTickets[id] = revision
+        }
+        NotificationCenter.default.post(name: Self.changed, object: nil)
+        return true
+    }
+
+    @discardableResult
+    func saveProviderCall(_ client: StreamClient) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard providerCallIsCurrent(client), let key = client.visionAudioTrustedHostKey,
+              var record = providerCalls[key] else { return false }
+        record.state = client.visionProviderCall.handoffState
+        providerCalls[key] = record
+        NotificationCenter.default.post(name: Self.changed, object: nil)
+        return true
+    }
+
+    private func revokeProviderCall(_ owner: UUID) {
+        providerCallTickets.removeValue(forKey: owner)
+        for key in Array(providerCalls.keys) where providerCalls[key]?.owner == owner {
+            providerCalls[key]?.owner = nil
+            providerCalls[key]?.revision = UUID()
+        }
+    }
+
     private var clients: [UUID: Client] = [:]
     private var refreshing = false
     private var permissionOwner: UUID?
@@ -153,6 +220,7 @@ final class VisionRemoteAudioStore {
     }
 
     func retire(_ client: StreamClient) {
+        revokeProviderCall(client.visionAudioOwnerID)
         revokeActual(client)
         clients.removeValue(forKey: client.visionAudioOwnerID)
         model.update(client.visionAudioOwnerID, context: nil)
@@ -281,6 +349,7 @@ final class VisionRemoteAudioStore {
         }
         _ = model.advance(cleanupReady: cleanupReady())
         if previousOwner != model.owner {
+            if let previousOwner { revokeProviderCall(previousOwner) }
             NotificationCenter.default.post(name: Self.changed, object: nil)
         }
         if catalogEpoch != model.epoch {
@@ -304,6 +373,7 @@ final class VisionRemoteAudioStore {
             selected.reconcileVisionForwarding(manual: true)
         }
         guard let owner = model.owner, let client = clients[owner]?.value else { return false }
+        _ = reconcileProviderCall(client)
         let nativeManual = pendingNativeSelection?.hostKey == client.visionAudioTrustedHostKey
         if nativeManual { pendingNativeSelection = nil }
         client.reconcileVisionForwarding(manual: nativeManual)

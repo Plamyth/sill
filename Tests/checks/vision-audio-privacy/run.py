@@ -17,29 +17,34 @@ command = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-module-cache-pat
            str(root / 'Tests/checks/vision-audio-privacy/main.swift'), '-o', str(exe)]
 source = (root / 'visionOSClient/VisionRemoteAudioAuthority.swift').read_text()
 store = source[source.index('final class VisionRemoteAudioStore {'):source.rindex('\n#endif')]
-(output / 'Store.swift').write_text('import Foundation\n' + store)
+(output / 'Store.swift').write_text('import Foundation\nimport StreamProtocol\n' + store)
 client = (root / 'iOSClient/StreamClient.swift').read_text()
 start = client.index('    func receiveVisionAudioCatalogAcknowledgement(')
 end = client.index('    func updateVisionMacAudioRoutes(', start)
 transport = client[start:end]
 # Bind the production singleton call to this fixture's isolated store; method bodies are otherwise unchanged.
 transport = transport.replace('VisionRemoteAudioStore.shared', 'store')
-(output / 'CatalogTransport.swift').write_text('import Foundation\nextension StreamClient {\n' + transport + '}\n')
+(output / 'CatalogTransport.swift').write_text('import Foundation\nimport StreamProtocol\nextension StreamClient {\n' + transport + '}\n')
 intent = (root / 'visionOSClient/VisionRemoteAudioIntent.swift').read_text()
 start = intent.index('    func observeVisionAudioPrivacy(')
 end = intent.index('    func reconcileVisionAudioIntent(', start)
 privacy_observation = intent[start:end]
 observation = privacy_observation.replace('VisionRemoteAudioStore.shared', 'store')
-(output / 'PrivacyObservation.swift').write_text('import Foundation\nextension StreamClient {\n' + observation + '}\n')
+(output / 'PrivacyObservation.swift').write_text('import Foundation\nimport StreamProtocol\nextension StreamClient {\n' + observation + '}\n')
 (output / 'main.swift').write_bytes((root / 'Tests/checks/vision-audio-privacy/adapter-main.swift').read_bytes())
+protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
+protocol_command = ['/usr/bin/xcrun', 'swiftc', '-package-name', 'Sill', '-module-cache-path', str(output/'cache'),
+    '-emit-module', '-emit-library', '-module-name', 'StreamProtocol', *map(str, protocol),
+    '-o', str(output/'libStreamProtocol.dylib'), '-emit-module-path', str(output/'StreamProtocol.swiftmodule')]
 adapter = ['/usr/bin/xcrun', 'swiftc', '-swift-version', '5', '-module-cache-path', str(output / 'cache'),
+           '-I', str(output), '-L', str(output), '-lStreamProtocol',
+           '-Xlinker', '-rpath', '-Xlinker', str(output),
+           str(root / 'visionOSClient/VisionProviderCall.swift'),
+           str(root / 'visionOSClient/VisionAudioForwarding.swift'),
            str(root / 'visionOSClient/VisionRemoteAudioIntent.swift'),
            str(root / 'visionOSClient/VisionRemoteAudioAuthority.swift'), str(output / 'Store.swift'),
            str(root / 'Tests/checks/vision-audio-privacy/adapter.swift'), str(output / 'CatalogTransport.swift'),
-           str(output / 'PrivacyObservation.swift'),
-           *[str(root / 'Sources/StreamProtocol' / name) for name in
-             ['StreamMessage.swift', 'Switcher.swift', 'Sentry.swift', 'SentryControl.swift', 'TestDestinations.swift', 'AudioPrivacy.swift', 'AudioRouting.swift']], str(output / 'main.swift'),
-           '-o', str(output / 'adapter')]
+           str(output / 'PrivacyObservation.swift'), str(output / 'main.swift'), '-o', str(output / 'adapter')]
 server = (root / 'Sources/SillHost/StreamServer.swift').read_text()
 start = server.index('    func sendMicrophoneCatalog(')
 end = server.index('    func sendMicrophone(', start)
@@ -76,7 +81,7 @@ result = {'scope': __doc__, 'commands': [], 'exitCode': 1,
           'privacyObservationSHA256': hashlib.sha256(observation.encode()).hexdigest(),
           'adapterBoundary': 'Actual shared store copied verbatim. Inert StreamClient, player, microphone and hardware cleanup readback; no native graph, transport, OS permission or UI acceptance.'}
 for label, args in [('compile', command), ('policy', [str(exe)]),
-                    ('adapter-compile', adapter), ('adapter', [str(output / 'adapter')]),
+                    ('protocol', protocol_command), ('adapter-compile', adapter), ('adapter', [str(output / 'adapter')]),
                     ('catalog-server-compile', catalog_adapter), ('catalog-server', [str(catalog_dir / 'adapter')])]:
     run = subprocess.run(args, capture_output=True, text=True, timeout=90)
     (output / (label + '.log')).write_text(run.stdout + run.stderr)

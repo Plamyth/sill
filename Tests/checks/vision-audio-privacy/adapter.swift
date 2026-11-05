@@ -1,4 +1,5 @@
 import Foundation
+import StreamProtocol
 
 final class FixtureQueue {
     var work: [() -> Void] = []
@@ -38,7 +39,18 @@ struct InertForwarding {
     func permits(_ direction: VisionRemoteAudioIntent.Direction) -> Bool { true }
 }
 final class StreamClient {
+    #if CALL_HANDOFF_FIXTURE
+    var visionForwarding: VisionAudioForwarding?
+    var sentProvider: [ProviderCallControl] = []
+    var visionForwardingDesire: VisionRemoteAudioIntent.Desire {
+        .init(playback: visionPlaybackDesired, microphone: visionMicrophoneDesired)
+    }
+    func sendVisionProviderCall(_ control: ProviderCallControl, to peer: NWConnection) { sentProvider.append(control) }
+    #else
     var visionForwarding: InertForwarding? = InertForwarding()
+    #endif
+    var visionAudioIntentConnection: UUID { context.scope!.connection }
+    var visionProviderCall = VisionProviderCall(connection: UUID())
     var visionPlaybackDesired: Bool { store.model.intent.desired(.playback, hostKey: context.hostKey) }
     var visionMicrophoneDesired: Bool { store.model.intent.desired(.microphone, hostKey: context.hostKey) }
     var nativeSelections = 0
@@ -49,7 +61,8 @@ final class StreamClient {
     var context: VisionRemoteAudioIntent.Context
     let queue = FixtureQueue()
     var connection: NWConnection? = NWConnection()
-    var authenticatedVisionMacAudioPeer: ObjectIdentifier? { connection.map(ObjectIdentifier.init) }
+    var authenticationCurrent = true
+    var authenticatedVisionMacAudioPeer: ObjectIdentifier? { authenticationCurrent ? connection.map(ObjectIdentifier.init) : nil }
     var visionWireBinding: (binding: FixtureBinding, unused: Bool)? {
         context.scope.map { (FixtureBinding(epoch: FixtureEpoch(id: $0.video)), false) }
     }
@@ -103,6 +116,8 @@ final class StreamClient {
         context.nativeBindingReady = true
         context.protected = true; context.cleanupReady = true; context.playbackAvailable = true
         context.microphoneAvailable = true; context.recordPermissionGranted = true
+        visionProviderCall.observe(connection: visionAudioIntentConnection, capability: 1, hostKey: key,
+                                   providerCallKinds: [ProviderCallKind.nativeCodex.rawValue, ProviderCallKind.chatgptDots.rawValue])
     }
     func stopVisionMicrophoneActual() { microphoneStops += 1 }
     func toggleVisionMicrophone() { microphoneStarts += 1 }

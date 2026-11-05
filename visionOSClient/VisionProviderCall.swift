@@ -77,6 +77,35 @@ struct VisionProviderCall {
         let sentAt: TimeInterval
         let expiresAt: TimeInterval
     }
+    struct HandoffState {
+        let target: VisionCallTarget
+        let request: ProviderCallRequest?
+        let providerKind: ProviderCallKind?
+        let result: ProviderCallResult?
+        let activeCall: ProviderCallResult?
+        let firstSentAt: TimeInterval?
+        let queries: Int
+        let lastQueryAt: TimeInterval?
+    }
+    var handoffState: HandoffState {
+        .init(target: target, request: request, providerKind: requestProviderKind, result: result,
+              activeCall: activeCall, firstSentAt: firstSentAt, queries: queries, lastQueryAt: lastQueryAt)
+    }
+    private(set) var automaticQueriesAllowed = true
+
+    mutating func restoreHandoff(_ saved: HandoffState) {
+        pending = nil
+        nativePreparation = nil
+        automaticQueriesAllowed = false
+        request = saved.request; requestProviderKind = saved.providerKind
+        result = saved.result; activeCall = saved.activeCall
+        firstSentAt = saved.firstSentAt; queries = saved.queries; lastQueryAt = saved.lastQueryAt
+        if let request, let kind = requestProviderKind, result == nil || result?.status == .pending {
+            result = try? .init(requestId: request.requestId, status: .unknown,
+                reason: "provider_window_changed", provider: kind.rawValue)
+        }
+        if !canChangeTarget { target = saved.target }
+    }
     private(set) var connection: UUID
     private(set) var target: VisionCallTarget
     private(set) var supported = false
@@ -168,7 +197,7 @@ struct VisionProviderCall {
             guard let active = selectedActiveCall, active.provider == kind.rawValue,
                   active.callSessionId != nil, active.callSessionId == value.callSessionId else { return nil }
         }
-        request = value; requestProviderKind = kind
+        request = value; requestProviderKind = kind; automaticQueriesAllowed = true
         result = nil; firstSentAt = now; queries = 0; lastQueryAt = nil
         return enqueue(.init(operation: .perform, request: value, providerKind: kind), now: now)
     }
@@ -295,36 +324,39 @@ extension StreamClient {
     }
 
     var visionProviderCanStart: Bool {
-        VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID &&
+        VisionRemoteAudioStore.shared.providerCallIsCurrent(self) &&
             visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.activeCall == nil &&
             visionForwarding?.binding != nil && visionAudioIntentContext.admitted
     }
     var visionProviderCanStop: Bool {
-        VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID &&
+        VisionRemoteAudioStore.shared.providerCallIsCurrent(self) &&
             visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.selectedActiveCall != nil &&
             visionProviderCall.selectedActiveCall?.callSessionId != nil && visionForwarding?.providerCallSnapshot != nil && visionAudioIntentContext.admitted
     }
     func performVisionProviderCall(_ action: ProviderCallRequest.Action) {
-        guard action == .start ? visionProviderCanStart : visionProviderCanStop,
+        guard VisionRemoteAudioStore.shared.reconcileProviderCall(self),
+              action == .start ? visionProviderCanStart : visionProviderCanStop,
               let peer = connection, authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
               let model = visionForwarding, let snapshot = model.providerCallSnapshot,
               let request = try? ProviderCallRequest(requestId: UUID(), action: action,
                 expectedLeaseRevision: snapshot.revision, pairedDeviceId: model.device,
                 desiredInput: visionForwardingDesire.microphone, desiredOutput: visionForwardingDesire.playback,
                 callSessionId: action == .stop ? visionProviderCall.selectedActiveCall?.callSessionId : nil),
-              let control = visionProviderCall.perform(request) else { return }
+              let control = visionProviderCall.perform(request),
+              VisionRemoteAudioStore.shared.saveProviderCall(self) else { return }
         sendVisionProviderCall(control, to: peer)
     }
     func observeVisionProviderCalls(_ list: WindowList, from peer: NWConnection) {
         guard connection === peer else { return }
         visionProviderCall.observe(connection: visionAudioIntentConnection, capability: list.providerCalls, hostKey: visionAudioTrustedHostKey,
                                    providerCallKinds: list.providerCallKinds)
+        _ = VisionRemoteAudioStore.shared.reconcileProviderCall(self)
         scheduleVisionProviderQuery(peer)
     }
     private func sendVisionProviderCall(_ control: ProviderCallControl, to peer: NWConnection) {
         let generation = visionAudioIntentConnection
         guard control.providerKind == visionProviderCall.target.providerKind,
-              VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID,
+              VisionRemoteAudioStore.shared.providerCallIsCurrent(self),
               visionProviderCall.connection == generation, let pending = visionProviderCall.pending else { return }
         let payload = Wire.encode(control)
         guard !payload.isEmpty, payload.count <= StreamMessage.clientPayloadLimit(for: .providerCallControl) else { return }
@@ -336,6 +368,7 @@ extension StreamClient {
         DispatchQueue.main.asyncAfter(deadline: .now() + remaining) { [weak self, weak peer] in
             guard let self, let peer, self.connection === peer, self.visionAudioIntentConnection == generation,
                   self.visionProviderCall.timeout(pending) else { return }
+            _ = VisionRemoteAudioStore.shared.saveProviderCall(self)
             peer.cancel()
             self.connectionLost(peer, error: .posix(.ETIMEDOUT))
         }
@@ -345,8 +378,10 @@ extension StreamClient {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak peer] in
             guard let self, let peer, self.connection === peer, self.visionAudioIntentConnection == generation,
                   self.authenticatedVisionMacAudioPeer == ObjectIdentifier(peer), self.visionAudioIntentContext.admitted,
-                  VisionRemoteAudioStore.shared.model.owner == self.visionAudioOwnerID,
-                  let control = self.visionProviderCall.query() else { return }
+                  VisionRemoteAudioStore.shared.providerCallIsCurrent(self),
+                  self.visionProviderCall.automaticQueriesAllowed,
+                  let control = self.visionProviderCall.query(),
+                  VisionRemoteAudioStore.shared.saveProviderCall(self) else { return }
             self.sendVisionProviderCall(control, to: peer)
         }
     }
@@ -358,12 +393,13 @@ extension StreamClient {
                   let state = Wire.decode(ProviderCallState.self, from: data) else { return }
             guard self.authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
                   self.visionAudioIntentContext.admitted,
-                  VisionRemoteAudioStore.shared.model.owner == self.visionAudioOwnerID,
+                  VisionRemoteAudioStore.shared.providerCallIsCurrent(self),
                   self.visionProviderCall.hostKey == self.visionAudioTrustedHostKey else {
                 _ = self.visionProviderCall.drain(state, from: self.visionAudioIntentConnection)
                 return
             }
-            guard self.visionProviderCall.receive(state, from: self.visionAudioIntentConnection) else { return }
+            guard self.visionProviderCall.receive(state, from: self.visionAudioIntentConnection),
+                  VisionRemoteAudioStore.shared.saveProviderCall(self) else { return }
             self.scheduleVisionProviderQuery(peer)
         }
         return true

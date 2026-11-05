@@ -10,7 +10,7 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[3]
-suites = ['vision-provider-call'] if '--provider-only' in sys.argv else [
+suites = ['vision-provider-call', 'vision-audio-privacy'] if '--handoff-only' in sys.argv else ['vision-provider-call'] if '--provider-only' in sys.argv else [
     'vision-provider-call', 'vision-microphone-permission', 'vision-audio-privacy']
 if '--remote' in sys.argv:
     with tempfile.TemporaryDirectory(prefix='vision-voice-checks-') as scratch:
@@ -47,10 +47,11 @@ with tempfile.TemporaryDirectory(prefix='vision-voice-input-') as staging:
         shutil.copyfile(path, destination)
     command = ['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run', '--source', staging,
                '--owner', os.environ.get('CODEX_THREAD_ID', 'vision-native-voice-20261105'),
-               '--job', 'vision-native-stop-recovery-contract', '--',
+               '--job', 'vision-call-window-handoff-20261105', '--',
                'python3', '-B', 'Tests/checks/vision-provider-call/mini.py', '--remote']
-    if '--provider-only' in sys.argv:
-        command.append('--provider-only')
+    for flag in ['--provider-only', '--handoff-only']:
+        if flag in sys.argv:
+            command.append(flag)
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)
 record = dict(exitCode=result.returncode, stdout=result.stdout, stderr=result.stderr,
               sourceSHA256=before, sourceUnchanged=all(hashlib.sha256((root / p).read_bytes()).hexdigest() == h for p, h in before.items()),

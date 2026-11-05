@@ -20,6 +20,7 @@ final class StreamClient {
     var sent: [ProviderCallControl] = []
     init(_ call: VisionProviderCall, _ forwarding: VisionAudioForwarding) {
         visionProviderCall = call; visionForwarding = forwarding
+        visionAudioIntentConnection = call.connection
         visionAudioIntentContext.hostKey = visionAudioTrustedHostKey
         visionAudioIntentContext.scope = .init(connection: UUID(), window: UUID(), admission: UUID(),
             video: UUID(), foreground: UUID(), privacy: 1)
@@ -35,6 +36,9 @@ final class VisionRemoteAudioStore {
     static let shared = VisionRemoteAudioStore()
     struct Model { var owner: UUID? }
     var model = Model()
+    func providerCallIsCurrent(_ client: StreamClient) -> Bool { model.owner == client.visionAudioOwnerID }
+    func reconcileProviderCall(_ client: StreamClient) -> Bool { providerCallIsCurrent(client) }
+    func saveProviderCall(_ client: StreamClient) -> Bool { providerCallIsCurrent(client) }
 }
 var now = 100.0
 let connection = UUID()

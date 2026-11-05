@@ -1,4 +1,5 @@
 import Foundation
+import StreamProtocol
 var checks = 0
 func check(_ value: @autoclosure () -> Bool, _ name: String) {
     checks += 1
