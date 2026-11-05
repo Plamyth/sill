@@ -1,0 +1,6 @@
+todo.md
+validation-*.json
+validation-*.log
+sdk-check.json
+native-media-build-*/
+mini-input-*/
