@@ -12,6 +12,37 @@ struct ProviderCallSession {
 }
 
 @MainActor
+struct ProviderCallNativeReadback {
+    let request: ProviderCallRequest
+    let target: CodexRealtimeTarget
+    let coreGeneration: UUID
+    let result: ProviderCallResult
+    let context: AudioForwardingConnectionContext
+    let session: ProviderCallSession
+    fileprivate let authority: LocalAudioRelay.ProviderAuthorityIdentity
+
+    fileprivate init(request: ProviderCallRequest, target: CodexRealtimeTarget, coreGeneration: UUID,
+                     result: ProviderCallResult, context: AudioForwardingConnectionContext,
+                     session: ProviderCallSession, authority: LocalAudioRelay.ProviderAuthorityIdentity) {
+        self.request = request; self.target = target; self.coreGeneration = coreGeneration
+        self.result = result; self.context = context; self.session = session; self.authority = authority
+    }
+
+    func isCurrent() async -> Bool {
+        let current = { !Task.isCancelled && context.isCurrent() && session.admitted() &&
+            authority == session.relay.providerAuthorityIdentity }
+        guard current(), let snapshot = await session.readSnapshot(), current() else { return false }
+        return providerSameSnapshot(snapshot, session.snapshot) && request.matches(snapshot)
+    }
+}
+
+@MainActor
+enum ProviderCallNativeEvent {
+    case stopRequested(request: ProviderCallRequest, context: AudioForwardingConnectionContext)
+    case readback(ProviderCallNativeReadback)
+}
+
+@MainActor
 final class ProviderCallRuntime {
     private final class Record {
         enum Stage { case preflight, authority }
@@ -36,13 +67,15 @@ final class ProviderCallRuntime {
     private let identity: HostIdentity
     private let recoveryReady: @MainActor () async -> Bool
     private let commandPath: String
+    private let onNativeEvent: @MainActor (ProviderCallNativeEvent) -> Void
     private let open: @MainActor (String, TimeInterval) async throws -> any ProviderCallTransport
 
-    init(identity: HostIdentity, recoveryReady: @escaping @MainActor () async -> Bool = { await ProviderCallRecovery.ready() },
+    init(identity: HostIdentity, onNativeEvent: @escaping @MainActor (ProviderCallNativeEvent) -> Void = { _ in },
+         recoveryReady: @escaping @MainActor () async -> Bool = { await ProviderCallRecovery.ready() },
          open: @escaping @MainActor (String, TimeInterval) async throws -> any ProviderCallTransport = {
              try await ProviderCallSocket.open(path: $0, until: $1)
          }) {
-        self.identity = identity; self.recoveryReady = recoveryReady
+        self.identity = identity; self.recoveryReady = recoveryReady; self.onNativeEvent = onNativeEvent
         self.open = open
         commandPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/CodexControlRoom/command.sock").path
@@ -132,6 +165,10 @@ final class ProviderCallRuntime {
             try identityReply.validate(challenge, request: request)
             guard current(), let initial = await session.readSnapshot(), current(),
                   providerSameSnapshot(initial, session.snapshot) else { throw ProviderCallFailure.superseded }
+            if record.providerKind == .nativeCodex, request.action == .stop {
+                onNativeEvent(.stopRequested(request: request, context: context))
+                guard current() else { throw ProviderCallFailure.superseded }
+            }
             record.stage = .authority
             switch await session.relay.providerAcquire(request, challenge: challenge, challengeStartedAt: challengeStarted,
                 snapshot: initial, peer: session.peer, credential: session.credential, admission: current) {
@@ -173,6 +210,12 @@ final class ProviderCallRuntime {
             guard value.status != .pending else { return try result(.unknown, "provider_readback_timeout") }
             guard value.status != .started || request.action == .start,
                   value.status != .stopped || request.action == .stop else { throw ProviderCallFailure.invalidFields }
+            if case .nativeTarget(let target) = challenge.target {
+                onNativeEvent(.readback(.init(request: request, target: target,
+                    coreGeneration: challenge.coreGeneration, result: value, context: context,
+                    session: session, authority: record.authority)))
+                guard current() else { throw ProviderCallFailure.superseded }
+            }
             return value
         } catch {
             if let approval, !released { _ = await session.relay.providerRelease(approval, outcome: .unknown) }

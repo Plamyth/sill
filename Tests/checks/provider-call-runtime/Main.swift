@@ -100,6 +100,8 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
         connectionID: peer.connection, connectionIsCurrent: { peer.live }, isCurrent: { peer.live })
 }
 
+@MainActor final class NativeEvents { var values: [ProviderCallNativeEvent] = [] }
+
 @MainActor struct Setup {
     let fixture: Fixture
     let peer: Peer
@@ -107,6 +109,7 @@ func decode<T: Decodable>(_ object: [String: Any]) throws -> T {
     let request: ProviderCallRequest
     let core: Core
     let runtime: ProviderCallRuntime
+    let nativeEvents: NativeEvents
 }
 
 
@@ -192,8 +195,10 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
             let r = try ProviderCallRequest(requestId: UUID(), action: action, expectedLeaseRevision: session.snapshot.revision,
                 pairedDeviceId: p.id, desiredInput: true, desiredOutput: true, callSessionId: action == .stop ? (nativeTarget?["voiceSessionId"] as? String ?? "fixture-session") : nil)
             let core = try Core(r, f, ttl: ttl, nativeTarget: nativeTarget)
-            let runtime = ProviderCallRuntime(identity: try HostIdentity(), recoveryReady: { recovery }, open: { _, _ in core })
-            return .init(fixture: f, peer: p, session: session, request: r, core: core, runtime: runtime)
+            let events = NativeEvents()
+            let runtime = ProviderCallRuntime(identity: try HostIdentity(), onNativeEvent: { events.values.append($0) },
+                recoveryReady: { recovery }, open: { _, _ in core })
+            return .init(fixture: f, peer: p, session: session, request: r, core: core, runtime: runtime, nativeEvents: events)
         }
         func perform(_ a: Setup, request: ProviderCallRequest? = nil, context: AudioForwardingConnectionContext? = nil,
                      session: ProviderCallSession? = nil, kind: ProviderCallKind = .chatgptDots) async -> ProviderCallState? {
@@ -216,6 +221,20 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
                     let value = await perform(a, kind: .nativeCodex)
                     check("native \(action.rawValue) keeps exact target session UUID case", value?.result.status == (action == .start ? .started : .stopped) &&
                         value?.result.callSessionId == sessionID && a.core.signatures == 2 && a.core.effects == 1)
+                    check("native emits fresh readback once after final validation", a.nativeEvents.values.count == (action == .stop ? 2 : 1))
+                    if action == .stop, case .stopRequested(let stop, let context) = a.nativeEvents.values.first {
+                        check("native stop fence binds requested call and current connection", stop == a.request && context.connectionID == a.peer.connection)
+                    } else { check("native start never emits stop fence", action == .start) }
+                    if case .readback(let observed) = a.nativeEvents.values.last {
+                        check("native readback preserves target and Core generation", observed.target.voiceSessionId == sessionID &&
+                            observed.target.targetHash == target["targetHash"] as? String && observed.coreGeneration == UUID(uuidString: a.core.challenge["coreGeneration"] as! String) && observed.result.status == value?.result.status && observed.result.callSessionId == value?.result.callSessionId)
+                        check("fresh native readback rechecks current authority", await observed.isCurrent())
+                        _ = await query(a, kind: .nativeCodex)
+                        _ = await perform(a, kind: .nativeCodex)
+                        check("query and duplicate perform never replay native media event", a.nativeEvents.values.count == (action == .stop ? 2 : 1) && a.core.effects == 1)
+                        a.peer.live = false
+                        check("retired connection invalidates readback", !(await observed.isCurrent()))
+                    } else { check("native readback exists", false) }
                     await a.fixture.finish()
                 }
                 let wrongCase = sessionID == sessionID.uppercased() ? sessionID.lowercased() : sessionID.uppercased()
@@ -226,7 +245,7 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
                         desiredInput: true, desiredOutput: true, callSessionId: bad)
                     let value = await perform(a, request: request, kind: .nativeCodex)
                     check("native wrong stop session rejected before identity and Acquire", value?.result.status == .failed &&
-                        a.core.calls == ["provider.challenge"] && a.core.signatures == 0 &&
+                        a.core.calls == ["provider.challenge"] && a.core.signatures == 0 && a.nativeEvents.values.isEmpty &&
                         count(a.fixture, "forwardingProviderAcquire") == 0 && a.core.effects == 0)
                     await a.fixture.finish()
                     for action in [ProviderCallRequest.Action.start, .stop] {
@@ -237,7 +256,8 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
                             reason: "fixture_readback", callSessionId: bad, provider: "codex-app-server")))
                         let value = await perform(b, kind: .nativeCodex)
                         check("native wrong \(action.rawValue) result session stays unknown without fallback", value?.result.status == .unknown &&
-                            value?.result.provider == "codex-app-server" && b.core.effects == 1 && b.core.calls.count == 4)
+                            value?.result.provider == "codex-app-server" && b.core.effects == 1 && b.core.calls.count == 4 &&
+                            b.nativeEvents.values.count == (action == .stop ? 1 : 0))
                         await b.fixture.finish()
                     }
                 }
@@ -249,6 +269,10 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
                 a.core.corruptValue = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ProviderCallResult(
                     requestId: a.request.requestId, status: status, reason: "fixture_result", provider: "codex-app-server")))
                 check("native \(status.rawValue) does not require session", (await perform(a, kind: .nativeCodex))?.result.status == status)
+                check("native failed or unknown readback is preserved as uncertainty", a.nativeEvents.values.count == 1)
+                if case .readback(let observed) = a.nativeEvents.values.last {
+                    check("uncertain readback never becomes started or stopped", observed.result.status == status && observed.result.callSessionId == nil)
+                } else { check("uncertain readback exists", false) }
                 await a.fixture.finish()
             }
             let legacy = try await setup("session-legacy-stop-null", action: .stop)
@@ -256,7 +280,7 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
             legacy.core.corruptValue = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ProviderCallResult(
                 requestId: legacy.request.requestId, status: .stopped, reason: "fixture_stopped")))
             let stopped = await perform(legacy)
-            check("legacy stopped retains existing null session contract", stopped?.result.status == .stopped && stopped?.result.callSessionId == nil)
+            check("legacy stopped retains existing null session contract", stopped?.result.status == .stopped && stopped?.result.callSessionId == nil && legacy.nativeEvents.values.isEmpty)
             await legacy.fixture.finish()
             await handlerChecks(check)
             try finishSubset()

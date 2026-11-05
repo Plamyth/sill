@@ -30,7 +30,7 @@ provider 제어 흐름을 재사용한다. 새 HTTP endpoint나 client message k
 schemaVersion: 1
 op: provider.media.attach
 coreGeneration: 현재 Core UUID
-binding: 기존 producer의 {target, providerInstanceId, voiceSessionId, connectionId}
+target: 기존 prepared target의 원문 6필드
 media: {pairedDeviceId, transportKind, clientConnectionId, intentGeneration,
         bindingEpoch, transportId, leaseRevision, audioEpoch}
 ```
@@ -49,8 +49,11 @@ parser가 ACK와 binary 데이터를 한 JSON 응답으로 읽는 혼합을 금�
 active 통화에 속한 시작 직후 callback만 제한된 메모리 큐에 보존할 수 있다.
 과거 통화·unbound callback이나 전사·PCM 로그는 보존하지 않는다.
 
+기존 challenge와 public Result에는 producer connectionId가 없다. Host는 이를
+만들지 않는다. Core가 target에 결속된 현재 producer를 찾아 ACK로 반환한다.
 ACK의 정확한 필드는 `schemaVersion=1`, `op=provider.media.attached`,
-`coreGeneration`, 원래 `binding`, 원래 `media`, 현재 `realtimeSessionId`다.
+`coreGeneration`, 원래 producer `binding`, 원래 `media`, 현재 `realtimeSessionId`다.
+`binding`은 `{target, providerInstanceId, voiceSessionId, connectionId}`다.
 Host의 ready는 같은 context를 가리키는 `kind=ready` binary header이며 PCM은 없다.
 
 ## Binary framing 초안
@@ -107,3 +110,9 @@ Host는 현재 native subscriber·lease·epoch에 결속한 별도 전달 경계
 native transport는 기존 Sill kind33을 사용한다. Android relay에는 24k PCM을
 raw48k 슬롯에 넣지 않고 Mac 변환 경계에서 기존 48k 형식으로 돌려 보낸다.
 각 경계의 Source/SDK/통합/설치/실제 start-input-output-stop 결과는 분리한다.
+
+Node http 경계는 기존 private control의 읽기 전용 `forwardingRelayPCMInspect`로
+현재 active session만 확인한다. Core ACK를 받은 뒤 `forwardingRelayPCMAttach`로
+같은 session과 producerConnectionId를 결속한다. Inspect와 attach 사이에 scope가
+바뀌면 거절하며 최근 종료 metrics나 다른 session을 대신 사용하지 않는다.
+기존 inspectRuntime 응답과 public HTTP 계약은 바꾸지 않는다.
