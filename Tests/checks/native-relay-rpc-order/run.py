@@ -12,7 +12,8 @@ assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered'], ['
 check = root / 'Tests/checks/native-relay-rpc-order'
 names = ['Sources/SillHost/LocalAudioRelay.swift', 'Sources/SillHost/LocalAudioParticipants.swift',
          'Sources/SillHost/AudioForwardingContract.swift', 'Sources/SillHost/RemoteAccess.swift',
-         'Sources/SillHost/AudioForwardingCoordinator.swift', 'Sources/SillHost/HostLog.swift']
+         'Sources/SillHost/AudioForwardingCoordinator.swift', 'Sources/SillHost/HostLog.swift',
+         'Sources/SillHost/ProviderCallBridge.swift']
 protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
 sources = [root / n for n in names] + sorted(check.glob('*.swift')) + [check / 'child.py', Path(__file__).resolve()] + protocol
 def hashes():
@@ -34,6 +35,10 @@ extension LocalAudioRelay {
     access = (root / names[3]).read_text()
     paired = access[access.index('struct AudioForwardingPairedDevice:'):access.index('\n/// Pairing')]
     (out / 'Paired.swift').write_text('import Foundation\nimport StreamProtocol\n' + paired.replace('fileprivate init(', 'init('))
+    bridge = (root / names[6]).read_text()
+    models = bridge[:bridge.index('struct ProviderCallSignedEnvelope:')]
+    models += bridge[bridge.index('struct ProviderCallChallenge:'):bridge.index('private struct ProviderIdentityBody:')]
+    (out / 'Models.swift').write_text(models)
     (out / 'Registry.swift').write_text((root / names[1]).read_text() + '\n' + (check / 'RegistryProbe.swift').read_text())
     binary = out / 'checks'
     shared = ['swiftc', '-package-name', 'Sill', '-module-cache-path', str(out / 'cache')]
@@ -45,7 +50,8 @@ extension LocalAudioRelay {
     if module.returncode == 0:
         compile_result = subprocess.run(shared + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol',
             '-Xlinker', '-rpath', '-Xlinker', str(out), str(out / 'Relay.swift'), str(out / 'Registry.swift'),
-            str(root / names[2]), str(root / names[4]), str(root / names[5]), str(out / 'Paired.swift'), str(check / 'Main.swift'),
+            str(root / names[2]), str(root / names[4]), str(root / names[5]), str(out / 'Models.swift'),
+            str(out / 'Paired.swift'), str(check / 'Main.swift'),
             '-o', str(binary)], timeout=120, capture_output=True, text=True)
         print(compile_result.stdout + compile_result.stderr, end='')
     executed = None
