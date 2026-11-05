@@ -10,6 +10,11 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
             log.count(id, metric, amount, errorCode: errorCode)
         }
         func record(_ event: String, _ fields: @autoclosure () -> [String: String] = [:]) { log.record(id, event, fields) }
+        func recordForwardingGuards(_ event: String, _ guards: [String: Bool]) {
+            let fields = guards.mapValues { String($0) }
+            record(event, fields.filter { !$0.key.hasPrefix("auth.") })
+            record(event + "_auth", fields.filter { $0.key.hasPrefix("auth.") })
+        }
     }
     private struct Event: Codable {
         let timestamp: Double

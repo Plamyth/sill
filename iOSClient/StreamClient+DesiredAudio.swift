@@ -118,8 +118,8 @@ extension StreamClient {
     func cancelDesiredAudioRequest() {
         let observation = UUID()
         audioForwardingStopDiagnostic = (observation, audioForwardingContext)
-        IPadMicrophoneDiagnostics.shared.attempt(observation).record("explicit_stop_requested",
-            forwardingContextReadiness.mapValues { String($0) })
+        let guards = forwardingContextReadiness
+        IPadMicrophoneDiagnostics.shared.attempt(observation).recordForwardingGuards("explicit_stop_requested", guards)
         setDesiredAudioSelection(.init())
     }
 

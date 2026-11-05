@@ -83,10 +83,15 @@ enum RemoteTLS { static func peerFingerprint(_ peer: NWConnection) -> Data? { pe
 final class Frames { var closes = 0; func close() { closes += 1 } }
 final class IPadMicrophoneDiagnostics {
  func connectionChanged() {}
- static var records: [(String, [String: String])] = []
- final class Attempt { func record(_ s: String, _ fields: [String:String] = [:]) { IPadMicrophoneDiagnostics.records.append((s, fields)) } }
+ static var records: [(String, [String: String], UUID)] = []
+ final class Attempt {
+  let id: UUID
+  init(_ id: UUID) { self.id = id }
+  func record(_ s: String, _ fields: [String:String] = [:]) { IPadMicrophoneDiagnostics.records.append((s, fields, id)) }
+  FORWARDING_GUARDS_METHOD
+ }
  static let shared = IPadMicrophoneDiagnostics()
- func attempt(_ id: UUID) -> Attempt { Attempt() }
+ func attempt(_ id: UUID) -> Attempt { Attempt(id) }
  static func route() -> String { "controlled route" }
 }
 final class StreamClient {
@@ -187,6 +192,10 @@ final class StreamClient {
  deinit { providerCallQueryWake?.cancel(); audioForwardingWake?.cancel(); audioForwardingWireTimeout?.cancel(); UserDefaults.standard.removePersistentDomain(forName: suite) }
 }
 '''
+diagnostics = (root/'iOSClient/IPadMicrophoneCapture.swift').read_text()
+a = diagnostics.index('        func recordForwardingGuards(')
+b = diagnostics.index('\n        }', a) + len('\n        }')
+fixture = fixture.replace('FORWARDING_GUARDS_METHOD', diagnostics[a:b])
 def method(file, name):
     s = (root/'iOSClient'/file).read_text()
     start = s.index('    private func ' + name) if '    private func ' + name in s else s.index('    func ' + name)

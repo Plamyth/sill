@@ -155,11 +155,11 @@ extension StreamClient {
             if let observation = audioForwardingStopDiagnostic {
                 audioForwardingStopDiagnostic = nil
                 if observation.context == context {
-                    var fields = forwardingContextReadiness.mapValues { String($0) }
-                    fields["isObserve"] = String(command.operation == .observe)
-                    fields["isStopSubmission"] = String(command.intent?.action == .stop)
+                    var fields = forwardingContextReadiness
+                    fields["isObserve"] = command.operation == .observe
+                    fields["isStopSubmission"] = command.intent?.action == .stop
                     IPadMicrophoneDiagnostics.shared.attempt(observation.id)
-                        .record("explicit_stop_first_217_submitted", fields)
+                        .recordForwardingGuards("explicit_stop_first_217_submitted", fields)
                 }
             }
         }

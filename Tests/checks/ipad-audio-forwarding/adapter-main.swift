@@ -378,7 +378,10 @@ struct AdapterChecks {
         let heldObserve = guarded.command()
         guarded.cancelDesiredAudioRequest()
         let stopEvent = IPadMicrophoneDiagnostics.records.last { $0.0 == "explicit_stop_requested" }
-        check(stopEvent?.1 == beforeStop.mapValues { String($0) }, "stop event preserves pre-stop guard values")
+        let stopAuth = IPadMicrophoneDiagnostics.records.last { $0.0 == "explicit_stop_requested_auth" }
+        check(stopEvent?.1.merging(stopAuth!.1, uniquingKeysWith: { _, next in next }) == beforeStop.mapValues { String($0) } &&
+              stopEvent?.2 == stopAuth?.2 && stopEvent?.1.count == 14 && stopAuth?.1.count == 10,
+              "same-sample stop events preserve all 24 guards under one diagnostic ID")
         check(!guarded.desiredAudio.selection.microphone && !guarded.desiredAudio.selection.playback &&
               guarded.desiredAudioStore.selection(for: guarded.desiredAudioIdentity!) == .init(),
               "diagnostic stop retains existing OFF storage contract")
@@ -388,11 +391,14 @@ struct AdapterChecks {
         guarded.receive(try .init(requestID: heldObserve.requestID, operation: .observe,
             catalog: catalog(live, intent: 1, binding: 1), result: nil))
         let sendEvents = IPadMicrophoneDiagnostics.records.filter { $0.0 == "explicit_stop_first_217_submitted" }
+        let sendAuth = IPadMicrophoneDiagnostics.records.last { $0.0 == "explicit_stop_first_217_submitted_auth" }
         check(sendEvents.count == sendsBefore + 1 && sendEvents.last?.1["isStopSubmission"] == "true" &&
               guarded.command().intent?.action == .stop && guarded.audioForwardingStopDiagnostic == nil,
               "existing send boundary records the first stop control once and retires diagnostic")
         check(sendEvents.last!.1.values.allSatisfy { $0 == "true" || $0 == "false" },
               "stop send event contains boolean values only")
+        check(sendEvents.last?.1.count == 16 && sendAuth?.1.count == 10 && sendEvents.last?.2 == sendAuth?.2 && sendAuth?.2 == stopAuth?.2,
+              "first217 main and auth events preserve 26 fields with the same stop diagnostic ID")
         guarded.desiredAudio.sourceWillChange()
         check(guarded.forwardingContextReadiness["desiredScopePresent"] == false && guarded.forwardingContextReadiness["sourceNotNone"] == false &&
               guarded.forwardingContextReadiness["contextMatchesForwardingState"] == false,

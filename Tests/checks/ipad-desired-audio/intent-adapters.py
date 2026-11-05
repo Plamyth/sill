@@ -32,6 +32,7 @@ final class IPadMicrophoneDiagnostics {
  func connectionChanged() {}
  func attempt(_ id: UUID) -> Self { self }
  func record(_ name: String, _ fields: [String: String] = [:]) {}
+ func recordForwardingGuards(_ name: String, _ fields: [String: Bool]) {}
 }
 final class IPadAudioSession { static let shared = IPadAudioSession(); var microphoneAvailable = true }
 final class IPadAudioResumeObserver { init(client: StreamClient) {} }
