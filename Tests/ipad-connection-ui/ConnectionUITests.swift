@@ -166,29 +166,12 @@ final class ConnectionUITests: XCTestCase {
         captureMediaState(app, name: "ten-seconds-after-enable-full-duplex")
     }
 
-    private func selectOff(_ app: XCUIApplication, identifier: String, title: String) throws {
-        let picker = app.descendants(matching: .any).matching(NSPredicate(
-            format: "identifier == %@ AND (elementType == %d OR elementType == %d)", identifier,
-            Int(XCUIElement.ElementType.button.rawValue), Int(XCUIElement.ElementType.popUpButton.rawValue)))
-        try tapUnique(picker)
-        try tapUnique(menuAction(app, label: title))
-        let selected = try unique(picker)
-        let reflected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@", title), object: selected)
-        captureMediaState(app, name: "selected-" + identifier)
-        guard XCTWaiter.wait(for: [reflected], timeout: 2) == .completed else {
-            throw NSError(domain: "ConnectionUI", code: 9,
-                          userInfo: [NSLocalizedDescriptionKey: "picker OFF 선택값 미확인. 적용하지 않습니다."])
-        }
-    }
-
-    func test04DisableIPadAudio() throws {
+    func test04DisableIPadAudio() async throws {
         let app = try existingMediaApp()
-        try requireAudioChooser(app)
-        captureMediaState(app, name: "before-disable-ipad-audio")
-        try selectOff(app, identifier: "audioRouteInput", title: "전송 안 함")
-        try selectOff(app, identifier: "audioRouteOutput", title: "재생 안 함")
-        try tapUnique(app.buttons.matching(identifier: "applyAudioRoutes"))
-        captureMediaState(app, name: "after-disable-ipad-audio")
+        try tapUnique(app.buttons.matching(NSPredicate(
+            format: "identifier == %@ AND label == %@", "stopIPadAudio", "iPad 입출력 중지")))
+        captureMediaState(app, name: "after-explicit-stop-ipad-audio")
+        try await Task.sleep(nanoseconds: 10_000_000_000)
+        captureMediaState(app, name: "ten-seconds-after-explicit-stop-ipad-audio")
     }
 }

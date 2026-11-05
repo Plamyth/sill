@@ -127,3 +127,23 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild build-for-te
 `openAudioChooser()`는 상단바 표시 전에 native menu AX를 한 번 집계한다. 유일하고 hittable인 native 오디오 요소는 같은 element로 검사·탭하며 쿼리 count를 반복하지 않는다. native 경로가 없으면 정확한 토글 상태를 확인·필요시 한 번 탭한 직후 `workspaceOverflow`를 유일성·hittable·enabled 검사하고 탭한다. 이 구간에 캡처, 모니터 재조회, 표시 라벨 기대 대기, 추가 native 메뉴 탐색을 넣지 않는다. 전체 화면 캡처는 native 메뉴가 열린 뒤부터 수집한다. 01의 모니터 관측·최종 캡처는 유지한다. 03의 전후·10초 후 media 증거와 04의 OFF 선택 증거는 오디오창 안에서 그대로 수집한다.
 
 4초 이내 실제 탭은 아직 실기 미검증이다. XCTest 자체의 idle 동기화 시간은 소스로 보장하지 않는다. 제품 source·설정·강제 toolbar preference·원격 좌표·스와이프·키·반복 탭은 변경하거나 실행하지 않는다. 기본 01/02 allowlist·세 gate의 기본 0·media gate 분리는 유지한다. 새 후보 경로는 `signedcandidate/toolbar-timing`이며 별도 비작성 검수·정식 서명 빌드·실제 파일 SHA를 함께 반환한다. 부모가 Root 슬롯을 반납한다는 인계는 수신했으며 이 작업이 슬롯을 점유하거나 실기 재시도하지 않는다.
+
+
+## 79 OFF 정리용 native Form 스크롤 보정
+
+`toolbar-timing/disable79.log`와 `disable79-attachments/8F188304-B8B7-4D67-B6F1-8713E1A0B1EF.txt`를 읽었다. 입력/output identifier는 실패 시점 AX에 없고 오디오 Form이 4페이지의 0%에 있다. 실제 AX의 Form은 CollectionView이며 사용자 후속에서는 Table로 지칭했다. 두 native Form 유형만 허용하고 유일성 및 정확한 오디오 NavigationBar 영역을 포함하는지 확인한다. 배경 HostSettings의 ScrollView나 원격 영상은 스크롤하지 않는다.
+
+04와 기존 selectOff만 바꾼다. 현재 오디오창의 유일한 Form 안에서 exact picker identifier가 실체화되어 hittable해질 때까지 최대 6회 native swipeUp한다. picker의 Button/popUpButton 유형·유일성·hittable·enabled를 검사한 뒤 정확한 OFF 항목만 누른다. 선택값은 native `value`가 정확한 OFF 문자열이거나 SwiftUI가 합친 정확한 `입력 소스, 전송 안 함` / `출력 대상, 재생 안 함` label인 경우만 확인한다. 부분 문자열·추정 좌표·키·원격 영상·다른 화면 진입은 없다. 두 OFF 확인 뒤 같은 Form에서 exact applyAudioRoutes도 필요할 때 최대 6회만 native scroll하여 한 번 적용한다. 모호하거나 다른 Form과 중복이면 조작 전에 실패한다. 스크롤은 04에만 허용하며 01/02/03과 gate·기본 allowlist는 유지한다. 새 ON은 하지 않는다. 실제 OFF 완료/desired 해제는 부모가 단일 audio 슬롯에서 실행 후 metadata로 확인해야 한다.
+
+새 산출물은 `signedcandidate/off-native-form`에 분리한다. 이번 작업의 설치·실행·Host·음성은 0이다. 검수와 서명 성공은 실제 OFF 수용을 대신하지 않는다.
+
+
+## 최신 Root 결정: 04는 explicit stop만 사용
+
+이 절은 위 04 picker·Form 스크롤 절차를 대체한다. 앞선 절차는 실제 실패 이력으로만 보존한다. 입력 OFF 선택은 성공했으나 출력 OFF 메뉴의 hittable 실패가 이어져 Root가 picker 추정과 추가 재시도를 중단했다. 중단 시 본 WT는 clean이었고 새 picker 수정·실행은 없었다.
+
+부모가 정상 제품의 오디오 설정 상단 toolbar에 명시 `iPad 입출력 중지` Button, accessibilityIdentifier `stopIPadAudio`를 추가한다. 제품 구현은 부모 소유이며 이 WT에서 제품 파일을 쓰지 않는다. 해당 버튼은 부모의 기존 cancelDesiredAudioRequest → 같은 Mac pin/기기/CAS217 stop 계약만 사용하고 Host241을 유지한다는 인계다. 이 테스트 후보가 그 제품 변경의 실제 설치·동작을 검증한 것은 아니다.
+
+`test04DisableIPadAudio`는 기존 media 승인 gate 후 실행 중 canonical 앱만 activate한다. 현재 화면의 exact Button identifier와 정확한 label이 일치하는 요소를 유일성·hittable·enabled 검사 후 한 번 누른다. picker·메뉴·스크롤·다른 화면 진입·좌표·키·launch fallback은 없다. 기존 selectOff helper는 완전히 제거한다. 탭 직후와 10초 후 screenshot/native AX를 첨부하며 실제 desired/intent/engine 중지 수용은 부모 metadata로 판정한다. 버튼이 없거나 가려졌으면 실패하고 추정 복구하지 않는다.
+
+03 ON 메서드와 01/02는 변경하지 않는다. 세 flag는 기본 0, default allowlist는 01/02뿐이다. 04 실행은 부모가 별도 xctestrun 복사본에서 04만 선택하고 media 승인 후 수행한다. 새 ON·Host·기기 실행·설치는 이번 작업에서 0이다. 새 서명 후보는 `signedcandidate/explicit-stop`에 분리하고 기존 Team/profile을 사용한다. 제품 앱의 새 서명·설치 시점과 실제 stop 버튼 노출은 부모가 조율한다. 독립 비작성 검수·빌드/서명 결과와 정확한 파일 SHA는 이 경로의 candidate-receipt.json에 기록한다.
