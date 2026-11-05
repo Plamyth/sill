@@ -19,7 +19,7 @@ def fixture(root, receiver_only=False):
     if receiver_only:
         paths = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
         paths += [root / ('Sources/SillHost/' + name + '.swift') for name in
-                  ['HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink']]
+                  ['HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'HostLog']]
         files = {str(path.relative_to(root)): path.read_text() for path in paths}
         for name in ['Network.swift', 'FakeHAL.swift']:
             files[name] = (here / name).read_text()
@@ -41,7 +41,7 @@ def fixture(root, receiver_only=False):
     paths = ['Sources/StreamProtocol/' + name + '.swift' for name in
              ['StreamMessage', 'AudioRouting', 'Switcher', 'MicrophoneUplink', 'Viewport', 'Compatibility', 'Input', 'Pointer', 'SafeText']]
     paths += ['Sources/SillHost/' + name + '.swift' for name in
-              ['SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'MicrophoneIngress', 'PointerControl']]
+              ['SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'MicrophoneIngress', 'PointerControl', 'HostLog']]
     files = {name: (root / name).read_text() for name in paths}
     for name in ['Network.swift', 'FakeHAL.swift', 'Main.swift']:
         files[name] = (here / name).read_text()

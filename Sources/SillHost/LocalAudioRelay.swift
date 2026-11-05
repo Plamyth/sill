@@ -780,7 +780,7 @@ final class LocalAudioRelay {
     func lost(file: StaticString = #fileID, line: UInt = #line) {
         if case .closed = state { return }
         state = .closed
-        print("audio.trace relayClosed origin=\(file):\(line)")
+        HostLog.shared.append("audio.trace relayClosed origin=\(file):\(line)")
         activeCall = nil
         let queued = waiting
         waiting.removeAll()

@@ -2115,7 +2115,7 @@ final class StreamServer {
                 forwardingTracesRemaining -= 1
                 let now = DispatchTime.now().uptimeNanoseconds
                 let elapsedMs = Double(now >= exchange.startedAt ? now - exchange.startedAt : 0) / 1_000_000
-                print("audio.trace forwardingReply request=\(exchange.control.requestID) operation=\(exchange.control.operation.rawValue) elapsedMs=\(elapsedMs) responsePresent=\(state != nil) current=\(exchange.isCurrent)")
+                HostLog.shared.append("audio.trace forwardingReply request=\(exchange.control.requestID) operation=\(exchange.control.operation.rawValue) elapsedMs=\(elapsedMs) responsePresent=\(state != nil) current=\(exchange.isCurrent)")
             }
             guard connection.state == .ready, client.route.encrypted && client.route.pairedName != nil, exchange.isCurrent, let state,
                   state.requestID == exchange.control.requestID, state.operation == exchange.control.operation,

@@ -3309,7 +3309,7 @@ package final class StreamCoordinator {
     private func enqueueRemoteAudioRevocation(reason: String, file: StaticString = #fileID, line: UInt = #line) {
         if remoteAudioRevocationTracesRemaining > 0 {
             remoteAudioRevocationTracesRemaining -= 1
-            print("audio.trace outputRevoked origin=\(file):\(line) subscribers=\(remoteAudioSubscribers.count) running=\(remoteAudioRunning)")
+            HostLog.shared.append("audio.trace outputRevoked origin=\(file):\(line) subscribers=\(remoteAudioSubscribers.count) running=\(remoteAudioRunning)")
         }
         let old = remoteAudioSubscribers.compactMap { connections[$0] }
         remoteAudioSubscribers.removeAll()

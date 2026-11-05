@@ -106,12 +106,12 @@ package final class MicrophoneRenderBuffer: @unchecked Sendable {
 
     func close(file: StaticString = #fileID, line: UInt = #line) {
         let firstClose = state.withLock { value in
-            guard value.open else { return false }
+            if !value.open { return false }
             value.open = false; value.packetCount = 0; value.head = 0
             return true
         }
         if firstClose {
-            print("mic.trace renderClosed peer=\(grant.scope.peer) origin=\(file):\(line)")
+            HostLog.shared.append("mic.trace renderClosed peer=\(grant.scope.peer) origin=\(file):\(line)")
         }
     }
     var isOpen: Bool { state.withLock { $0.open } }
