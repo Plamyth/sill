@@ -792,5 +792,43 @@ reopenedB.connection = nil
 check(reopenedB.visionDisplaySelection.windowTarget == targetB && reopenedB.visionDisplaySelection.catalog == nil,
       "disconnect clears catalog and preserves only explicit target intent")
 
+func stableCatalog(_ catalog: WindowList, identities: [String?]) -> WindowList {
+    var object = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(catalog)) as! [String: Any]
+    var displays = object["displays"] as! [[String: Any]]
+    for index in displays.indices { displays[index]["stableIdentity"] = identities[index] }
+    object["displays"] = displays
+    return try! JSONDecoder().decode(WindowList.self, from: JSONSerialization.data(withJSONObject: object))
+}
+let physicalA = "cgdisplay:11111111-1111-1111-1111-111111111111"
+let physicalB = "cgdisplay:22222222-2222-2222-2222-222222222222"
+var physicalCatalog = stableCatalog(independentCatalog, identities: [physicalA, physicalB])
+var recovery = model(); recovery.observe(.init(physicalCatalog))
+let persistentB = recovery.windowTarget(macID: "mac-A", displayID: 22)!
+recovery.windowTarget = persistentB
+var changedC = physicalCatalog
+changedC.displayInventoryID = UUID()
+changedC.displays!.append(DisplayInfo(id: 33, name: "C", width: 1920, height: 1080, isMain: false))
+changedC.active = .desktop; changedC.activeDisplayID = 22; changedC.desktopSelectionRequired = false
+let keptEpoch = epoch("kept-B"); changedC.inputGeneration = "kept-B"; changedC.videoEpoch = keptEpoch
+recovery.observe(.init(changedC))
+check(recovery.windowTargetPresented(macID: "mac-A", epoch: keptEpoch), "P1 unrelated C inventory keeps B presented")
+var restart = physicalCatalog
+restart.launchID = "new-host"; restart.displayInventoryID = UUID(); restart.displays![1].id = 222
+check(persistentB.matches(macID: "mac-A", catalog: .init(restart)), "P1 stable B survives host restart and numeric reassignment")
+recovery.observe(.init(restart))
+check(recovery.automaticCommand(macID: "mac-A")?.displayID == 222, "P1 recovery requests current numeric B with fresh admission")
+let freshB = recovery.windowTarget(macID: "mac-A", displayID: 222)!
+check(freshB == persistentB && Set([freshB, persistentB]).count == 1, "P1 window dedup ignores ephemeral inventory and launch")
+var removed = restart; removed.displayInventoryID = UUID(); removed.displays!.removeLast()
+check(!persistentB.matches(macID: "mac-A", catalog: .init(removed)), "P1 removed B stays blocked")
+var duplicate = restart; duplicate.displayInventoryID = UUID(); duplicate.displays![0].id = 333
+duplicate = stableCatalog(duplicate, identities: [physicalB, physicalB])
+check(!persistentB.matches(macID: "mac-A", catalog: .init(duplicate)), "P1 duplicate stable identity cannot auto-restore")
+var legacy = model(); legacy.windowTarget = targetB; legacy.observe(.init(newerInventory))
+let freshLegacy = command(legacy)
+check(legacy.begin(freshLegacy, macID: "mac-A").code == .releasing, "P1 legacy fresh explicit selection recovers existing window")
+var foreign = model(); foreign.windowTarget = targetB; foreign.observe(.init(newerInventory))
+check(foreign.begin(command(foreign), macID: "mac-B").code == .staleScope, "P1 explicit recovery cannot switch authenticated Mac")
+
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)
