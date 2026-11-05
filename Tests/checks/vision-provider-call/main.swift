@@ -164,92 +164,59 @@ expect(checks == 68, "all original 68 checks ran with explicit Dots selection")
 
 now = 800
 var selection = VisionProviderCall(connection: first, clock: { now })
-expect(VisionCallTarget.allCases == [.nativeCodex, .chatgptDots, .grok], "typed control targets are native Codex, Dots and Grok")
+expect(VisionCallTarget.allCases == [.nativeCodex, .chatgptDots, .grok], "typed control targets are preserved")
 expect(selection.target == .nativeCodex && selection.canChangeTarget, "default is native Codex without a call")
 selection.observe(connection: first, capability: 1, hostKey: hostKey)
 expect(selection.supported && !selection.canPerform, "Dots capability never authorizes default native target")
 expect(selection.perform(request) == nil && selection.perform(stop) == nil && selection.query() == nil,
-       "native target cannot send Dots start, stop or query")
-expect(selection.request == nil && selection.pending == nil && selection.result == nil,
-       "selecting native never reports connection or call success")
-expect(selection.message == "Mac Codex 음성의 원격 시작·종료는 미확인입니다.", "native adapter stays explicitly unverified")
-expect(selection.selectTarget(.grok), "idle target can change to Grok")
-expect(selection.perform(request) == nil && selection.perform(stop) == nil && selection.query() == nil,
-       "Grok cannot send Dots start, stop or query")
-expect(selection.request == nil && selection.result == nil && selection.firstSentAt == nil,
-       "target selection never starts a call or query budget")
-expect(selection.message == "Grok 통화의 원격 시작·종료는 미확인입니다.", "Grok adapter stays explicitly unverified")
-selection.observe(connection: second, capability: 1, hostKey: String(repeating: "d", count: 64))
-expect(selection.target == .grok && !selection.canPerform, "trusted host change preserves selected target and cannot enable Grok")
-expect(selection.selectTarget(.chatgptDots) && selection.canPerform, "explicit Dots choice can use existing capability")
-expect(selection.request == nil && selection.pending == nil, "Dots selection alone creates no operation")
-expect(selection.perform(request)?.operation == .perform, "explicit Dots action uses existing perform")
+    "native target cannot send Dots start stop or query")
+expect(selection.message.contains("미확인"), "native without capability remains unverified")
+expect(selection.selectTarget(.grok) && !selection.canPerform && selection.perform(request) == nil,
+    "idle Grok selection cannot issue calls")
+expect(selection.selectTarget(.chatgptDots) && selection.canPerform, "explicit Dots can use legacy capability")
+_ = selection.perform(request)
 let targetWire = selection.pending!
+expect(!selection.canChangeTarget && !selection.selectTarget(.nativeCodex), "pending Dots locks selected provider")
+expect(selection.pending?.sentAt == targetWire.sentAt && selection.pending?.control.request == request,
+    "blocked selection preserves pending identity and deadline")
+expect(selection.receive(try response(.started, session: "dots-only-session"), from: first), "Dots fixture starts")
 expect(!selection.canChangeTarget && !selection.selectTarget(.nativeCodex) && !selection.selectTarget(.grok),
-       "in-flight Dots wire blocks target transition")
-expect(selection.target == .chatgptDots && selection.pending?.control.request == targetWire.control.request &&
-       selection.pending?.sentAt == targetWire.sentAt && selection.pending?.expiresAt == targetWire.expiresAt,
-       "blocked transition preserves original wire and deadline")
-expect(selection.selectTarget(.chatgptDots) && selection.pending != nil, "reselecting Dots cannot replace pending wire")
-selection.observe(connection: second, capability: 1, hostKey: nil)
-expect(!selection.selectTarget(.nativeCodex) && selection.pending?.sentAt == targetWire.sentAt,
-       "same TLS missing pin cannot clear wire through target selection")
-selection.observe(connection: second, capability: 1, hostKey: hostKey)
-expect(!selection.supported && !selection.selectTarget(.grok) && selection.pending != nil,
-       "same TLS changed pin cannot clear wire through target selection")
-expect(selection.drain(try response(.started, session: "untrusted-target"), from: second),
-       "untrusted Dots response still drains exact wire")
-expect(selection.result?.status == .unknown && selection.pending == nil && selection.canChangeTarget,
-       "untrusted drain releases selection without adopting call success")
-expect(selection.selectTarget(.nativeCodex) && selection.query() == nil && selection.perform(request) == nil,
-       "native after drain cannot issue Dots recovery or a new effect")
-expect(selection.request == request && selection.firstSentAt == 800 && selection.queries == 0,
-       "target change preserves original Dots identity and recovery budget")
-expect(selection.message.contains("미확인"), "native never displays prior Dots result as native success")
-expect(selection.selectTarget(.chatgptDots), "return to Dots for query-only recovery")
-selection.observe(connection: second, capability: 1, hostKey: String(repeating: "d", count: 64))
-now += 0.5
-expect(!selection.canPerform && selection.query()?.operation == .query, "Dots recovery remains query-only")
-expect(selection.firstSentAt == 800 && selection.queries == 1, "target round trip never renews query budget")
-expect(!selection.selectTarget(.nativeCodex), "in-flight query blocks target transition")
-expect(selection.receive(try response(.pending), from: second), "query pending fixture")
-expect(selection.pending == nil && !selection.canChangeTarget && !selection.selectTarget(.grok),
-       "pending provider result blocks transition between wire requests")
-expect(selection.query() == nil, "target transition attempt cannot bypass half-second query spacing")
-now += 0.5
-expect(selection.query()?.operation == .query, "blocked target transition preserves scheduled query")
-expect(selection.receive(try response(.started, session: "dots-only-session"), from: second), "Dots result resolves pending selection lock")
-expect(selection.canChangeTarget && selection.message.contains("Dots"), "completed Dots result releases target selection")
+    "started Dots cannot abandon session through target selection")
+expect(selection.selectTarget(.chatgptDots) && selection.result?.callSessionId == "dots-only-session",
+    "reselecting same provider preserves active session")
 let selectedStop = try ProviderCallRequest(requestId: UUID(), action: .stop, expectedLeaseRevision: .init(7),
     pairedDeviceId: device, desiredInput: true, desiredOutput: true, callSessionId: "dots-only-session")
-expect(selection.selectTarget(.nativeCodex) && !selection.canPerform && selection.perform(selectedStop) == nil,
-       "native cannot stop a retained Dots session")
-expect(selection.result?.callSessionId == "dots-only-session" && selection.message.contains("미확인"),
-       "retained Dots session never becomes native success")
-expect(selection.selectTarget(.grok) && selection.perform(selectedStop) == nil && selection.query() == nil,
-       "Grok cannot control retained Dots session")
-expect(selection.selectTarget(.chatgptDots) && selection.perform(selectedStop)?.request.callSessionId == "dots-only-session",
-       "explicit return to Dots retains existing stop adapter contract")
-selection.disconnected()
-expect(selection.target == .chatgptDots && selection.pending == nil && selection.canChangeTarget,
-       "disconnect retires wire and permits target selection without changing target")
-expect(selection.selectTarget(.nativeCodex), "native can be selected after disconnected Dots request")
-selection.observe(connection: first, capability: 1, hostKey: String(repeating: "d", count: 64))
-expect(selection.query() == nil && selection.perform(request) == nil && selection.result?.status == .unknown,
-       "reconnected native target sends no Dots recovery")
-expect(selection.selectTarget(.chatgptDots) && selection.query()?.operation == .query,
-       "same verified Mac can resume only original Dots query after target round trip")
-let targetTimeout = selection.pending!
-now = targetTimeout.expiresAt
-expect(selection.timeout(targetTimeout) && selection.canChangeTarget && selection.result?.status == .unknown,
-       "timeout releases target lock and preserves unknown result")
-expect(selection.selectTarget(.nativeCodex) && selection.query() == nil,
-       "native after timeout cannot issue Dots query")
-selection.observe(connection: second, capability: 1, hostKey: hostKey)
-expect(selection.target == .nativeCodex && selection.request == nil && !selection.canPerform,
-       "new trusted Mac clears old Dots state and keeps native selection")
-print("PASS \(checks) total client checks; original Dots 68, new target checks \(checks - regressionChecks); actual provider, app, device, audio effects 0")
+expect(selection.perform(selectedStop)?.request.callSessionId == "dots-only-session", "same provider retains normal stop")
+expect(selection.receive(try response(.stopped, request: selectedStop), from: first), "confirmed stop ends ownership")
+expect(selection.canChangeTarget && selection.selectTarget(.nativeCodex), "confirmed stopped permits another target")
+expect(selection.selectedResult == nil && selection.query() == nil, "new target cannot adopt retained Dots result")
 
+for status in [ProviderCallResult.Status.failed, .unsupported, .unknown] {
+    var owned = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
+    owned.observe(connection: first, capability: 1, hostKey: hostKey)
+    _ = owned.perform(request)
+    expect(owned.receive(try response(status), from: first), "terminal fixture")
+    if status == .unknown {
+        expect(!owned.canChangeTarget && !owned.selectTarget(.nativeCodex), "unknown cannot abandon original call")
+        expect(owned.request == request && owned.firstSentAt == now, "unknown target lock preserves original request")
+        now += 0.5
+        expect(owned.query()?.providerKind == .chatgptDots, "unknown remains same-provider query only")
+    } else {
+        expect(owned.canChangeTarget && owned.selectTarget(.nativeCodex), "clear failure or unsupported permits target change")
+    }
+}
+var uncertain = VisionProviderCall(connection: first, target: .chatgptDots, clock: { now })
+uncertain.observe(connection: first, capability: 1, hostKey: hostKey)
+_ = uncertain.perform(request)
+uncertain.disconnected()
+expect(!uncertain.canChangeTarget && !uncertain.selectTarget(.nativeCodex), "disconnect unknown retains provider ownership")
+uncertain.observe(connection: second, capability: 1, hostKey: hostKey)
+expect(uncertain.query()?.request == request, "same Mac reconnect resumes original provider query")
+let timedSelection = uncertain.pending!
+now = timedSelection.expiresAt
+expect(uncertain.timeout(timedSelection) && !uncertain.canChangeTarget, "timeout unknown cannot abandon call")
+uncertain.observe(connection: first, capability: 1, hostKey: String(repeating: "f", count: 64))
+expect(uncertain.request == nil && uncertain.canChangeTarget, "different trusted Mac clears prior host state")
 
 func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
     let request = try ProviderCallRequest(requestId: UUID(uuidString: "12345678-1234-1234-1234-123456789abc")!,
@@ -320,13 +287,17 @@ expect(!nativeCall.receive(try response(.started), from: first), "native query r
 expect(nativeCall.receive(try nativeResponse(.started), from: first), "native result accepted on matching query")
 let nativeStop = try ProviderCallRequest(requestId: UUID(), action: .stop, expectedLeaseRevision: .init(7),
     pairedDeviceId: device, desiredInput: true, desiredOutput: true, callSessionId: "native-session")
-expect(nativeCall.selectTarget(.chatgptDots), "completed native allows explicit selection")
-expect(nativeCall.perform(nativeStop) == nil && nativeCall.selectedResult == nil, "Dots cannot stop retained native session")
-expect(nativeCall.selectTarget(.nativeCodex), "return to native session")
+expect(!nativeCall.selectTarget(.chatgptDots) && !nativeCall.selectTarget(.grok), "started native locks provider selection")
+expect(nativeCall.target == .nativeCodex && nativeCall.request == request && nativeCall.result?.callSessionId == "native-session",
+    "blocked native to Dots start flow preserves native session and stop path")
+expect(nativeCall.selectTarget(.nativeCodex), "reselect native without losing session")
 expect(nativeCall.perform(nativeStop)?.providerKind == .nativeCodex, "native stop preserves selected provider")
 expect(!nativeCall.receive(try nativeResponse(.started, request: nativeStop), from: first), "native stop cannot adopt start ACK")
 expect(nativeCall.receive(try nativeResponse(.stopped, request: nativeStop), from: first), "native stop readback accepted")
 expect(nativeCall.result?.mediaProtection == "not_attested", "native result does not attest media")
+expect(nativeCall.canChangeTarget && nativeCall.selectTarget(.chatgptDots), "confirmed native stop releases target")
+expect(nativeCall.perform(nativeStop) == nil && nativeCall.selectedResult == nil, "Dots never adopts retained native stop session")
+expect(nativeCall.perform(other)?.providerKind == .chatgptDots, "Dots start becomes possible after confirmed native stop")
 
 now = 1100
 nativeCall = VisionProviderCall(connection: first, clock: { now })

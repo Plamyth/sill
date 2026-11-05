@@ -97,7 +97,8 @@ struct VisionProviderCall {
         self.connection = connection; self.target = target; self.clock = clock
     }
     var canChangeTarget: Bool {
-        pending == nil && result?.status != .pending
+        pending == nil && (request == nil ||
+            result.map { [.stopped, .failed, .unsupported].contains($0.status) } == true)
     }
     @discardableResult
     mutating func selectTarget(_ next: VisionCallTarget) -> Bool {
