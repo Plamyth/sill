@@ -117,7 +117,11 @@ final class ProviderCallRuntime {
                 until: min(overall, challengeStarted + 1.5))
             try challenge.validate(request)
             switch (record.providerKind, challenge.target) {
-            case (.nativeCodex, .nativeTarget), (.chatgptDots, .webGuest): break
+            case (.nativeCodex, .nativeTarget(let target)):
+                guard request.action != .stop || request.callSessionId == target.voiceSessionId else {
+                    throw ProviderCallFailure.invalidTarget
+                }
+            case (.chatgptDots, .webGuest): break
             default: throw ProviderCallFailure.invalidTarget
             }
             let challengeExpiry = challengeStarted + Double(challenge.remainingMilliseconds) / 1000
@@ -157,6 +161,10 @@ final class ProviderCallRuntime {
                 as: ResultReply.self, until: overall)
             try readback.validate(challenge, request: request)
             guard readback.result.provider == record.providerKind.rawValue else { throw ProviderCallFailure.invalidTarget }
+            if case .nativeTarget(let target) = challenge.target,
+               readback.result.status == .started || readback.result.status == .stopped {
+                guard readback.result.callSessionId == target.voiceSessionId else { throw ProviderCallFailure.invalidTarget }
+            }
             guard current(), let final = await session.readSnapshot(), current(),
                   providerSameSnapshot(final, session.snapshot), request.matches(final) else {
                 throw ProviderCallFailure.superseded
