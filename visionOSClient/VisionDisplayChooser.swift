@@ -2,20 +2,25 @@ import SwiftUI
 
 struct VisionDisplayChooser: View {
     @ObservedObject var client: StreamClient
+    var openInNewWindow: ((VisionDisplaySelection.WindowTarget) -> Void)? = nil
     let choose: (VisionDisplaySelection.Command) -> Void
     let cancel: () -> Void
     let close: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Mac 모니터 선택").font(.title2)
-            Text("이 선택 창을 열면 기존 입력과 소리·마이크 전송을 중지합니다. 표시할 모니터를 직접 선택하세요.")
+            Text(openInNewWindow == nil ? "Mac 모니터 선택" : "새 창의 Mac 모니터").font(.title2)
+            if openInNewWindow == nil {
+                Text("이 선택 창을 열면 기존 입력과 소리·마이크 전송을 중지합니다. 표시할 모니터를 직접 선택하세요.")
+            }
             ScrollView {
                 LazyVStack(spacing: 12) {
                     ForEach(client.visionDisplaySelection.choices) { display in
                         let token = client.visionDisplaySelection.token
+                        let target = client.visionDisplaySelection.windowTarget(macID: client.session?.macID, displayID: display.id)
                         Button {
-                            if let token {
+                            if let openInNewWindow, let target { openInNewWindow(target) }
+                            else if let token {
                                 choose(.init(requestID: UUID(), displayID: display.id, token: token))
                             }
                         } label: {
@@ -30,7 +35,11 @@ struct VisionDisplayChooser: View {
                                 }
                             }
                         }
-                        .disabled(token == nil || client.visionDisplaySelection.pending != nil)
+                        .disabled(token == nil || client.visionDisplaySelection.pending != nil ||
+                                  (openInNewWindow != nil && (target == nil || !client.visionDisplaySelection.independentWindowsAvailable ||
+                                   client.visionDisplaySelection.observedDisplay == display.id)) ||
+                                  (openInNewWindow == nil && client.visionDisplaySelection.windowTarget != nil &&
+                                   client.visionDisplaySelection.windowTarget?.displayID != display.id))
                         .accessibilityHint("이 모니터를 명시적으로 요청합니다. 체크 표시는 Mac 목록에서 관측한 현재 모니터입니다.")
                     }
                 }

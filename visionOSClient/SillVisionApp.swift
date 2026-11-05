@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import StreamProtocol
 
 @main
@@ -9,25 +10,32 @@ struct SillVisionApp: App {
     }
 
     var body: some Scene {
-        WindowGroup(id: "mac") {
+        WindowGroup(id: "mac", for: VisionDisplaySelection.WindowTarget.self) { target in
             if VisionReleaseTestContext.isTestBundle && VisionReleaseTestContext.current == nil {
                 Text("격리 테스트 실행 정보가 없거나 일치하지 않습니다.")
             } else {
-                SillVisionWindow()
+                SillVisionWindow(target: target)
             }
         }
         .defaultSize(width: 1280, height: 800)
+        .windowResizability(.contentMinSize)
     }
 }
 
 private struct SillVisionWindow: View {
-    @StateObject private var session = VisionAppSession()
+    @StateObject private var session: VisionAppSession
     @State private var window = UUID()
+    @Binding private var target: VisionDisplaySelection.WindowTarget?
+
+    init(target: Binding<VisionDisplaySelection.WindowTarget?>) {
+        _target = target
+        _session = StateObject(wrappedValue: VisionAppSession(target: target.wrappedValue))
+    }
 
     var body: some View {
         Group {
             if let lease = session.windowLease, lease.window == window {
-                SillVisionWorkspace(session: session, lease: lease).id(lease.admission)
+                SillVisionWorkspace(session: session, lease: lease, target: $target).id(lease.admission)
             }
             else {
                 VStack(spacing: 16) {
@@ -43,6 +51,7 @@ private struct SillVisionWindow: View {
 struct SillVisionWorkspace: View {
     @ObservedObject var session: VisionAppSession
     let lease: VisionWindowLease
+    @Binding private var windowTarget: VisionDisplaySelection.WindowTarget?
     @ObservedObject private var client: StreamClient
     @Environment(\.scenePhase) private var phase
     @Environment(\.openWindow) private var openWindow
@@ -59,13 +68,16 @@ struct SillVisionWorkspace: View {
     @State private var audioOfferShown = false
     @State private var audioOfferScope: VisionAudioScope?
     @State private var displayChooserShown = false
+    @State private var newWindowChooserShown = false
+    @State private var geometryProblem: String?
     @State private var macAudioShown = false
     @State private var macAudioOfferShown = false
     @State private var controlEventsShown = false
     @State private var testDestinationsShown = false
     @StateObject private var testDestinationStores = VisionTestDestinationStores()
 
-    init(session: VisionAppSession, lease: VisionWindowLease) {
+    init(session: VisionAppSession, lease: VisionWindowLease, target: Binding<VisionDisplaySelection.WindowTarget?>) {
+        self._windowTarget = target
         self.session = session
         self.lease = lease
         self.client = session.client
@@ -73,139 +85,18 @@ struct SillVisionWorkspace: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Text(client.macName.isEmpty ? "CCR Sill" : client.macName).font(.headline)
-                Spacer()
-                Button("작업 상태") {
-                    withWindowOwnership {
-                        guard phase == .active, !draftShown, !transitions.isPending else { return }
-                        keysShown = false
-                        controlEventsShown = true
-                        updateInputAdmission()
-                        releaseInput()
-                    }
-                }
-                .disabled(phase != .active || draftShown || recoveryShown || changingSource || testDestinationsShown ||
-                          displayChooserShown || macAudioModalShown || audioOfferShown || transitions.isPending)
-                .accessibilityHint("Codex와 Cursor의 원본 세션·실행 상태를 읽기 전용 패널에서 확인합니다.")
-                Button("Mac 창 추가") { openWindow(id: "mac") }
-                    .accessibilityHint("현재 창을 유지하고 Mac 화면을 사용할 새 창을 엽니다.")
-                Text(session.message).font(.caption).lineLimit(2)
-                if client.connected {
-                    Menu("오디오") {
-                        Button("Mac 오디오 장치") {
-                            openMacAudioChooser()
-                        }
-                        .disabled(!audioControlsAllowed)
-                        Button(client.visionAudio.presentation.phase.grant != nil || client.visionPlaybackDesired
-                               ? "Mac 소리 중지" : "Mac 소리 켜기") {
-                            withWindowOwnership {
-                                if client.visionAudio.presentation.phase.grant != nil || client.visionPlaybackDesired {
-                                    client.setVisionAudioDesired(false, direction: .playback)
-                                } else if audioControlsAllowed { client.setVisionAudioDesired(true, direction: .playback) }
-                            }
-                        }
-                        .disabled(!client.visionPlaybackDesired && client.visionAudio.presentation.phase.grant == nil &&
-                                  (!audioControlsAllowed || !client.visionAudioIntentContext.admitted))
-                        Text(client.visionAudioPrivacyMessage)
-                        Text("마이크는 아래 마이크 전송 설정에서 확인하세요.")
-                    }
-                    Button("프로젝트 테스트 화면") {
-                        withWindowOwnership {
-                            guard phase == .active, !transitions.isPending else { return }
-                            client.reconcileVisionTestDestinationAuthentication()
-                            clearDraft()
-                            keysShown = false
-                            testDestinationsShown = true
-                            updateInputAdmission()
-                            releaseInput()
-                        }
-                    }
-                    .accessibilityHint("연결된 Mac에서 등록한 테스트 화면을 이 기기에서 엽니다.")
-                    Button("연결 해제") { requestTransition(.disconnect) }
-                }
-            }
-            if inputSuspended {
-                Text("Mac의 입력 해제 수신을 확인하지 못해 원격 입력을 중지했습니다.").foregroundStyle(.orange)
-            }
-            if client.connected {
-                if let failure = client.visionSourceSelectionFailure {
-                    Text(failure).foregroundStyle(.orange).accessibilityLabel(failure)
-                }
-                screen
-                controls
-                Text("한 번 집기: 클릭 · 빠르게 두 번 집기: 더블클릭 · 집고 이동: 가로·세로 스크롤 · 유지했다 놓기: 오른쪽 클릭\n두 손 벌리기·모으기: 화면 확대·축소 · 두 손 좌우 회전 후 놓기: Mac 모니터 한 칸 전환\n보조 키를 선택하고 길게 집은 뒤 이동하면 드래그합니다.")
-                    .font(.caption).multilineTextAlignment(.center)
-                HStack {
-                    Button("전체 화면", action: openDisplayChooser)
-                        .accessibilityHint("연결된 Mac의 모니터를 선택합니다. 이전 호스트는 기존 전체 화면 동작을 사용합니다.")
-                    if client.visionDisplaySelection.pending != nil {
-                        Button("모니터 요청 취소") { withWindowOwnership { client.cancelVisionDisplaySelection() } }
-                    } else if client.visionDisplaySelection.inputBlocked && !displayChooserShown {
-                        Text("입력 중지 · 모니터를 다시 선택하거나 연결을 해제하세요.").font(.caption)
-                    }
-                }
-                HStack {
-                    Button("누른 입력 해제") { withWindowOwnership { input.releaseAll() } }
-                        .accessibilityHint("이 Vision 앱이 누른 키와 드래그를 해제합니다.")
-                    Spacer()
-                    if input.moving { Text("연결 경로 전환 중").font(.caption) }
-                    else if client.visionInputBinding.isModern && !client.visionInputBinding.isConfirmed {
-                        Text("현재 Mac 화면의 표시 준비를 기다리는 중입니다.").font(.caption)
-                    }
-                    else if client.visionInputBinding.isLegacy {
-                        Text("이전 Mac 호환 모드입니다. 화면 세대 확인은 지원되지 않습니다.").font(.caption)
-                    }
-                    else if client.visionInputBinding == .awaitingCatalog {
-                        Text("Mac 화면 정보를 기다리는 중입니다. 입력은 확인 후 사용할 수 있습니다.").font(.caption)
-                    }
-                }
-                VisionAudioControls(client: client, audio: client.visionAudio,
-                                    allowStart: audioControlsAllowed,
-                                    admit: withWindowOwnership)
-                VisionMicrophoneControls(client: client,
-                                         allowStart: audioControlsAllowed,
-                                         admit: withWindowOwnership)
-                VStack(alignment: .leading, spacing: 6) {
-                    Picker("통화 제어 대상", selection: Binding(
-                        get: { client.visionProviderCall.target },
-                        set: { target in
-                            withWindowOwnership {
-                                if audioControlsAllowed { client.visionProviderCall.selectTarget(target) }
-                            }
-                        })) {
-                        ForEach(VisionCallTarget.allCases, id: \.self) { target in
-                            Text(target.title).tag(target)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(!audioControlsAllowed || !client.visionProviderCall.canChangeTarget)
-                    .accessibilityHint("통화 제어 대상을 선택합니다. 통화나 오디오 장치를 자동으로 전환하지 않습니다.")
-                    if client.visionProviderCall.target == .chatgptDots {
-                        HStack {
-                            Button("Dots 통화 시작") {
-                                withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.start) } }
-                            }
-                            .disabled(!audioControlsAllowed || !client.visionProviderCanStart)
-                            Button("Dots 통화 종료") {
-                                withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.stop) } }
-                            }
-                            .disabled(!audioControlsAllowed || !client.visionProviderCanStop)
-                        }
-                    }
-                    Text(client.visionProviderCall.message).font(.caption)
-                    Text("대상 선택만으로 통화나 오디오 장치는 바뀌지 않습니다.").font(.caption)
-                }
-            } else {
-                hosts
-            }
-            #if DEBUG && targetEnvironment(simulator)
-            if let peer = session.remotePeer { VisionReleaseRemoteStatus(peer: peer) }
-            #endif
+        Group {
+            if client.connected { screen }
+            else { hosts.padding(20) }
         }
-        .padding(20)
-        .frame(minWidth: 700, minHeight: 500)
+        .background(VisionWindowAspect(videoSize: client.videoSize, problem: $geometryProblem))
+        .ornament(attachmentAnchor: .scene(.top), contentAlignment: .bottom) {
+            ScrollView {
+                workspaceControls
+            }
+            .frame(width: 1100, height: 220)
+            .glassBackgroundEffect()
+        }
         .ornament(attachmentAnchor: .scene(.bottom), contentAlignment: .top) {
             if session.owns(lease), client.connected, client.visionSentrySnapshot.available,
                client.active != .none || client.visionSentrySnapshot.state?.control != nil {
@@ -281,6 +172,8 @@ struct SillVisionWorkspace: View {
         }
         .onChange(of: controlEventsShown) { _, _ in updateInputAdmission() }
         .onChange(of: testDestinationsShown) { _, _ in updateInputAdmission() }
+        .onChange(of: client.visionInputBinding, initial: true) { _, _ in pinCurrentWindow() }
+        .onChange(of: client.visionDisplaySelection.revision) { _, _ in pinCurrentWindow() }
         .onChange(of: client.videoSize) { _, _ in releaseInput() }
         .onChange(of: client.active) { _, _ in releaseInput() }
         .onChange(of: client.visionTextScope) { _, _ in
@@ -309,6 +202,18 @@ struct SillVisionWorkspace: View {
             }, cancel: { withWindowOwnership { client.cancelVisionDisplaySelection() } },
                close: { displayChooserShown = false })
         }
+        .sheet(isPresented: $newWindowChooserShown) {
+            VisionDisplayChooser(client: client, openInNewWindow: { target in
+                withWindowOwnership {
+                    guard phase == .active,
+                          client.visionDisplaySelection.windowTarget(macID: client.session?.macID, displayID: target.displayID) == target,
+                          client.visionDisplaySelection.observedDisplay != target.displayID else { return }
+                    openWindow(id: "mac", value: target)
+                    newWindowChooserShown = false
+                }
+            }, choose: { _ in }, cancel: {}, close: { newWindowChooserShown = false })
+        }
+        .onChange(of: newWindowChooserShown) { _, _ in updateInputAdmission() }
         .sheet(isPresented: $controlEventsShown) {
             ControlEventsPanel(controller: session.controlEvents, enrollment: session.controlEnrollment, close: { controlEventsShown = false })
         }
@@ -353,11 +258,147 @@ struct SillVisionWorkspace: View {
         }
     }
 
+    private var workspaceControls: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text(client.macName.isEmpty ? "CCR Sill" : client.macName).font(.headline)
+                Spacer()
+                Button("작업 상태") {
+                    withWindowOwnership {
+                        guard phase == .active, !draftShown, !transitions.isPending else { return }
+                        keysShown = false
+                        controlEventsShown = true
+                        updateInputAdmission()
+                        releaseInput()
+                    }
+                }
+                .disabled(phase != .active || draftShown || recoveryShown || changingSource || testDestinationsShown ||
+                          displayChooserShown || macAudioModalShown || audioOfferShown || transitions.isPending)
+                .accessibilityHint("Codex와 Cursor의 원본 세션·실행 상태를 읽기 전용 패널에서 확인합니다.")
+                Button("다른 모니터 창", action: openAdditionalDisplayChooser)
+                    .disabled(!client.connected || !client.visionDisplaySelection.independentWindowsAvailable)
+                    .accessibilityHint("모니터를 선택한 뒤 그 모니터에 고정된 공간 창을 엽니다.")
+                Text(session.message).font(.caption).lineLimit(2)
+                if client.connected {
+                    Menu("오디오") {
+                        Button("Mac 오디오 장치") {
+                            openMacAudioChooser()
+                        }
+                        .disabled(!audioControlsAllowed)
+                        Button(client.visionAudio.presentation.phase.grant != nil || client.visionPlaybackDesired
+                               ? "Mac 소리 중지" : "Mac 소리 켜기") {
+                            withWindowOwnership {
+                                if client.visionAudio.presentation.phase.grant != nil || client.visionPlaybackDesired {
+                                    client.setVisionAudioDesired(false, direction: .playback)
+                                } else if audioControlsAllowed { client.setVisionAudioDesired(true, direction: .playback) }
+                            }
+                        }
+                        .disabled(!client.visionPlaybackDesired && client.visionAudio.presentation.phase.grant == nil &&
+                                  (!audioControlsAllowed || !client.visionAudioIntentContext.admitted))
+                        Text(client.visionAudioPrivacyMessage)
+                        Text("마이크는 아래 마이크 전송 설정에서 확인하세요.")
+                    }
+                    Button("프로젝트 테스트 화면") {
+                        withWindowOwnership {
+                            guard phase == .active, !transitions.isPending else { return }
+                            client.reconcileVisionTestDestinationAuthentication()
+                            clearDraft()
+                            keysShown = false
+                            testDestinationsShown = true
+                            updateInputAdmission()
+                            releaseInput()
+                        }
+                    }
+                    .accessibilityHint("연결된 Mac에서 등록한 테스트 화면을 이 기기에서 엽니다.")
+                    Button("연결 해제") { requestTransition(.disconnect) }
+                }
+            }
+            if inputSuspended {
+                Text("Mac의 입력 해제 수신을 확인하지 못해 원격 입력을 중지했습니다.").foregroundStyle(.orange)
+            }
+            if client.connected {
+                if let failure = client.visionSourceSelectionFailure {
+                    Text(failure).foregroundStyle(.orange).accessibilityLabel(failure)
+                }
+                if let geometryProblem { Text(geometryProblem).foregroundStyle(.orange) }
+                if !client.visionDisplaySelection.independentWindowsAvailable {
+                    Text("이 Mac의 독립 모니터 창 지원을 확인하지 못했습니다.").font(.caption)
+                }
+                controls
+                HStack {
+                    Button("전체 화면", action: openDisplayChooser)
+                        .accessibilityHint("연결된 Mac의 모니터를 선택합니다. 이전 호스트는 기존 전체 화면 동작을 사용합니다.")
+                    if client.visionDisplaySelection.pending != nil {
+                        Button("모니터 요청 취소") { withWindowOwnership { client.cancelVisionDisplaySelection() } }
+                    } else if client.visionDisplaySelection.inputBlocked && !displayChooserShown {
+                        Text("입력 중지 · 모니터를 다시 선택하거나 연결을 해제하세요.").font(.caption)
+                    }
+                }
+                HStack {
+                    Button("누른 입력 해제") { withWindowOwnership { input.releaseAll() } }
+                        .accessibilityHint("이 Vision 앱이 누른 키와 드래그를 해제합니다.")
+                    Spacer()
+                    if input.moving { Text("연결 경로 전환 중").font(.caption) }
+                    else if client.visionInputBinding.isModern && !client.visionInputBinding.isConfirmed {
+                        Text("현재 Mac 화면의 표시 준비를 기다리는 중입니다.").font(.caption)
+                    }
+                    else if client.visionInputBinding.isLegacy {
+                        Text("이전 Mac 호환 모드입니다. 화면 세대 확인은 지원되지 않습니다.").font(.caption)
+                    }
+                    else if client.visionInputBinding == .awaitingCatalog {
+                        Text("Mac 화면 정보를 기다리는 중입니다. 입력은 확인 후 사용할 수 있습니다.").font(.caption)
+                    }
+                }
+                VisionAudioControls(client: client, audio: client.visionAudio,
+                                    allowStart: audioControlsAllowed,
+                                    admit: withWindowOwnership)
+                VisionMicrophoneControls(client: client,
+                                         allowStart: audioControlsAllowed,
+                                         admit: withWindowOwnership)
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("통화 제어 대상", selection: Binding(
+                        get: { client.visionProviderCall.target },
+                        set: { target in
+                            withWindowOwnership {
+                                if audioControlsAllowed { client.visionProviderCall.selectTarget(target) }
+                            }
+                        })) {
+                        ForEach(VisionCallTarget.allCases, id: \.self) { target in
+                            Text(target.title).tag(target)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(!audioControlsAllowed || !client.visionProviderCall.canChangeTarget)
+                    .accessibilityHint("통화 제어 대상을 선택합니다. 통화나 오디오 장치를 자동으로 전환하지 않습니다.")
+                    if client.visionProviderCall.target == .chatgptDots {
+                        HStack {
+                            Button("Dots 통화 시작") {
+                                withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.start) } }
+                            }
+                            .disabled(!audioControlsAllowed || !client.visionProviderCanStart)
+                            Button("Dots 통화 종료") {
+                                withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.stop) } }
+                            }
+                            .disabled(!audioControlsAllowed || !client.visionProviderCanStop)
+                        }
+                    }
+                    Text(client.visionProviderCall.message).font(.caption)
+                    Text("대상 선택만으로 통화나 오디오 장치는 바뀌지 않습니다.").font(.caption)
+                }
+            }
+            #if DEBUG && targetEnvironment(simulator)
+            if let peer = session.remotePeer { VisionReleaseRemoteStatus(peer: peer) }
+            #endif
+        }
+        .padding(16)
+    }
+
     private var hosts: some View {
         VStack(spacing: 18) {
             Text("Mac 화면을 공간 창에서 사용합니다").font(.title2)
             Text(session.message)
-            ForEach(client.macs) { mac in
+            ForEach(client.macs.filter { session.client.visionDisplaySelection.windowTarget == nil ||
+                $0.savedID == session.client.visionDisplaySelection.windowTarget?.macID }) { mac in
                 Button {
                     withWindowOwnership { if let id = mac.savedID { client.connectVisionTrustedMac(id) } }
                 } label: {
@@ -376,7 +417,8 @@ struct SillVisionWorkspace: View {
             Text("신뢰 Mac 연결 확인").font(.title2)
             Text("저장된 신뢰 Mac만 선택할 수 있습니다. Mac과 기기 키·공개 연결 설정이 다르면 자동 등록하지 않습니다.")
             Text(session.message)
-            ForEach(client.savedMacs.filter { SavedMacs.automaticTarget([$0], preferredID: $0.macID) != nil }) { mac in
+            ForEach(client.savedMacs.filter { SavedMacs.automaticTarget([$0], preferredID: $0.macID) != nil &&
+                (client.visionDisplaySelection.windowTarget == nil || $0.macID == client.visionDisplaySelection.windowTarget?.macID) }) { mac in
                 Button(mac.name) {
                     withWindowOwnership { client.connectVisionTrustedMac(mac.macID) }
                 }
@@ -395,6 +437,7 @@ struct SillVisionWorkspace: View {
         GeometryReader { geo in
             ZStack {
                 StreamView(client: client)
+                    .opacity(targetPresented ? 1 : 0)
                     .scaleEffect(input.viewport.scale, anchor: .center)
                     .offset(input.viewport.offset)
                 #if DEBUG && targetEnvironment(simulator)
@@ -410,7 +453,9 @@ struct SillVisionWorkspace: View {
                 VisionSpatialInput(input: input,
                                    geometry: VisionPointer.Geometry(bounds: CGRect(origin: .zero, size: geo.size), video: client.videoSize),
                                    admit: withWindowOwnership)
-                if client.active == .none {
+                if !targetPresented {
+                    Text("고정한 Mac 모니터의 화면 확인을 기다리고 있습니다.")
+                } else if client.active == .none {
                     Button("Mac 전체 화면 표시", action: openDisplayChooser)
                 }
             }
@@ -442,16 +487,44 @@ struct SillVisionWorkspace: View {
         .disabled(!input.canSend || draftShown)
     }
 
+    private func pinCurrentWindow() {
+        guard session.owns(lease), windowTarget == nil,
+              client.visionDisplaySelection.windowTarget == nil,
+              case .presented(let epoch) = client.visionInputBinding,
+              let displayID = client.visionDisplaySelection.observedDisplay,
+              let target = client.visionDisplaySelection.windowTarget(macID: client.session?.macID, displayID: displayID) else { return }
+        var selection = client.visionDisplaySelection
+        selection.windowTarget = target
+        guard selection.windowTargetPresented(macID: client.session?.macID, epoch: epoch) else { return }
+        windowTarget = target
+        client.visionDisplaySelection = selection
+    }
+
+    private var targetPresented: Bool {
+        let epoch: VideoEpoch?
+        if case .presented(let value) = client.visionInputBinding { epoch = value }
+        else { epoch = nil }
+        return client.visionDisplaySelection.windowTargetPresented(macID: client.session?.macID, epoch: epoch)
+    }
+
     private var audioControlsAllowed: Bool {
         session.owns(lease) && phase == .active && client.connected &&
         !transitions.isPending && !inputSuspended && !controlEventsShown && !draftShown && !recoveryShown && !changingSource && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var inputAllowed: Bool {
-        phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !controlEventsShown && !draftShown && !recoveryShown && !changingSource && !testDestinationsShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
+        targetPresented && !newWindowChooserShown && phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !controlEventsShown && !draftShown && !recoveryShown && !changingSource && !testDestinationsShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
     private var macAudioModalShown: Bool { macAudioShown || macAudioOfferShown }
+
+    private func openAdditionalDisplayChooser() {
+        guard session.owns(lease), phase == .active, !draftShown, !transitions.isPending,
+              client.visionDisplaySelection.independentWindowsAvailable else { return }
+        keysShown = false
+        newWindowChooserShown = true
+        releaseInput()
+    }
 
     private func openDisplayChooser() {
         withWindowOwnership {
@@ -741,6 +814,51 @@ private enum VisionConnectionCopy {
         case .noKey: return "Vision Pro의 연결 키를 사용할 수 없습니다. 잠금을 해제한 뒤 앱을 다시 열어 주세요."
         case .homeClosed(let mac): return "\(mac)의 페어링이 종료됐습니다. Mac에서 다시 시작해 주세요."
         case .macSaid(let words): return words
+        }
+    }
+}
+
+
+private struct VisionWindowAspect: UIViewRepresentable {
+    let videoSize: CGSize
+    @Binding var problem: String?
+
+    func makeUIView(context: Context) -> AspectView { AspectView() }
+    func updateUIView(_ view: AspectView, context: Context) {
+        view.report = { problem = $0 }
+        view.videoSize = videoSize
+        view.applyAspect()
+    }
+
+    final class AspectView: UIView {
+        var videoSize = CGSize.zero
+        var report: ((String?) -> Void)?
+        private var appliedScene: ObjectIdentifier?
+        private var appliedRatio: CGFloat?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            applyAspect()
+        }
+
+        func applyAspect() {
+            guard let scene = window?.windowScene,
+                  let size = VisionWindowGeometry.size(video: videoSize, current: scene.coordinateSpace.bounds.size) else { return }
+            let identity = ObjectIdentifier(scene)
+            let ratio = videoSize.width / videoSize.height
+            guard appliedScene != identity || appliedRatio != ratio else { return }
+            appliedScene = identity
+            appliedRatio = ratio
+            // Resolve through this view's scene so another spatial window is never resized.
+            DispatchQueue.main.async { [weak self, weak scene] in
+                guard let self, let scene, self.window?.windowScene === scene,
+                      self.appliedRatio == ratio else { return }
+                self.report?(nil)
+                scene.requestGeometryUpdate(.Vision(size: size, resizingRestrictions: .uniform)) { [weak self] _ in
+                    guard let self, self.appliedRatio == ratio else { return }
+                    self.report?("영상 비율에 맞춘 창 크기 변경을 적용하지 못했습니다.")
+                }
+            }
         }
     }
 }

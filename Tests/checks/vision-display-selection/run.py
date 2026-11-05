@@ -63,6 +63,9 @@ def prepare(root):
         'bounded scrolling keeps status and close reachable': 'ScrollView {' in chooser and 'LazyVStack' in chooser and '.frame(maxHeight: 320)' in chooser,
         'checkmark follows observed state': 'observedDisplay == display.id' in chooser,
         'UI uses structured command': 'client.selectVisionDisplay(command)' in view and 'requestID: UUID(), displayID: display.id, token: token' in chooser,
+        'new window picker preserves audio and current source': all(term not in block(view, 'private func openAdditionalDisplayChooser()') for term in
+            ['setVisionDisplayModal', 'clearDraft', 'visionAudio', 'microphoneSourceWillChange', 'selectVisionDisplay']),
+        'window uses typed target value': 'for: VisionDisplaySelection.WindowTarget.self' in view and 'openWindow(id: "mac", value: target)' in view and 'openWindow(id: "mac")' not in view,
         'pending and modal gate native input': '!client.visionDisplaySelection.inputBlocked' in (root / 'visionOSClient/VisionInputSession.swift').read_text(),
         'pending gates source and draft': '!visionDisplaySelection.inputBlocked' in request and '!visionDisplaySelection.inputBlocked' in block(stream, 'func captureVisionTextTarget()'),
         'automatic paths guarded for Vision': '#if os(visionOS)\n                if self.visionDisplaySelection.blocksDesktopRequest' in stream,

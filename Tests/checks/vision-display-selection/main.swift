@@ -722,5 +722,75 @@ drain()
 check(replacementCommand != nil && lateInvalidation.visionDisplaySelection.pending?.command == replacementCommand,
       "이전 연결의 늦은 실패 처리가 새 연결의 선택을 취소하지 않는다")
 
+
+var independentCatalog = automaticCatalog()
+independentCatalog.independentStreams = 1
+independentCatalog.sourceSelectionEffects = 0
+var chooserModel = model()
+chooserModel.observe(.init(independentCatalog))
+let targetA = chooserModel.windowTarget(macID: "mac-A", displayID: 11)!
+let targetB = chooserModel.windowTarget(macID: "mac-A", displayID: 22)!
+check(targetA != targetB && Set([targetA, targetB]).count == 2, "two actual display identities yield distinct window values")
+let restoredB = try! JSONDecoder().decode(VisionDisplaySelection.WindowTarget.self, from: JSONEncoder().encode(targetB))
+check(restoredB == targetB, "close and reopen retains exact target identity")
+check(!targetB.matches(macID: "mac-B", catalog: .init(independentCatalog)), "same display number on another Mac never matches")
+var newerHost = independentCatalog; newerHost.launchID = "replacement-host"
+check(!targetB.matches(macID: "mac-A", catalog: .init(newerHost)), "host restart cannot silently rebind a window")
+var newerInventory = independentCatalog; newerInventory.displayInventoryID = UUID()
+check(!targetB.matches(macID: "mac-A", catalog: .init(newerInventory)), "changed inventory cannot reuse a numeric display ID")
+var noIndependence = independentCatalog; noIndependence.independentStreams = nil
+chooserModel.observe(.init(noIndependence))
+check(chooserModel.windowTarget(macID: "mac-A", displayID: 22) == nil, "displaySelection alone cannot offer independent windows")
+noIndependence.independentStreams = 1; noIndependence.sourceSelectionEffects = 1
+chooserModel.observe(.init(noIndependence))
+check(!chooserModel.independentWindowsAvailable, "shared source effects refuse independent window creation")
+let (unsupportedPinned, unsupportedPeer) = client()
+unsupportedPinned.session = .init(macID: "mac-A"); unsupportedPinned.trustedDisplayPeer = true
+unsupportedPinned.visionDisplaySelection.windowTarget = targetB
+unsupportedPinned.observeVisionDisplays(noIndependence, from: unsupportedPeer)
+check(unsupportedPinned.releaseCallbacks.isEmpty && unsupportedPeer.sent.isEmpty,
+      "pinned reconnect never requests a display on a host with shared source effects")
+let unsupportedCommand = VisionDisplaySelection.Command(requestID: UUID(), displayID: 22, token: unsupportedPinned.visionDisplaySelection.token!)
+check(unsupportedPinned.visionDisplaySelection.preview(unsupportedCommand).code == .unsupportedCapability,
+      "manual pinned selection also refuses host independence downgrade")
+let (windowA, peerA) = client()
+let (windowB, peerB) = client()
+for (window, target, peer) in [(windowA, targetA, peerA), (windowB, targetB, peerB)] {
+    window.session = .init(macID: "mac-A"); window.trustedDisplayPeer = true
+    window.visionDisplaySelection.windowTarget = target
+    window.observeVisionDisplays(independentCatalog, from: peer)
+}
+check(windowA.visionDisplaySelection.pending?.command.displayID == 11 &&
+      windowB.visionDisplaySelection.pending?.command.displayID == 22, "each real adapter requests its pinned display rather than main")
+windowA.releaseCallbacks[0](true); windowB.releaseCallbacks[0](true); drain()
+let selectedA = peerA.sent.compactMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }.last
+let selectedB = peerB.sent.compactMap { Wire.decode(DisplaySelection.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }.last
+check(selectedA?.displayID == 11 && selectedB?.displayID == 22, "two window peers submit different display IDs on the existing wire")
+let beforeCloseB = windowB.visionDisplaySelection.pending?.command
+windowA.admitVisionDisplays(lease: nil, foreground: false)
+windowA.connection = nil
+check(windowB.visionDisplaySelection.pending?.command == beforeCloseB, "closing A does not cancel B selection")
+let targetEpoch = epoch("target-B")
+var presentedB = independentCatalog
+presentedB.active = .desktop; presentedB.activeDisplayID = 22
+presentedB.desktopSelectionRequired = false; presentedB.inputGeneration = "target-B"; presentedB.videoEpoch = targetEpoch
+windowB.observeVisionDisplays(presentedB, from: peerB)
+windowB.visionInputBinding = .presented(targetEpoch)
+windowB.confirmVisionDisplayPresentation()
+check(windowB.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: targetEpoch), "target admits only matching catalog and presented epoch")
+var swapped = presentedB; swapped.activeDisplayID = 11
+windowB.observeVisionDisplays(swapped, from: peerB)
+check(!windowB.visionDisplaySelection.windowTargetPresented(macID: "mac-A", epoch: targetEpoch), "source replacement hides foreign display even with a presented epoch")
+let wrongPinnedCommand = VisionDisplaySelection.Command(requestID: UUID(), displayID: 11, token: windowB.visionDisplaySelection.token!)
+check(windowB.visionDisplaySelection.preview(wrongPinnedCommand).code == .staleScope, "manual and adjacent selection cannot retarget a pinned window")
+let (reopenedB, reopenedPeer) = client()
+reopenedB.session = .init(macID: "mac-A"); reopenedB.trustedDisplayPeer = true
+reopenedB.visionDisplaySelection.windowTarget = restoredB
+reopenedB.observeVisionDisplays(independentCatalog, from: reopenedPeer)
+check(reopenedB.visionDisplaySelection.pending?.command.displayID == 22, "reopened window selects B rather than preferred main")
+reopenedB.connection = nil
+check(reopenedB.visionDisplaySelection.windowTarget == targetB && reopenedB.visionDisplaySelection.catalog == nil,
+      "disconnect clears catalog and preserves only explicit target intent")
+
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)

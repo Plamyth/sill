@@ -2,6 +2,37 @@ import Foundation
 import StreamProtocol
 
 struct VisionDisplaySelection {
+    // A window value is scoped to the authenticated Mac and the exact host inventory.
+    struct WindowTarget: Codable, Hashable {
+        let macID: String
+        let launchID: String
+        let inventoryID: UUID
+        let displayID: UInt32
+
+        func matches(macID: String?, catalog: Catalog?) -> Bool {
+            guard let catalog else { return false }
+            return self.macID == macID && launchID == catalog.launchID &&
+                inventoryID == catalog.inventory && catalog.validInventory &&
+                catalog.displays?.contains(where: { $0.id == displayID }) == true
+        }
+    }
+    var windowTarget: WindowTarget?
+
+    func windowTarget(macID: String?, displayID: UInt32) -> WindowTarget? {
+        guard let macID, !macID.isEmpty, let catalog, catalog.capability == 1,
+              catalog.validInventory, let launchID = catalog.launchID, !launchID.isEmpty,
+              let inventoryID = catalog.inventory, choices.contains(where: { $0.id == displayID }) else { return nil }
+        guard independentWindowsAvailable else { return nil }
+        return WindowTarget(macID: macID, launchID: launchID, inventoryID: inventoryID, displayID: displayID)
+    }
+
+    func windowTargetPresented(macID: String?, epoch: VideoEpoch?) -> Bool {
+        guard let windowTarget else { return true }
+        guard windowTarget.matches(macID: macID, catalog: catalog), let catalog, let epoch else { return false }
+        return independentWindowsAvailable && catalog.source == .desktop && catalog.activeDisplay == windowTarget.displayID &&
+            catalog.epoch == epoch && epoch.matches(source: .desktop, generation: catalog.generation)
+    }
+
     struct Token: Codable, Equatable {
         let peerEpoch: UUID
         let window: UUID
@@ -52,6 +83,8 @@ struct VisionDisplaySelection {
     }
     struct Catalog: Equatable {
         let capability: Int?
+        let independentStreams: Int?
+        let sourceSelectionEffects: Int?
         let automaticCapability: Int?
         let selectionRevision: String?
         let launchID: String?
@@ -65,6 +98,8 @@ struct VisionDisplaySelection {
         let selectionAdmission: SourceSelectionAdmission?
 
         init(_ list: WindowList) {
+            independentStreams = list.independentStreams
+            sourceSelectionEffects = list.sourceSelectionEffects
             capability = list.displaySelection; inventory = list.displayInventoryID
             automaticCapability = list.automaticDisplaySelection
             selectionRevision = list.selectionRevision; launchID = list.launchID
@@ -154,7 +189,12 @@ struct VisionDisplaySelection {
               catalog.capability == 1, catalog.validInventory, let inventory = catalog.inventory,
               let token else { return nil }
         let target: DisplayInfo?
-        if let previous = automaticInventories[inventory] {
+        if let windowTarget {
+            guard independentWindowsAvailable, windowTarget.matches(macID: macID, catalog: catalog) else { return nil }
+            target = choices.first { $0.id == windowTarget.displayID }
+            if let previous = automaticInventories[inventory],
+               admission.generation <= previous.admissionGeneration { return nil }
+        } else if let previous = automaticInventories[inventory] {
             guard admission.generation > previous.admissionGeneration, catalog.displays == previous.displays else { return nil }
             target = choices.first { $0.id == previous.displayID }
         } else if automaticInventories.count >= 64 { return nil }
@@ -201,6 +241,10 @@ struct VisionDisplaySelection {
               let launchID = catalog.launchID, !launchID.isEmpty, let inventoryID = catalog.inventory,
               let displayID = catalog.activeDisplay else { return nil }
         return Remembered(macID: macID, launchID: launchID, inventoryID: inventoryID, displayID: displayID)
+    }
+
+    var independentWindowsAvailable: Bool {
+        catalog?.independentStreams == 1 && catalog?.sourceSelectionEffects == 0 && !choices.isEmpty
     }
 
     var inputBlocked: Bool { modal || unresolved || pending != nil }
@@ -337,6 +381,10 @@ struct VisionDisplaySelection {
             else if catalog.capability != 1 { code = .unsupportedCapability }
             else if !catalog.validInventory { code = .invalidInventory }
             else if token != command.token { code = .staleScope }
+            else if windowTarget != nil && !independentWindowsAvailable { code = .unsupportedCapability }
+            else if let windowTarget,
+                    (windowTarget.launchID != catalog.launchID || windowTarget.inventoryID != catalog.inventory ||
+                     windowTarget.displayID != command.displayID) { code = .staleScope }
             else if !choices.contains(where: { $0.id == command.displayID }) { code = .unknownDisplay }
             else if pending != nil { code = .busy }
             else { code = .ready }

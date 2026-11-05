@@ -72,8 +72,10 @@ check('client replacement retires old input before rebinding', block(session, 'f
 check('rotation has no remote gain owner ticket preview or commit', all(token not in session for token in ['gainOwner', 'gainTicket', 'VisionAudioGain']))
 check('eight percent zoom history suppresses rotation', all(token in block(session, 'func magnify(') for token in [
     'zoom.blocksRotation || factor <= 0.92 || factor >= 1.08', 'if magnification?.blocksRotation == true { rotation = nil }']))
-check('Korean guidance describes monitor rotation and optional modifier drag', 'Mac 모니터' in spatial and '25도' in spatial and
-      '보조 키를 선택하고 길게 집은 뒤' in spatial and 'Mac 모니터 한 칸 전환' in workspace and '보조 키를 선택하고 길게 집은 뒤' in workspace)
+check('Korean gesture guidance remains accessible without occupying video viewport', 'Mac 모니터' in spatial and '25도' in spatial and
+      '보조 키를 선택하고 길게 집은 뒤' in spatial and 'Text("한 번 집기:' not in workspace and
+      '.ornament(attachmentAnchor: .scene(.top)' in workspace)
+
 check('native anchor and captured revision survive recognizer cancellation', all(token in spatial for token in ['zoom.startLocation', '@State private var revision: UUID?', 'let ticket = revision ?? input.gestureRevision', '.onChange(of: recognizing)', 'input.finishGesture(revision: ticket)', '.onChange(of: geometry, initial: true)']))
 check('stream transform and viewport inverse agree on centered scale and offset', all(token in workspace for token in ['.scaleEffect(input.viewport.scale, anchor: .center)', '.offset(input.viewport.offset)']) and all(token in pointer for token in ['point.x - geometry.bounds.midX - offset.width', 'point.y - geometry.bounds.midY - offset.height', '/ scale', 'clamp || geometry.bounds.contains(point)', 'clamp || rect.contains', 'min(4, max(1, scale * factor))']))
 check('no gaze polling grid or new tracking permission', all(token not in spatial + pointer for token in ['onContinuousHover', 'ARKitSession', 'queryDeviceAnchor', 'eyeTracking', 'hoverGrid']))

@@ -255,3 +255,15 @@ struct VisionPointer {
         return releases
     }
 }
+
+
+struct VisionWindowGeometry {
+    static func size(video: CGSize, current: CGSize) -> CGSize? {
+        guard video.width.isFinite, video.height.isFinite, video.width > 0, video.height > 0,
+              current.width.isFinite, current.width > 0 else { return nil }
+        let width = max(320, current.width)
+        let height = width * video.height / video.width
+        guard height.isFinite, height > 0 else { return nil }
+        return CGSize(width: width, height: height)
+    }
+}

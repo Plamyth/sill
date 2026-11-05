@@ -64,6 +64,8 @@ struct Workspace {
     let lease = 1
     let input = Input()
     var client = Client()
+    var newWindowChooserShown = false
+    var targetPresented = true
     var phase = ScenePhase.active
     var transitions = Transition()
     var inputSuspended = false
@@ -97,6 +99,12 @@ func verify(_ workspace: inout Workspace, _ label: String, _ expected: (Bool, Bo
     check(workspace.input.allowed, expected.0, label + " published input")
     check(workspace.client.visionAudioIntentModal, expected.2, label + " audio intent modal")
 }
+var mismatchedTarget = Workspace()
+mismatchedTarget.targetPresented = false
+verify(&mismatchedTarget, "different monitor frame cannot admit input or audio", (false, true, false))
+var additionalPicker = Workspace()
+additionalPicker.newWindowChooserShown = true
+verify(&additionalPicker, "new window chooser pauses input while preserving audio intent", (false, true, false))
 var normal = Workspace()
 verify(&normal, "normal without input mode", (true, true, false))
 normal.client.active = .window

@@ -22,7 +22,7 @@ final class VisionAppSession: ObservableObject {
     #endif
     private let launch: VisionCableBootstrap<FoundMac>.Launch
 
-    init() {
+    init(target: VisionDisplaySelection.WindowTarget? = nil) {
         launch = .parse(CommandLine.arguments)
         #if DEBUG && targetEnvironment(simulator)
         if VisionReleaseTestContext.isText {
@@ -32,6 +32,7 @@ final class VisionAppSession: ObservableObject {
         #else
         client = StreamClient()
         #endif
+        client.visionDisplaySelection.windowTarget = target
         if !VisionReleaseTestContext.usesSceneLifecycle {
             message = "시뮬레이터 격리 테스트입니다. Mac 연결은 사용하지 않습니다."
             return
@@ -155,8 +156,14 @@ final class VisionAppSession: ObservableObject {
         }
         #endif
         client.startRemote()
-        expectedPin = client.visionExpectedMacPin
-        client.armSavedMacAutoConnect()
+        if let target = client.visionDisplaySelection.windowTarget {
+            expectedPin = client.savedMac(target.macID)?.fingerprintData
+            client.stopSavedMacAutoConnect()
+            client.connectVisionTrustedMac(target.macID)
+        } else {
+            expectedPin = client.visionExpectedMacPin
+            client.armSavedMacAutoConnect()
+        }
         client.visionStartupStarted = true
         client.startBrowsing()
         setForeground(foreground)
@@ -217,8 +224,9 @@ final class VisionAppSession: ObservableObject {
         } else { expectedMatched = false }
         let catalog = client.connected && client.visionInputBinding != .awaitingCatalog
         let presented: Bool
-        if case .presented = client.visionInputBinding {
-            presented = foreground && client.connected && client.active != .none
+        if case .presented(let epoch) = client.visionInputBinding {
+            presented = foreground && client.connected && client.active != .none &&
+                client.visionDisplaySelection.windowTargetPresented(macID: client.session?.macID, epoch: epoch)
         } else { presented = false }
         let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
         writer.write(VisionAutoConnectStatus(build: build, startupMode: mode, phase: phase,

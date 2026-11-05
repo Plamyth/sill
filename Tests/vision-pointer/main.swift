@@ -243,4 +243,29 @@ check(transition.settle(replacement, confirmed: false) == nil, "missing receipt 
 let disconnect = transition.request(.disconnect)!
 check(transition.request(.desktop) == nil, "source cannot supersede disconnect")
 check(transition.settle(disconnect, confirmed: true) == .disconnect, "disconnect keeps priority")
+
+for video in [CGSize(width: 1920, height: 1080), CGSize(width: 2560, height: 1600),
+              CGSize(width: 1080, height: 1920), CGSize(width: 3440, height: 1440)] {
+    for width: CGFloat in [480, 900, 1280, 1800] {
+        let window = VisionWindowGeometry.size(video: video, current: CGSize(width: width, height: 700))!
+        let geometry = VisionPointer.Geometry(bounds: CGRect(origin: .zero, size: window), video: video)
+        let rect = geometry.fittedRect!
+        check(abs(rect.width - window.width) < 0.00001 && abs(rect.height - window.height) < 0.00001,
+              "uniform window uses entire viewport without cropping or letterbox")
+        let center = CGPoint(x: window.width / 2, y: window.height / 2)
+        check(near(VisionViewport().point(center, in: geometry), CGPoint(x: 0.5, y: 0.5)), "gaze center matches full video rect")
+        let anchor = CGPoint(x: window.width * 0.25, y: window.height * 0.25)
+        let zoomed = VisionViewport().magnified(by: 2, at: anchor, in: geometry)!
+        check(near(zoomed.point(anchor, in: geometry), CGPoint(x: 0.25, y: 0.25)), "zoom uses the same video anchor")
+        var pointer = VisionPointer()
+        _ = pointer.receive([.init(id: 700, timestamp: 0, location: center, phase: .active)], geometry: geometry, viewport: .init())
+        let scrolled = pointer.receive([.init(id: 700, timestamp: 0.1,
+            location: CGPoint(x: center.x + window.width * 0.1, y: center.y), phase: .active)], geometry: geometry, viewport: .init())
+        check(scrolled.contains { if case .scroll(_, _, let dx, let dy) = $0 { return abs(dx - 0.1) < 0.00001 && abs(dy) < 0.00001 }; return false },
+              "scroll normalizes against the same complete viewport")
+    }
+}
+check(VisionWindowGeometry.size(video: .zero, current: CGSize(width: 900, height: 600)) == nil, "unknown source size cannot request geometry")
+check(VisionWindowGeometry.size(video: CGSize(width: CGFloat.nan, height: 1080), current: CGSize(width: 900, height: 600)) == nil, "nonfinite source size cannot request geometry")
+
 print("Vision input: \(count) behavioral checks passed")
