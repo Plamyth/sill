@@ -6,8 +6,9 @@
 
 - 기준은 `origin integration/ccr-ipad`의 `ff98f3c05361ee9a6777704c80783e3c30413f04`, tree `1de78b48752e3821130eea50f7b258a08f2b09fe`다.
 - 정상 앱은 `com.ambrion.sillcanvas.ipad`다. 이미 실행 중일 때만 `activate()`한다. `launch`, `terminate`, launch arguments/environment 변경은 없다. 상태 확인과 activate 사이 앱이 종료되는 경합까지 원천 방지하는 공식 API는 없으므로 향후 Root가 안정된 기기 구간에서 검증해야 한다.
+- 두 테스트는 모니터 AX가 보이지 않을 때 `iPadToolbarToggle`의 유일성·hittable·정확한 ‘상단 메뉴 표시’ 라벨을 확인해 각 테스트당 최대 한 번만 누른다. ‘상단 메뉴 숨기기’ 라벨 반영과 모니터 AX의 유일성·hittable을 검사하고 전후 캡처를 남긴다. 반복 탭이나 스와이프는 없다. 실기 AX 반영 성공은 아직 미검증이다.
 - `test01ReadDefaultMonitorAX`는 `macDisplayChooser`의 label/value와 앱 스크린샷을 첨부한다. 모니터를 선택하지 않는다. 관측한 이름이 요구된 기본 모니터인지는 원본과 대조해야 한다.
-- `test02OpenNativeAudioChooserOnly`는 앱의 native menu bar에서 정확한 ‘오디오’를 열고, ‘입력·출력 선택…’을 눌러 ‘오디오 입력·출력’ 창 표시와 캡처만 확인한다. 앱에 노출된 AX 요소가 없거나 중복이면 실패하며 좌표·키·상단바 스와이프·Host 설정 우회는 없다.
+- `test02OpenNativeAudioChooserOnly`는 native menu bar의 ‘오디오’가 유일하고 hittable이면 ‘입력·출력 선택…’ 경로를 쓴다. 그 조건을 만족하지 않으면 소스의 정확한 앱 native AX 경로 `workspaceOverflow` → UIKit 메뉴 ‘설정’ → `openAudioRoutes`이면서 라벨이 ‘오디오 입력·출력 선택…’인 버튼을 쓴다. 모든 탭은 유일성·hittable 검사를 통과해야 한다. 메뉴 항목은 정확 라벨의 button 또는 menuItem만 허용한다. 마지막 ‘오디오 입력·출력’ 창 표시를 확인하고 캡처한다. 원격 영상·좌표·스와이프·키·오디오 toggle은 누르지 않는다. native 경로를 누른 뒤 실패했을 때 다른 경로를 재시도하지 않는다.
 - 오디오 창을 열면 기존 앱의 presentation/offer 상태가 바뀌고 Mac 장치 목록을 조회한다. 마이크·출력 활성화 호출은 하지 않는다. 테스트는 이름의 01 → 02 순서로 관측 후 창을 열며 순서를 무작위화하지 않는다. 선택·적용·닫기는 누르지 않는다. 특히 기존 `close()`가 오디오 승인 상태를 변경하므로 자동 복구 조작을 넣지 않았다. 창은 열린 채 남는다. 실패 시 열린 메뉴도 남을 수 있다.
 - 마이크·스피커 전환 메서드, 원격 영상 터치, 텍스트 입력, 제출, 그림, 키·권한 변경은 구현하지 않았다. 스크린샷에는 현재 앱 콘텐츠가 포함될 수 있으므로 향후 xcresult는 기존 비공개 근거 경로에서만 관리한다.
 
@@ -47,7 +48,7 @@ Apple Xcode 27.0에 포함된 `Contents/Developer/usr/share/man/man5/xcodebuild.
 
 Root가 향후 독립 검수, 실제 기기 단일 소유자 조율, runner 서명/provisioning·entitlements·OS 호환성, 정상 TestFlight 버전·데이터 보존을 확인한 후 runner만 한 번 설치한다. 이때 정상 앱이나 옛 REA 앱 설치는 하지 않는다. 설치 후 runner ID와 내부 test bundle을 readback하고, 별도 실행용 xctestrun 복사본의 runner 승인 값만 `1`로 변경한 뒤 새 SHA를 남겨야 한다. 앱을 테스트 제공 대상으로 지정한 동작과 destination artifacts 계약의 실제 호환성은 아직 미검증이다. 자동 앱 launch/재설치가 없음을 첫 실행에서 별도로 관측해야 한다.
 
-현재 artifact는 `CODE_SIGNING_ALLOWED=NO`로 만들어져 설치용이 아니다. 향후 서명하면 executable·plist·전체 manifest SHA를 다시 발급해야 한다. 이번 파일 SHA를 서명 완료 파일의 SHA로 재사용하지 않는다.
+최초 `ipad-connection-ui-20261105` artifact는 서명을 끈 빌드의 이력이다. 후속 서명 후보는 아래 새 경로에서 별도로 빌드·검증하며 이전 unsigned SHA를 사용하지 않는다. 정상 앱·옛 REA 앱을 생성하지 않는 단일 UITest target은 유지한다.
 
 ## 검증 및 Pstack 적용
 
@@ -61,9 +62,29 @@ Pstack Feature 순서를 사용했고 ARENA 설계 탐색은 사용자 금지에
    - Shared mutable state. 기기·USB·Host·오디오·registry·기존 원장 쓰기는 0이다.
    - Smallest safe decomposition. 테스트 묶음 하나이므로 단일 writer가 소유한다. 추가 후보 경쟁·중복 담당은 만들지 않았다.
 4. Delegate code-writing to a subagent. 현재 하위 에이전트 도구가 없어 본 담당이 독점 경로에서 구현했다. `BLOCKED: independent review`. 부모의 독립 검수 전 merge-ready·shipping 상태는 닫혀 있다.
-5. Verify on the matching surface. Apple SDK로 unsigned generic iOS build-for-testing, project plist lint, Mini의 행동 범위·scheme·변환 성공/runner ID 거부·설치 경로 제외 계약 검사까지 수행했다. 정적 검사는 source snapshot 해시와 함께 외장 `mini-static.json`에 기록했다. 이는 Git source-guard 이전 수용이 아닌 좁은 독립 검사다.
+5. Verify on the matching surface. 최초 unsigned 및 후속 signed generic iOS build-for-testing, project plist lint, Mini의 행동 범위·scheme·변환 성공/runner ID 거부·설치 경로 제외 계약 검사까지 수행했다. 정적 검사는 source snapshot 해시와 함께 외장 `mini-static.json`에 기록했다. 이는 Git source-guard 이전 수용이 아닌 좁은 독립 검사다.
 6. Rebase into small, ordered commits. 요청한 정확 기반의 단일 변경만 커밋한다. 다른 파일을 합치지 않는다.
 7. If the design is contested, `interrogate` before shipping. n/a. 단일 후보이며 shipping은 범위 밖이다.
 8. Run Opening a PR. skip. 사용자 지시대로 push·PR·병합·서버 반영은 0이다.
 
-빌드 성공은 실행 성공이 아니다. AX 노출, 실제 activation, native menu/오디오 창 표시, 기본 모니터 일치, 실음성, 제품 수용과 정상 앱 데이터 보존은 모두 미검증이다. 기기 단계의 다음 소유자는 Root다. 기존 원장은 부모가 업데이트하며 이 문서는 후보 사용 계약이다.
+빌드 성공은 실행 성공이 아니다. AX 노출, 실제 activation, native menu/오디오 창 표시, 기본 모니터 일치, 실음성, 제품 수용과 정상 앱 데이터 보존은 모두 미검증이다. Root가 일회 최소 XCTest 경로를 수용했다는 사용자 인계를 받았다. 기기 설치는 부모가 직접 하며 Fold 구간 반납과 이 수정본에 대한 부모 독립 검수 완료 전에는 진행하지 않는다. 기존 원장은 부모가 업데이트하며 이 문서는 후보 사용 계약이다.
+
+
+## 2026-11-05 후속 서명 후보
+
+`14cf57d3`를 부모가 읽은 뒤 상단바 숨김·native menuBar 부재를 지적했다. 실제 iPad 78 화면에는 우상단 토글만 보인다는 부모 관측을 사용했고 새 기기 조회는 하지 않았다. `StreamScreen.swift`의 `toolbarToggle`, `IPadToolbarVisibility.swift`의 4초 유휴 숨김, `workspaceOverflow`의 UIKit UIMenu ‘설정’, `HostSettingsPanel.swift`의 `openAudioRoutes` 버튼을 읽기 대조했다. 실제 호출은 `client.showAudioRoutes`다. 제품 소스는 변경하지 않았다.
+
+라우팅 도구가 반환한 새 root는 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/signedcandidate`다. 첫 signed 빌드는 그 root에 보존하고, 추가 AX 대체 경로를 포함한 최종 후보는 **`signedcandidate/ax-fallback`**에 분리한다. 최초 unsigned 산출물이나 중간 signed 후보를 최종 후보로 사용하지 않는다.
+
+기존 identity의 공개 SHA-1은 `BCE70A14D3C226755973F5FFBF5617CCED211569`이며 Apple Development identity다. profile은 기존 Xcode 관리형 `iOS Team Provisioning Profile: *`, UUID `40b0d631-e2f5-48bb-b79d-8fb083507835`, Team `ZPTXHJ866D`, 만료 `2027-02-18 10:23:27 UTC`다. 수동 지정 첫 시도는 Xcode 관리형 profile과 Manual 설정 충돌로 실패했고 이력 로그를 보존했다. `-allowProvisioningUpdates` 없이 Automatic 모드로 기존 profile을 선택한다. 키 추출·ACL 변경·새 인증서/profile 발급은 하지 않는다.
+
+```sh
+SIGNED=/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/signedcandidate/ax-fallback
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild build-for-testing   -project Tests/ipad-connection-ui/ConnectionUI.xcodeproj -scheme ConnectionUI   -destination 'generic/platform=iOS' -derivedDataPath "$SIGNED/DerivedData"   CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=ZPTXHJ866D   CODE_SIGN_IDENTITY='Apple Development'
+```
+
+서명 검증은 runner와 내부 test bundle에 각각 `codesign --verify --deep --strict`를 적용한다. runner의 entitlement는 exact runner application identifier, Team, `get-task-allow=true`, runner 자체 keychain group이다. 정상 앱의 keychain group·마이크·오디오 entitlement를 추가하지 않는다. test bundle entitlement는 비어 있다. 기존 profile의 6개 UDID와 embedded profile·파일 SHA·서명 결과는 새 artifact의 영수증에서 확인한다. generic 빌드는 특정 UDID를 선택하지 않는다. 실물 iPad UDID와 profile 포함 여부의 최종 대조는 부모가 기존 승인된 설치 경로에서 수행해야 한다.
+
+빌드/서명 및 Mini 정적 검사는 실제 AX 노출·activation·오디오 창 표시·음성·제품 수용을 증명하지 않는다. 이 수정본에 대한 부모 독립 검수는 아직 대기다. 설치·XCTest 실행·USB 조작·Host·오디오·기기 UI 조작은 수행하지 않았다.
+
+최종 AX 대체 경로 후보는 Xcode 27.0 generic iOS `build-for-testing`과 runner/test bundle 각각의 strict deep 서명 검증을 통과했다. embedded profile UUID는 사전 확인한 기존 값과 일치한다. Mini의 최종 정적 검사와 전송 전후 소스 SHA 대조, project/xctestrun plist lint도 통과했다. 정상 앱 artifact가 없고 runner.app 하나만 생성된 것을 확인했다. 증거는 `signedcandidate/ax-fallback/build-final.log`, `signature-verification.json`, `mini-static-final.json`, `candidate-receipt.json`, `runner-files-sha256.json`이다.

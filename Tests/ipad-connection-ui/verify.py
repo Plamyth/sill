@@ -11,6 +11,18 @@ if 'FILES' not in globals():
              if p.is_file() and p.suffix in {'.swift', '.py', '.pbxproj', '.xcscheme'}}
 swift = FILES['ConnectionUITests.swift']
 assert swift.count('.tap()') == 2
+assert swift.count('try tapUnique(') == 5
+assert 'guard element.isHittable' in swift
+assert 'if audio.count == 1, audio.firstMatch.isHittable' in swift
+assert 'identifier: "workspaceOverflow"' in swift
+assert 'menuAction(app, label: "설정")' in swift
+assert '"openAudioRoutes", "오디오 입력·출력 선택…"' in swift
+assert swift.count('toggle.tap()') == 1
+assert swift.count('try ensureToolbarVisible(app)') == 2
+assert 'identifier: "iPadToolbarToggle"' in swift
+assert 'toggle.label == "상단 메뉴 표시", toggle.isHittable' in swift
+assert '상단 메뉴 숨기기' in swift
+assert 'XCTWaiter.wait(for: [reflected], timeout: 2)' in swift
 assert swift.count('.activate()') == 1
 assert 'func test01ReadDefaultMonitorAX()' in swift
 assert 'func test02OpenNativeAudioChooserOnly()' in swift
