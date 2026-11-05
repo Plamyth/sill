@@ -409,7 +409,11 @@ struct Check {
             expect(decoded?.sampleRate == Double(rate) && decoded?.channels == channels,
                    "native output format survives the existing kind-33 packet")
             expect(decoded?.samples == samples, "10ms packet preserves every PCM sample")
-            expect(AudioPacket.unpack(packet.dropLast()) == nil, "partial PCM frame is rejected")
+            expect(AudioPacket.unpack(packet.dropLast()) == nil, "partial PCM sample is rejected")
+            if channels > 1 {
+                expect(AudioPacket.unpack(packet.dropLast(2)) == nil,
+                       "complete sample without its stereo channel is rejected")
+            }
             for _ in 0..<4 { player.receive(packet) }
             player.drainDecode(); await drain()
             expect(player.buffered == rate / 25 * channels && player.currentEngine != nil,
