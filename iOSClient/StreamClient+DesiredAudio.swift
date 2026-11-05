@@ -30,7 +30,9 @@ extension StreamClient {
 
     func admitAudioCatalog(_ ticket: IPadAudioAdmission.Ticket?) -> Bool {
         guard audioAdmission.isCurrent(ticket) else { return false }
-        if audioCatalogAdmission != ticket { suspendDesiredAudio() }
+        if audioCatalogAdmission != ticket {
+            suspendDesiredAudio(preserveManualPermission: audioPrivacyState?.version == 2 && audioPrivacyState?.protected == false)
+        }
         audioCatalogAdmission = ticket
         return true
     }
@@ -39,14 +41,19 @@ extension StreamClient {
         guard connection === peer else { return }
         observeIPadProviderCalls(list, from: peer)
         let oldScope = desiredAudio.scope
+        let wasProtected = desiredAudio.privacy == .protected
         audioForwardingCatalogAt = audioForwardingNow
         audioPrivacyState = list.audioPrivacy
         desiredAudio.observe(list, microphone: microphonePolicy.scope, from: ObjectIdentifier(peer))
         if oldScope != desiredAudio.scope { suspendDesiredAudio() }
         if desiredAudio.privacy != .protected {
-            audioForwarding.block()
+            // An unarmed v2 host may process the explicit intent that arms protection.
+            // Losing established protection or an active binding always revokes control.
+            if list.audioPrivacy?.version != 2 || wasProtected || audioForwarding.phase == .active {
+                audioForwarding.block()
+            }
             applyAudioForwarding(nil)
-            suspendDesiredAudio()
+            suspendDesiredAudio(preserveManualPermission: list.audioPrivacy?.version == 2 && !wasProtected && oldScope == desiredAudio.scope)
         }
         if audioForwarding.phase == .active, audioForwarding.durable?.selection.microphone == true,
            oldScope?.microphone != nil, desiredAudio.scope?.microphone == nil {

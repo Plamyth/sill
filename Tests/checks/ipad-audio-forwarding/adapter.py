@@ -66,7 +66,12 @@ enum AVCaptureDevice {
  enum Media { case audio }; enum Status { case authorized, denied, notDetermined }
  static var status = Status.authorized
  static func authorizationStatus(for: Media) -> Status { status }
- static func requestAccess(for: Media) async -> Bool { status == .authorized }
+ static var holdPermission = false
+ static var permissionWaiter: CheckedContinuation<Bool, Never>?
+ static func requestAccess(for: Media) async -> Bool {
+  if holdPermission { return await withCheckedContinuation { permissionWaiter = $0 } }
+  return status == .authorized
+ }
 }
 enum DeviceIdentity {
  struct Identity { let fingerprint = Data(repeating: 0xaa, count: 32) }

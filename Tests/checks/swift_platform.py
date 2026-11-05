@@ -3,7 +3,7 @@
 
 def select_platform(source, *, vision, debug=False, ios=False):
     conditions = {'os(visionOS)': vision, '!os(visionOS)': not vision,
-                  'os(iOS)': ios and not vision, 'DEBUG': debug}
+                  'os(iOS)': ios and not vision, '!os(iOS)': not (ios and not vision), 'DEBUG': debug}
     output, stack = [], []
     active = True
     for line in source.splitlines(keepends=True):

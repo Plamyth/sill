@@ -35,7 +35,7 @@ struct IPadAudioRouteChooser: View {
                     switch callTarget {
                     case .nativeCodex:
                         Text("기본 대상은 Mac 순정 Codex 음성입니다. 아래 iPad 입력·출력 선택은 Mac 연결의 공통 음성 전달이며, 특정 Codex 통화에 연결됐다는 뜻은 아닙니다.")
-                        Text("순정 Codex 통화 시작·종료는 아직 지원하지 않습니다. 순정 Codex 권한과 사용자 정의 센츄리 활성 상태가 확인되기 전에는 통화 제어가 준비된 것으로 표시하지 않습니다.")
+                        Text("순정 Codex 통화 시작·종료는 아직 지원하지 않습니다. iPad 입출력 연결과 순정 Codex 통화 연결 상태는 별도로 확인합니다.")
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("iPadNativeCodexCallUnsupported")
                     case .grokBot:
