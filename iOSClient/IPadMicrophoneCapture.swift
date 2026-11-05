@@ -68,6 +68,7 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         var captureRunning: Bool?
         var cachedAudioPrivacyProtected: Bool?
         var forwardingPhase: String
+        var forwardingLastReceived: [String: String]? = nil
         var sentryPhase: String?
         var sentryRequested: Bool?
         var hostBootID: UUID?
@@ -126,8 +127,11 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         guard value.counters[id] == nil else { return }
         if value.counterOrder.count == 8 { value.counters.removeValue(forKey: value.counterOrder.removeFirst()) }
         value.counterOrder.append(id)
+        var scope = value.runtime
+        // This received observation belongs only to the current runtime, not historical attempts.
+        scope?.forwardingLastReceived = nil
         value.counters[id] = AttemptCounters(attempt: id, firstObservedAt: Date().timeIntervalSince1970,
-            firstObservedUptime: DispatchTime.now().uptimeNanoseconds, connectionObservationID: value.connectionObservationID, scopeAtFirstObservation: value.runtime,
+            firstObservedUptime: DispatchTime.now().uptimeNanoseconds, connectionObservationID: value.connectionObservationID, scopeAtFirstObservation: scope,
             lastObservedAt: Date().timeIntervalSince1970)
     }
     private func count(_ id: UUID, _ metric: Metric, _ amount: UInt64, errorCode: Int?) {

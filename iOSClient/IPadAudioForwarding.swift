@@ -32,6 +32,8 @@ struct IPadAudioForwarding {
     private(set) var catalog: AudioForwardingCatalog?
     private(set) var snapshot: AudioForwardingSnapshot?
     private(set) var binding: AudioForwardingBinding?
+    /// Last matched 218 observation only; never admission or media evidence. connect resets it.
+    private(set) var lastReceivedSummary: [String: String]?
     private var cursor: AudioForwardingBootstrap.OwnCursor?
     private var pending: Pending?
     private var draft: IPadDesiredAudio.Selection?
@@ -45,6 +47,10 @@ struct IPadAudioForwarding {
     var pendingRequestID: UUID? { pending?.control.requestID }
     var mediaDeadline: TimeInterval? { phase == .active ? freshUntil : nil }
     var supported: Bool { catalog != nil && context != nil }
+    func receivedSummary(in expected: Context?) -> [String: String]? {
+        guard let expected, context == expected else { return nil }
+        return lastReceivedSummary
+    }
     var wakeAt: TimeInterval? {
         [pending.map { $0.sentAt + 10 }, nextPoll, freshUntil, quiescingUntil].compactMap { $0 }.min()
     }
@@ -155,6 +161,24 @@ struct IPadAudioForwarding {
         guard let pending, pending.context == expected,
               pending.control.requestID == state.requestID, pending.control.operation == state.operation,
               now < pending.sentAt + 10 else { block(); return nil }
+        var summary = ["observedUptimeSeconds": String(now), "operation": state.operation.rawValue]
+        let receivedSnapshot: AudioForwardingSnapshot?
+        switch state.result {
+        case .accepted(let snapshot):
+            summary["result"] = "accepted"
+            receivedSnapshot = snapshot
+        case .refused(let code, let snapshot):
+            summary["result"] = "refused"
+            // The wire decoder enforces this shape; also protect directly constructed DTOs.
+            if code.range(of: "^[a-z_]{1,80}$", options: .regularExpression) != nil { summary["code"] = code }
+            receivedSnapshot = snapshot
+        case nil:
+            receivedSnapshot = state.catalog?.bootstrap.snapshot
+        }
+        summary["catalog.principal.kind"] = state.catalog?.principal.kind.rawValue
+        summary["binding.phase"] = receivedSnapshot?.binding?.phase.rawValue
+        summary["binding.epoch"] = receivedSnapshot?.binding?.bindingEpoch.uuidString
+        lastReceivedSummary = summary
         if let freshUntil, now >= freshUntil { block(); return nil }
         self.pending = nil
         if state.operation == .observe {
