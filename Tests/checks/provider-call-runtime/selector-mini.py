@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='host-selector-input-') as temporary:
         target = stage / name
         target.parent.mkdir(parents=True, exist_ok=True)
         if name in links:
-            assert (target.parent / links[name]).resolve().is_relative_to(stage)
+            assert (target.parent / links[name]).resolve().is_relative_to(stage.resolve())
             target.symlink_to(links[name])
         else:
             target.write_bytes((root / name).read_bytes())
