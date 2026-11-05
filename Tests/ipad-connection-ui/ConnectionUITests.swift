@@ -299,7 +299,46 @@ final class ConnectionUITests: XCTestCase {
         }
         try tapChecked(picker)
         captureMediaState(app, name: "native06-target-menu-" + to.rawValue)
-        try tapUnique(menuAction(app, label: to.rawValue))
+        let popup = try unique(app.collectionViews
+            .containing(.button, identifier: ReadOnlyCallTarget.native.rawValue)
+            .containing(.button, identifier: ReadOnlyCallTarget.dots.rawValue)
+            .containing(.button, identifier: "Grok Bot"))
+        let actions = popup.cells.children(matching: .button)
+        let rows = actions.allElementsBoundByIndex
+        let selected = rows.filter(\.isSelected)
+        let action = try unique(actions.matching(NSPredicate(format: "label == %@", to.rawValue)))
+        guard popup.isHittable, popup.cells.count == 3, popup.buttons.count == 3,
+              rows.map(\.label) == [ReadOnlyCallTarget.native.rawValue, ReadOnlyCallTarget.dots.rawValue, "Grok Bot"],
+              rows.allSatisfy({ $0.identifier.isEmpty }),
+              selected.count == 1, selected[0].label == from.rawValue, !action.isSelected,
+              action.frame.width > 0, action.frame.height > 0,
+              popup.frame.contains(action.frame), app.frame.contains(action.frame) else {
+            throw NSError(domain: "ConnectionUI", code: 26,
+                          userInfo: [NSLocalizedDescriptionKey: "실제 통화 대상 popup의 직접 Cell/Button·체크·프레임 전제가 다릅니다."])
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "popupFrame": String(describing: popup.frame), "popupHittable": popup.isHittable,
+            "from": from.rawValue, "to": to.rawValue,
+            "actions": rows.map { item in
+                ["label": item.label, "identifier": item.identifier,
+                 "frame": String(describing: item.frame), "hittable": item.isHittable,
+                 "enabled": item.isEnabled, "selected": item.isSelected] as [String: Any]
+            }
+        ], options: [.prettyPrinted, .sortedKeys])
+        let ax = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        ax.name = "native06-popup-action-" + to.rawValue
+        ax.lifetime = .keepAlways
+        add(ax)
+        try tapChecked(action)
+        guard !popup.exists else {
+            captureMediaState(app, name: "native06-popup-action-not-dismissed")
+            throw NSError(domain: "ConnectionUI", code: 27,
+                          userInfo: [NSLocalizedDescriptionKey: "popup action을 한 번 탭했으나 메뉴가 남았습니다. 재탭하지 않습니다."])
+        }
+        guard try selectedCallTarget(callTargetPicker(app)) == to else {
+            throw NSError(domain: "ConnectionUI", code: 28,
+                          userInfo: [NSLocalizedDescriptionKey: "popup이 닫혔으나 모델의 통화 대상 반영은 미확인입니다."])
+        }
     }
 
     private func restoreNativeCallAndClose(_ app: XCUIApplication) throws {

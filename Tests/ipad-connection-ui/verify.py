@@ -182,8 +182,69 @@ assert observation.index('captureMediaState(') < observation.index('let picker =
 assert 'return ["이 Mac 연결은 순정 Codex 음성 대화 제어를 지원하지 않습니다."]' in native06
 selection06 = native06.split('private func selectReadOnlyCallTarget(', 1)[1].split('private func restoreNativeCallAndClose(', 1)[0]
 assert selection06.index('guard try selectedCallTarget(picker) == from') < selection06.index('try tapChecked(picker)')
-assert selection06.count('try tapChecked(') == 1 and selection06.count('try tapUnique(') == 1
-assert 'menuAction(app, label: to.rawValue)' in selection06
+assert selection06.count('try tapChecked(') == 2 and selection06.count('try tapUnique(') == 0
+assert 'menuAction(' not in selection06
+for expected in ('app.collectionViews',
+                 '.containing(.button, identifier: ReadOnlyCallTarget.native.rawValue)',
+                 '.containing(.button, identifier: ReadOnlyCallTarget.dots.rawValue)',
+                 '.containing(.button, identifier: "Grok Bot")',
+                 'popup.cells.children(matching: .button)',
+                 'let action = try unique(actions.matching(NSPredicate(format: "label == %@", to.rawValue)))',
+                 'popup.isHittable, popup.cells.count == 3, popup.buttons.count == 3',
+                 'rows.allSatisfy({ $0.identifier.isEmpty })',
+                 'selected.count == 1, selected[0].label == from.rawValue, !action.isSelected',
+                 'popup.frame.contains(action.frame), app.frame.contains(action.frame)',
+                 '"hittable": item.isHittable', '"selected": item.isSelected',
+                 'guard !popup.exists else',
+                 'guard try selectedCallTarget(callTargetPicker(app)) == to else'):
+    assert expected in selection06, expected
+assert selection06.index('popup.frame.contains(action.frame)') < selection06.index('try tapChecked(action)')
+assert selection06.index('try tapChecked(action)') < selection06.index('guard !popup.exists else')
+assert selection06.index('guard !popup.exists else') < selection06.index('guard try selectedCallTarget(callTargetPicker(app)) == to')
+for forbidden in ('waitFor', 'sleep', 'while ', 'for ', 'continue', 'retry', '651', '829'):
+    assert forbidden not in selection06, forbidden
+popup_replay = []
+if 'ACTUAL_POPUP_AX' in globals():
+    titles = ['Mac 순정 Codex 음성', 'ChatGPT Dots', 'Grok Bot']
+
+    def popup_candidates(tree):
+        return [view for view in tree.iter('CollectionView')
+                if set(titles) <= {button.get('label') for button in view.iter('Button')}]
+
+    for name, saved_ax in ACTUAL_POPUP_AX.items():
+        tree = ET.Element('Snapshot')
+        stack = [(-1, tree)]
+        for line in saved_ax.splitlines():
+            match = re.match(r'^(\s*)(?:→)?(\w+)(?: \(\w+\))?, 0x[0-9a-f]+, (.*)$', line)
+            if not match:
+                continue
+            indent, kind, attributes = match.groups()
+            while len(indent) <= stack[-1][0]:
+                stack.pop()
+            node = ET.SubElement(stack[-1][1], kind)
+            for key in ('label', 'identifier'):
+                value = re.search(key + r": '([^']*)'", attributes)
+                node.set(key, value.group(1) if value else '')
+            node.set('selected', str(attributes.endswith(', Selected')))
+            stack.append((len(indent), node))
+        candidates = popup_candidates(tree)
+        assert len(candidates) == 1, (name, len(candidates))
+        popup = candidates[0]
+        rows = popup.findall('./Cell/Button')
+        assert [row.get('label') for row in rows] == titles
+        assert all(row.get('identifier') == '' for row in rows)
+        assert len(list(popup.iter('Button'))) == 3
+        assert sum(row.get('selected') == 'True' for row in rows) == 1
+        form = next(view for view in tree.iter('CollectionView')
+                    if any(x.get('identifier') == 'iPadCallTarget' for x in view.iter('Button')))
+        assert form is not popup
+        ET.SubElement(form, 'Button', label=titles[0], identifier='iPadCallTarget')
+        assert popup_candidates(tree) == [popup]
+        tree.append(ET.fromstring(ET.tostring(popup)))
+        assert len(popup_candidates(tree)) == 2
+        popup_replay.append({'snapshot': name, 'directPopupActions': titles,
+                             'backgroundSameNameExcluded': True, 'duplicatePopupRejected': True,
+                             'actualTapExecuted': False})
 restoration = native06.split('private func restoreNativeCallAndClose(', 1)[1].split('func test06', 1)[0]
 assert restoration.index('target: .dots, name: "native06-restore-guard"') < restoration.index('from: .dots, to: .native')
 assert restoration.index('target: .native, name: "native06-restored"') < restoration.index('bar.buttons.matching')
@@ -195,6 +256,6 @@ except AssertionError:
     pass
 else:
     raise AssertionError('runner identity mismatch accepted')
-print(json.dumps({'staticAccepted': True, 'deviceExecuted': False,
+print(json.dumps({'staticAccepted': True, 'deviceExecuted': False, 'popupReplay': popup_replay,
                   'sha256': {k: hashlib.sha256(v.encode()).hexdigest()
                              for k, v in sorted(FILES.items())}}, sort_keys=True))

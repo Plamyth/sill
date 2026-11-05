@@ -192,3 +192,19 @@ Pstack Feature의 how 단계는 위 세 제품 소스와 기존 테스트/변환
 - Smallest safe decomposition. 테스트·선택기·그 보호 검사는 결합된 한 단위여서 한 writer가 소유한다.
 
 하위 에이전트 도구가 제공되지 않아 본 담당이 구현했다. `BLOCKED: independent review`는 부모의 비작성 검수로 넘기며 자체 검사나 빌드를 독립 검수로 세지 않는다. 검증 가능한 한 단위로 검사·커밋하고 exact commit/tree와 signed hash를 외장 영수증에 연결한다. PR·push·integration 반영·서버·설치·실행은 이 단위의 범위 밖이다. 실제 AX 노출·닫기·바인딩 수용은 미검증이며 지원 전제가 다르면 부모에게 정확한 AX 차이를 반환한다.
+
+## 06 첫 실기 실패 후 popup action 범위 보정
+
+`8bf7f4c9`의 부모 제공 실기 실행은 1회 실패했다. 같은 후보는 재실행하지 않는다. 기존 독립 검수 CLEAR는 그 커밋에만 적용되며 이 보정은 새 검수를 받아야 한다. 부모가 Root 슬롯을 반환했다는 인계에 따라 이 담당의 기기·설치·실행·UI 조작은 계속0이다.
+
+실제 증거는 기존 `ui-native06-20261105/actual06.xcresult`, `actual06.log`, `actual06-attachments/manifest.json`에서 재사용했다. initial-values `94E92577-3695-4A25-BBBD-4ACEFA467032.json`, Dots-values `561E161D-F88E-4081-849C-B8FB6E57B60A.json`, restore-guard-values `D283B842-12D4-4282-ADA3-CD926D93A578.json`은 정상이다. 마지막 탭 전 AX `4D20817D-648F-47D1-A041-4A7834DEC589.txt`와 캡처 `52D70EC5-5D52-4AE9-8E76-3BFA72175888.png`, 탭 후 AX `E97B913C-98F5-46CA-BF2B-C3C88BB43F13.txt`와 캡처 `076B01DD-E118-488D-8733-F23CC32A2D40.png`를 대조했다. 재조사는 이 마지막 native 선택의 scope와 event/frame 차이에만 한정했다.
+
+실제 popup은 별도 CollectionView이며 세 직접 Cell/Button의 문구는 native, Dots, Grok 순서다. native Button frame은 `{{717,354.5},{224,35.5}}`, Dots는 selected다. 배경 Form의 Picker는 `iPadCallTarget`이고 문구가 `통화 대상, ChatGPT Dots`여서 native exact label과 다르다. 저장된 탭 직전 UI Snapshot `1E86461A-AB1E-4850-A983-3F5874546F8D`에도 exact native Button은 하나이고 enabled다. 당시 소스의 hittable/enabled guard를 통과한 뒤 native tap 로그가 있다. 따라서 동명 Picker 오선택은 입증되지 않았다.
+
+로그23.24초에서 XCTest가 자동 scroll-to-visible을 시도한 뒤 hit `{651.75,829}`를 계산했다. 이 값은 native frame 중심 `{829,372.25}`를 AX 높이1024 기준으로 회전 변환한 값과 같으며 좌표만으로 잘못된 요소라고 단정할 수 없다. PNG는 원시2732×2048·EXIF orientation8이고 synthesized event는 orientation1이다. 이 변환 비교는 저장된 증거의 분석이며 테스트 조작 좌표로 사용하지 않는다. 탭 뒤에도 메뉴와 Dots 체크가 남고 다음 Picker 관측이 code20으로 실패했다. 메뉴가 닫히지 않은 사실은 확인했지만 UIKit/XCTest 내부 hit/scroll 실패의 정확한 원인은 아직 입증되지 않았다.
+
+보정은 전역 Any의 exact label 검색을06에서 제거한다. 세 exact Button 문구를 함께 포함하는 유일한 CollectionView만 고르고, 그 popup의 직접 Cell/Button으로 action을 제한한다. 세 row의 순서·빈 identifier·단일 selected/from 일치·목표 미선택·화면과 popup 내부의 양수 frame을 검사한다. action의 hittable/enabled는 기존 `tapChecked`로 유지한다. popup/row의 실제 frame·hittable·enabled·selected를 JSON에 남기고 목표를 한 번만 탭한다. 즉시 메뉴 소멸과 Picker의 to 반영을 따로 검사하며 메뉴가 남으면 code27과 AX·캡처를 남긴다. 임의 wait·재탭·좌표 대체·제약 완화는 추가하지 않는다. 이 scope 보정이 실제 UIKit 탭 실패를 해소했는지는 새 후보의 부모 검수·실기 확인 전까지 미검증이다.
+
+`verify.py`는 기존 보호 검사에 scope와 순서·금지 동작 검사를 추가한다. Mini에는 두 실제 menu AX를 `ACTUAL_POPUP_AX`와 코드의 표준입력 메모리로 전달해 직접 Cell/Button 구조를 대조한다. 배경에 같은 이름의 버튼이 추가된 경우와 popup이 중복된 경우도 검사하며 이것을 실제 UI 성공으로 세지 않는다. 새로운 증거·DerivedData는 storage-route가 반환한 `ui-native06-20261105-popup-scope`에만 둔다. 기존 실패 후보·actual 증거·DerivedData는 변경하지 않는다.
+
+Pstack Feature의 blocking 단계는 실패 실행·코드·프레임 대조이며, 독립 작업은 Mini 검사와 새 iOS SDK 빌드다. 공유 기기·현재 runner·Host 쓰기는 없고 같은 소유 WT의06 action 선택과 검증만 단일 writer로 수정한다. Ponytail 최소 선택으로 기존 Picker·tapChecked·gate를 재사용한다. 01~05·공용 helper·gate·xctestrun 선택/보호 계약은 그대로이며 ARENA·순정 Goal·제품 변경은0이다. 새 독립 검수는 부모에게 반환한다.
