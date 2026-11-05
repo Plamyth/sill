@@ -274,6 +274,9 @@ extension StreamClient {
             DispatchQueue.main.async {
                 guard let self, signature != self.pathSignature else { return }
                 self.pathSignature = signature
+                #if os(iOS)
+                self.ownerWiredChanged()
+                #endif
                 if self.reconnect != nil { self.reconnectIfListed() }
             }
         }
@@ -308,17 +311,17 @@ extension StreamClient {
     // MARK: Remote dials
 
     #if os(iOS)
-    func dialSavedAtStartup(_ macID: String) {
+    func dialSavedAtStartup(_ macID: String, ownerWired: OwnerWiredTarget? = nil) {
         guard let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID),
               DeviceIdentity.existing() != nil else { return }
         reconnect = lostReconnect(session: nil, saved: saved, name: displayName(macID), remoteAllowed: true)
-        dialSaved(macID, why: .automatic)
+        dialSaved(macID, why: .automatic, ownerWired: ownerWired)
     }
     #endif
 
     /// Dials a saved Mac at its saved addresses (§7.5). A tap on its Remote row, Connect Remotely
     /// on its network row, the session after a pairing, the automatic reconnect, `-SillDialSaved`.
-    func dialSaved(_ macID: String, why: DialReason) {
+    func dialSaved(_ macID: String, why: DialReason, ownerWired: OwnerWiredTarget? = nil) {
         #if os(iOS)
         cancelOwnerBootstrap()
         #endif
@@ -327,6 +330,14 @@ extension StreamClient {
             status = "소유 Mac의 기존 신뢰를 확인할 수 없습니다."
             return
         }
+        #if os(iOS)
+        cancelOwnerWiredResolution()
+        if let target = ownerWired {
+            guard target.binding.macID == macID, ownerWiredValid(target), !connected else { return }
+        }
+        #else
+        guard ownerWired == nil else { return }
+        #endif
         let name = displayName(macID)
         guard let identity = DeviceIdentity.existing() else {
             status = "이 \(Self.deviceWord)에 \(name)의 키가 없습니다. 다시 페어링하세요."
@@ -339,7 +350,7 @@ extension StreamClient {
         }
         hostName = name
         status = why == .automatic ? "\(name)에 원격으로 다시 연결하는 중…" : "\(name)에 원격으로 연결하는 중…"
-        let candidates = RemoteDialPolicy.savedOrder(mac, localIPv4: Self.localIPv4Networks())
+        let candidates = ownerWired.map { [$0.candidate] } ?? RemoteDialPolicy.savedOrder(mac, localIPv4: Self.localIPv4Networks())
         #if DEBUG
         print("remote: dialing \(name) (\(macID)) \(why): \(candidates.map(\.key))")
         #endif
@@ -353,12 +364,21 @@ extension StreamClient {
             if !keys.isEmpty { successors[c.key] = keys }
         }
         let connector = RemoteConnector(candidates: candidates, mode: .session(pin: pin), identity: identity, queue: queue,
-                                        successors: successors)
+                                        successors: successors, ownerWired: ownerWired)
         remoteDial = connector
         connector.onWinner = { [weak self, weak connector] winner in
             DispatchQueue.main.async {
                 guard let self, let connector, self.remoteDial === connector else { winner.connection.cancel(); return }
                 self.remoteDial = nil
+                #if os(iOS)
+                if let target = ownerWired {
+                    guard self.ownerWiredValid(target), target.matches(winner.connection.currentPath), !self.connected else {
+                        winner.connection.cancel()
+                        if !self.connected { self.dialSaved(macID, why: why) }
+                        return
+                    }
+                }
+                #endif
                 var macID = macID
                 if winner.fingerprint != pin,
                    let newer = self.savedMacs.first(where: { $0.fingerprintData == winner.fingerprint && $0.macID != macID }),
@@ -379,12 +399,14 @@ extension StreamClient {
                     return
                 }
                 self.remoteWinner(winner, macID: macID, why: why)
+                self.ownerWiredSession = ownerWired
             }
         }
         connector.onFailed = { [weak self, weak connector] failed in
             DispatchQueue.main.async {
                 guard let self, let connector, self.remoteDial === connector else { return }
                 self.remoteDial = nil
+                if ownerWired != nil { self.dialSaved(macID, why: why); return }
                 self.remoteDialFailed(macID: macID, why: why, failure: failed.failure, candidate: failed.candidate, retry: failed.retry)
             }
         }
@@ -455,7 +477,7 @@ extension StreamClient {
         if case .paired = pairing { pairing = .idle }
         resetLiveness()
         if let id = s.macID, let i = savedMacs.firstIndex(where: { $0.macID == id }) {
-            savedMacs[i].lastWorked = s.candidate?.key ?? savedMacs[i].lastWorked
+            if ownerWiredSession == nil { savedMacs[i].lastWorked = s.candidate?.key ?? savedMacs[i].lastWorked }
             savedMacs[i].lastConnectedAt = Date()
             savedMacs[i].lastRoute = r.saved
             persistSavedMacs()
@@ -523,6 +545,17 @@ extension StreamClient {
     /// reconnect: the network row, the Direct row, then (a saved Mac) its saved addresses (§7.4).
     func sessionEnded(error: NWError?, end: RemoteDialPolicy.End?) {
         let s = session
+        #if os(iOS)
+        if ownerWiredSession != nil, !connected, let id = s?.macID {
+            let why = s?.why ?? .automatic
+            tearDown(status: status, restartSearch: false)
+            if appInForeground {
+                if why == .automatic, reconnect == nil { dialSavedAtStartup(id) }
+                else { dialSaved(id, why: why) }
+            }
+            return
+        }
+        #endif
         let goodbye = self.goodbye
         firstListDeadline?.cancel()
         firstListDeadline = nil

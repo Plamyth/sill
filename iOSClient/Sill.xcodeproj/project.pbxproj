@@ -247,6 +247,10 @@
 		E8250001000000000000B005 /* IPadEnrollmentTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F005 /* IPadEnrollmentTransport.swift */; };
 		E8250001000000000000A006 /* StreamClient+OwnerEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F006 /* StreamClient+OwnerEnrollment.swift */; };
 		E8250001000000000000B006 /* StreamClient+OwnerEnrollment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8250001000000000000F006 /* StreamClient+OwnerEnrollment.swift */; };
+		B10500000000000000000100 /* OwnerWiredPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10500000000000000000000 /* OwnerWiredPolicy.swift */; };
+		B10500000000000000000200 /* OwnerWiredPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10500000000000000000000 /* OwnerWiredPolicy.swift */; };
+		B10500000000000000000101 /* OwnerWiredResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10500000000000000000001 /* OwnerWiredResolver.swift */; };
+		B10500000000000000000201 /* OwnerWiredResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10500000000000000000001 /* OwnerWiredResolver.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -372,6 +376,8 @@
 		D2600026000000000000F000 /* VaultPDFExcerpt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultPDFExcerpt.swift; sourceTree = "<group>"; };
 		D2600026000000000000F001 /* VaultPDFReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultPDFReader.swift; sourceTree = "<group>"; };
 		09840B3D09FEA6AA487A97C0 /* VaultPDFViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultPDFViewState.swift; sourceTree = "<group>"; };
+		B10500000000000000000000 /* OwnerWiredPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerWiredPolicy.swift; sourceTree = "<group>"; };
+		B10500000000000000000001 /* OwnerWiredResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerWiredResolver.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -478,6 +484,8 @@
 				A1000001000000000000F601 /* StreamClient+Home.swift */,
 				A1000001000000000000F018 /* RemoteConnector.swift */,
 				A1000001000000000000F017 /* RemoteDialPolicy.swift */,
+				B10500000000000000000001 /* OwnerWiredResolver.swift */,
+				B10500000000000000000000 /* OwnerWiredPolicy.swift */,
 				A1000001000000000000F01E /* GoodbyePolicy.swift */,
 				A1000001000000000000F016 /* SavedMacs.swift */,
 				A1000001000000000000F01D /* DeviceIdentity.swift */,
@@ -833,6 +841,8 @@
 				A1000001000000000000A601 /* StreamClient+Home.swift in Sources */,
 				A1000001000000000000A018 /* RemoteConnector.swift in Sources */,
 				A1000001000000000000A017 /* RemoteDialPolicy.swift in Sources */,
+				B10500000000000000000101 /* OwnerWiredResolver.swift in Sources */,
+				B10500000000000000000100 /* OwnerWiredPolicy.swift in Sources */,
 				A1000001000000000000A01E /* GoodbyePolicy.swift in Sources */,
 				A1000001000000000000A016 /* SavedMacs.swift in Sources */,
 				A1000001000000000000A01D /* DeviceIdentity.swift in Sources */,
@@ -955,6 +965,8 @@
 				F1552F8F9BBEA3D464663D7F /* StreamClient+Home.swift in Sources */,
 				8B926B411A7767917E0031F7 /* RemoteConnector.swift in Sources */,
 				94F4731DE30C35FCAEC14192 /* RemoteDialPolicy.swift in Sources */,
+				B10500000000000000000201 /* OwnerWiredResolver.swift in Sources */,
+				B10500000000000000000200 /* OwnerWiredPolicy.swift in Sources */,
 				1FBE632E41FE7BB354B5AF92 /* GoodbyePolicy.swift in Sources */,
 				52EC482E16303D395C4E16B9 /* SavedMacs.swift in Sources */,
 				76AA5B60FD69A349E2906DA5 /* DeviceIdentity.swift in Sources */,
