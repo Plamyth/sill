@@ -232,4 +232,66 @@ check(StreamMessage.hostPayloadLimit(for: .forwardingState) == 16384 && StreamMe
 for kind in [StreamMessageKind.forwardingUplinkReserved, .forwardingDownlinkReserved] {
     check(StreamMessage.hostPayloadLimit(for: kind) == -1 && StreamMessage.clientPayloadLimit(for: kind) == -1, "reserved media0")
 }
+// Received diagnostics are exact, matched, scoped observations; never authority.
+var diagnostic = IPadAudioForwarding()
+let diagnosticObserve = diagnostic.connect(context, durable: nil, now: 0)!
+check(diagnostic.lastReceivedSummary == nil, "no state received means no diagnostic inference")
+_ = diagnostic.receive(try observed(diagnosticObserve, catalog()), from: context, now: 0.1)
+check(diagnostic.lastReceivedSummary == ["operation":"observe", "catalog.principal.kind":"cable", "observedUptimeSeconds":"0.1"],
+      "observe preserves only received principal kind, operation and observation time")
+check(diagnostic.receivedSummary(in: nil) == nil && diagnostic.receivedSummary(in: otherContext) == nil,
+      "metadata cannot expose a summary outside current connection scope")
+let diagnosticSubmit = diagnostic.select(.init(microphone: true), in: context, now: 0.2)!
+let diagnosticSnapshot = try snapshot(diagnosticSubmit, phase: .active)
+_ = diagnostic.receive(try .init(requestID: diagnosticSubmit.requestID, operation: .submit, catalog: nil,
+    result: .refused(code: "binding_mismatch", snapshot: diagnosticSnapshot)), from: context, now: 0.3)
+let received = diagnostic.lastReceivedSummary!
+check(received == ["operation":"submit", "result":"refused", "code":"binding_mismatch", "binding.phase":"active",
+                   "binding.epoch":diagnosticSnapshot.binding!.bindingEpoch.uuidString, "observedUptimeSeconds":"0.3"],
+      "refused response retains actual active binding rather than inferring blocked reason")
+check(diagnostic.phase == .blocked && diagnostic.binding == nil && !diagnostic.permits(.microphone, in: context, now: 0.3),
+      "received active phase cannot authorize refused media")
+let encodedSummary = String(data: try JSONEncoder().encode(received), encoding: .utf8)!
+for secret in [credential.credential, device.hex, diagnosticSubmit.requestID.uuidString,
+               diagnosticSnapshot.intent!.intentId.uuidString, diagnosticSnapshot.binding!.transportId.uuidString,
+               credential.pairingGeneration.uuidString, context.generation.uuidString, context.videoEpoch.uuidString] {
+    check(!encodedSummary.contains(secret), "summary omits credential, IDs, request/transport/authorization and scope tokens")
+}
+let beforeUnmatched = diagnostic.lastReceivedSummary
+_ = diagnostic.receive(try observed(diagnosticObserve, catalog()), from: context, now: 0.4)
+check(diagnostic.lastReceivedSummary == beforeUnmatched, "unsolicited response cannot overwrite last matched observation")
+for next in [otherContext,
+             IPadAudioForwarding.Context(peer: context.peer, mac: mac, device: device, source: .window(8), generation: context.generation, videoEpoch: context.videoEpoch, lifecycle: context.lifecycle),
+             IPadAudioForwarding.Context(peer: context.peer, mac: mac, device: device, source: context.source, generation: UUID(), videoEpoch: context.videoEpoch, lifecycle: context.lifecycle),
+             IPadAudioForwarding.Context(peer: context.peer, mac: mac, device: device, source: context.source, generation: context.generation, videoEpoch: UUID(), lifecycle: context.lifecycle),
+             IPadAudioForwarding.Context(peer: context.peer, mac: mac, device: device, source: context.source, generation: context.generation, videoEpoch: context.videoEpoch, lifecycle: UUID())] {
+    var changed = diagnostic
+    _ = changed.connect(next, durable: diagnostic.durable, now: 0.5)
+    check(changed.lastReceivedSummary == nil, "peer/source/generation/epoch/lifecycle change discards observation")
+    _ = changed.receive(try observed(diagnosticObserve, catalog()), from: context, now: 0.6)
+    check(changed.lastReceivedSummary == nil, "old context callback cannot restore discarded summary")
+}
+var disconnectedDiagnostic = diagnostic
+_ = disconnectedDiagnostic.connect(nil, durable: nil, now: 0.5)
+check(disconnectedDiagnostic.lastReceivedSummary == nil, "disconnect discards last received observation")
+var acceptedDiagnostic = try ready()
+let acceptedRequest = acceptedDiagnostic.select(.init(playback: true), in: context, now: 0.2)!
+let acceptedSnapshot = try snapshot(acceptedRequest, phase: .active)
+_ = acceptedDiagnostic.receive(try accepted(acceptedRequest, acceptedSnapshot), from: context, now: 0.3)
+check(acceptedDiagnostic.lastReceivedSummary?["result"] == "accepted" && acceptedDiagnostic.lastReceivedSummary?["code"] == nil,
+      "accepted result never invents a refusal code")
+let noBindingObserve = acceptedDiagnostic.advance(now: 1.2)!
+_ = acceptedDiagnostic.receive(try observed(noBindingObserve, catalog()), from: context, now: 1.3)
+check(acceptedDiagnostic.lastReceivedSummary?["binding.phase"] == nil && acceptedDiagnostic.lastReceivedSummary?["binding.epoch"] == nil
+      && acceptedDiagnostic.lastReceivedSummary?["result"] == nil && acceptedDiagnostic.lastReceivedSummary?["operation"] == "observe",
+      "new observe cannot carry stale result, code or binding from previous submit")
+var mismatchedOperation = IPadAudioForwarding()
+let expectedObserve = mismatchedOperation.connect(context, durable: nil, now: 0)!
+_ = mismatchedOperation.receive(try .init(requestID: expectedObserve.requestID, operation: .submit, catalog: nil,
+    result: .refused(code: "refused", snapshot: empty)), from: context, now: 0.1)
+check(mismatchedOperation.lastReceivedSummary == nil, "same request with wrong operation is not recorded")
+var lateDiagnostic = IPadAudioForwarding()
+let lateDiagnosticRequest = lateDiagnostic.connect(context, durable: nil, now: 0)!
+_ = lateDiagnostic.receive(try observed(lateDiagnosticRequest, catalog()), from: context, now: 10)
+check(lateDiagnostic.lastReceivedSummary == nil, "late response outside request deadline is not recorded")
 print("iPad 공통 음성 상태 전이·가짜 전송/시계 검사 \(checks)개 통과. 기기·오디오·네트워크 실행 없음.")
