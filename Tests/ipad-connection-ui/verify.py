@@ -74,9 +74,11 @@ assert enable.index('fullDuplex.tap()') < enable.index('Task.sleep(') < enable.i
 assert '"stopIPadAudio", "iPad 입출력 중지"' in disable
 assert disable.count('try tapUnique(') == 1
 assert 'try existingMediaApp()' in disable
+assert 'if !app.navigationBars["오디오 입력·출력"].exists' in disable
+assert disable.index('try openAudioChooser(app)') < disable.index('try requireAudioChooser(app)') < disable.index('try tapUnique(')
 assert disable.index('try tapUnique(') < disable.index('after-explicit-stop-ipad-audio') < disable.index('Task.sleep(') < disable.index('ten-seconds-after-explicit-stop-ipad-audio')
 assert 'selectOff' not in swift
-for forbidden in ('audioRouteInput', 'audioRouteOutput', 'applyAudioRoutes', 'swipe', 'requireAudioChooser', 'openAudioChooser'):
+for forbidden in ('audioRouteInput', 'audioRouteOutput', 'applyAudioRoutes', 'swipe'):
     assert forbidden not in disable
 assert swift.count('Task.sleep(nanoseconds: 10_000_000_000)') == 2
 assert '.runningBackgroundSuspended' in swift

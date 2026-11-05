@@ -168,6 +168,10 @@ final class ConnectionUITests: XCTestCase {
 
     func test04DisableIPadAudio() async throws {
         let app = try existingMediaApp()
+        if !app.navigationBars["오디오 입력·출력"].exists {
+            try openAudioChooser(app)
+        }
+        try requireAudioChooser(app)
         try tapUnique(app.buttons.matching(NSPredicate(
             format: "identifier == %@ AND label == %@", "stopIPadAudio", "iPad 입출력 중지")))
         captureMediaState(app, name: "after-explicit-stop-ipad-audio")
