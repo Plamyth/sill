@@ -92,8 +92,9 @@ typealias StreamServer = HandlerFixture
         f.onProviderControl = { _, _, _ in }
         f.provider(Wire.encode(ProviderCallControl(operation: .perform, request: r, providerKind: kind)), c)
         await coordinator.invoke(c.providerExchange!, c.connection, c.route); f.drain()
-        let state = f.sent.first.flatMap { Wire.decode(ProviderCallState.self, from: $0) }
-        check("actual coordinator fallback retains \(kind.rawValue) selector", f.sent.count == 1 &&
+        let header = f.sent.first.flatMap { StreamMessage.parseHeader($0) }
+        let state = f.sent.first.flatMap { Wire.decode(ProviderCallState.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
+        check("actual coordinator fallback retains \(kind.rawValue) selector", f.sent.count == 1 && header?.kind == .providerCallState &&
             state?.result.status == .failed && state?.result.reason == "audio_session_unavailable" &&
             state?.result.provider == kind.rawValue && state?.requestDigest == r.digest &&
             state?.result.requestId == r.requestId && c.connection.state == .ready)
