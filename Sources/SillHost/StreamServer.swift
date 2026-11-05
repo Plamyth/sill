@@ -186,12 +186,14 @@ final class StreamServer {
     private var remoteAudioEpoch: UInt64 = 0
     private let remoteAudioDrain = DispatchGroup()
     private var lastParameterSets: Data?
+    private var forwardingTracesRemaining = 64
     final class ForwardingExchange: @unchecked Sendable {
         let control: AudioForwardingControl
         let ticket = UUID()
         private let lock = NSLock()
         private var valid = true
-        private let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+        private var deadline: UInt64 { startedAt + 10_000_000_000 }
         init(control: AudioForwardingControl) { self.control = control }
         var isCurrent: Bool {
             lock.lock(); defer { lock.unlock() }
@@ -2109,6 +2111,12 @@ final class StreamServer {
         queue.async { [self] in
             guard let client = clients[ObjectIdentifier(connection)],
                   let exchange = client.forwardingExchange, exchange.ticket == ticket else { return }
+            if forwardingTracesRemaining > 0 {
+                forwardingTracesRemaining -= 1
+                let now = DispatchTime.now().uptimeNanoseconds
+                let elapsedMs = Double(now >= exchange.startedAt ? now - exchange.startedAt : 0) / 1_000_000
+                print("audio.trace forwardingReply request=\(exchange.control.requestID) operation=\(exchange.control.operation.rawValue) elapsedMs=\(elapsedMs) responsePresent=\(state != nil) current=\(exchange.isCurrent)")
+            }
             guard connection.state == .ready, client.route.encrypted && client.route.pairedName != nil, exchange.isCurrent, let state,
                   state.requestID == exchange.control.requestID, state.operation == exchange.control.operation,
                   state.catalog == nil || state.catalog?.role == (client.role.isViewer ? .viewer : .controlOnly) else {
