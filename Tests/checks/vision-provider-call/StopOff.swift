@@ -1,7 +1,9 @@
 import Foundation
 import StreamProtocol
 
+var methodChecks = 0
 func check(_ condition: Bool, _ label: String) {
+    methodChecks += 1
     if !condition { fputs("FAIL: \(label)\n", stderr); exit(1) }
 }
 final class NWConnection {}
@@ -271,6 +273,21 @@ for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
         check(client.visionProviderCanStop && !client.visionProviderCanStart,
             "종료 실패 뒤 같은 세션의 수동 종료만 가능함")
         check(client.sent.count == 1, "결과 수신만으로 종료를 자동 재시도하지 않음")
+        check(client.visionProviderCall.activeCall?.callSessionId == "owned-session" &&
+            client.visionProviderCall.result?.status == status, "활성 통화와 현재 명령 결과를 분리함")
+        check(client.visionProviderCall.perform(start) == nil, "활성 통화가 있으면 같은 provider의 새 시작도 차단함")
+        let wrongSessionStop = try ProviderCallRequest(requestId: UUID(), action: .stop,
+            expectedLeaseRevision: off.revision, pairedDeviceId: device,
+            desiredInput: false, desiredOutput: false, callSessionId: "other-session")
+        check(client.visionProviderCall.perform(wrongSessionStop) == nil && client.visionProviderCall.pending == nil,
+            "잘못된 세션의 수동 종료도 거절함")
+        now = 104
+        client.performVisionProviderCall(.stop)
+        check(client.sent.count == 1 && !client.visionProviderCanStop, "오래된 원장은 종료 재요청을 차단함")
+        var refreshed = forwarding
+        try observe(&refreshed, off)
+        client.visionForwarding = refreshed
+
         VisionRemoteAudioStore.shared.model.owner = UUID()
         client.performVisionProviderCall(.stop)
         check(client.sent.count == 1, "다른 오디오 소유자는 종료를 재요청할 수 없음")
@@ -286,6 +303,9 @@ for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
             "명시적인 재요청은 동일 selector·세션과 최신 원장을 보존함")
         let retry = client.sent[1].request
         check(!client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
+            status: .stopped, reason: "fixture_stopped", provider: kind.rawValue)), from: connection),
+            "세션이 없는 stopped도 소유권을 해제하지 않음")
+        check(!client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
             status: .stopped, reason: "fixture_stopped", callSessionId: "other-session", provider: kind.rawValue)), from: connection),
             "다른 세션의 stopped는 소유권을 해제하지 않음")
         check(!client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
@@ -300,3 +320,66 @@ for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
     }
 }
 print("PASS: 실제 Vision 메서드의 실패 종료 복구·대상 잠금·동일 세션 종료 회귀")
+
+for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
+    for interruption in ["timeout", "disconnect"] {
+        now = 101
+        var call = VisionProviderCall(connection: connection,
+            target: kind == .nativeCodex ? .nativeCodex : .chatgptDots, clock: { now })
+        call.observe(connection: connection, capability: 1, hostKey: hostKey, providerCallKinds: [kind.rawValue])
+        _ = call.perform(start)
+        _ = call.receive(try .init(request: start, result: .init(requestId: start.requestId,
+            status: .started, reason: "fixture_started", callSessionId: "retained-session", provider: kind.rawValue)), from: connection)
+        let client = StreamClient(call, forwarding)
+        client.visionAudioIntentConnection = connection
+        VisionRemoteAudioStore.shared.model.owner = client.visionAudioOwnerID
+        client.performVisionProviderCall(.stop)
+        let originalStop = client.sent[0].request
+        let pending = client.visionProviderCall.pending!
+        if interruption == "timeout" {
+            now = pending.expiresAt
+            check(client.visionProviderCall.timeout(pending), "종료 timeout을 현재 명령에 적용함")
+        } else {
+            client.visionProviderCall.disconnected()
+        }
+        check(client.visionProviderCall.activeCall?.callSessionId == "retained-session" &&
+            !client.visionProviderCall.canChangeTarget && !client.visionProviderCanStart,
+            "timeout·disconnect는 확인된 통화 소유권을 지우지 않음")
+        client.performVisionProviderCall(.stop)
+        check(client.sent.count == 1, "재인증 전에는 새 종료 요청이 없음")
+        client.visionAudioTrustedHostKey = String(repeating: "e", count: 64)
+        client.visionProviderCall.observe(connection: connection, capability: 1,
+            hostKey: client.visionAudioTrustedHostKey, providerCallKinds: [kind.rawValue])
+        check(client.visionProviderCall.activeCall?.callSessionId == "retained-session" &&
+            !client.visionProviderCanStop && client.visionProviderCall.hostKey == hostKey,
+            "다른 Host는 살아 있는 통화를 지우거나 종료 경로를 가로채지 못함")
+        client.visionAudioTrustedHostKey = hostKey
+        client.visionProviderCall.observe(connection: connection, capability: 1, hostKey: hostKey,
+            providerCallKinds: [kind.rawValue])
+        if interruption == "disconnect" {
+            now += 0.5
+            let query = client.visionProviderCall.query()!
+            check(query.request == originalStop && query.providerKind == kind && client.visionProviderCall.firstSentAt == 101,
+                "disconnect 뒤 조회는 원래 종료 요청과 selector·예산을 보존함")
+            _ = client.visionProviderCall.receive(try .init(request: originalStop, result: .init(requestId: originalStop.requestId,
+                status: .unknown, reason: "fixture_unknown", provider: kind.rawValue)), from: connection)
+        } else {
+            check(client.visionProviderCall.query() == nil && client.visionProviderCall.firstSentAt == 101,
+                "timeout 뒤 조회 예산을 임의 갱신하지 않음")
+        }
+        var fresh = forwarding
+        try observe(&fresh, off)
+        client.visionForwarding = fresh
+        check(client.visionProviderCanStop && !client.visionProviderCanStart, "같은 Host와 최신 오디오 원장에서는 수동 종료 복구 가능")
+        client.performVisionProviderCall(.stop)
+        check(client.sent.count == 2 && client.sent[1].request.callSessionId == "retained-session" &&
+            client.sent[1].providerKind == kind, "timeout·disconnect 뒤에도 명시적 수동 종료는 동일 세션을 사용함")
+        let stop = client.sent[1].request
+        check(client.visionProviderCall.receive(try .init(request: stop, result: .init(requestId: stop.requestId,
+            status: .stopped, reason: "fixture_stopped", callSessionId: "retained-session", provider: kind.rawValue)), from: connection),
+            "timeout·disconnect 뒤 같은 세션의 정상 종료를 수용함")
+        check(client.visionProviderCall.activeCall == nil && client.visionProviderCall.canChangeTarget,
+            "복구 종료가 확인된 뒤 활성 소유권을 해제함")
+    }
+}
+print("PASS ACTUAL_METHOD_CHECKS \(methodChecks); 실제 Host·기기·음성 효과 0")

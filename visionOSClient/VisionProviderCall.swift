@@ -86,6 +86,7 @@ struct VisionProviderCall {
     private(set) var pending: Pending?
     private(set) var request: ProviderCallRequest?
     private(set) var result: ProviderCallResult?
+    private(set) var activeCall: ProviderCallResult?
     private(set) var firstSentAt: TimeInterval?
     private(set) var nativePreparation: VisionNativePreparedCall?
     private(set) var queries = 0
@@ -97,7 +98,7 @@ struct VisionProviderCall {
         self.connection = connection; self.target = target; self.clock = clock
     }
     var canChangeTarget: Bool {
-        pending == nil && (request == nil ||
+        activeCall == nil && pending == nil && (request == nil ||
             result.map { [.stopped, .failed, .unsupported].contains($0.status) } == true)
     }
     @discardableResult
@@ -118,9 +119,13 @@ struct VisionProviderCall {
     var selectedResult: ProviderCallResult? {
         result?.provider == target.providerKind?.rawValue ? result : nil
     }
+    var selectedActiveCall: ProviderCallResult? {
+        activeCall?.provider == target.providerKind?.rawValue ? activeCall : nil
+    }
     var canPerform: Bool {
-        targetSupported && pending == nil &&
-            (request == nil || result.map { [.started, .stopped, .failed, .unsupported].contains($0.status) } == true)
+        guard targetSupported, pending == nil else { return false }
+        if activeCall != nil { return selectedActiveCall != nil && result?.status != .pending }
+        return request == nil || result.map { [.stopped, .failed, .unsupported].contains($0.status) } == true
     }
     mutating func observe(connection next: UUID, capability: Int?, hostKey: String?, providerCallKinds: [String]? = nil) {
         let trusted = hostKey.flatMap { $0.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil ? $0 : nil }
@@ -131,6 +136,12 @@ struct VisionProviderCall {
             return
         }
         if self.hostKey != trusted {
+            if activeCall != nil {
+                supported = false; nativeSupported = false
+                nativePreparation = nil
+                if connection != next { disconnected(); connection = next }
+                return
+            }
             guard pending == nil || connection != next else { supported = false; nativeSupported = false; return }
             self = VisionProviderCall(connection: next, target: target, clock: clock)
             self.hostKey = trusted
@@ -151,8 +162,12 @@ struct VisionProviderCall {
     mutating func perform(_ value: ProviderCallRequest) -> ProviderCallControl? {
         let now = clock()
         guard canPerform, let kind = target.providerKind, now.isFinite, now >= 0 else { return nil }
-        guard value.action != .stop || (requestProviderKind == kind && selectedResult?.status == .started &&
-            selectedResult?.callSessionId == value.callSessionId && value.callSessionId != nil) else { return nil }
+        switch value.action {
+        case .start: guard activeCall == nil else { return nil }
+        case .stop:
+            guard let active = selectedActiveCall, active.provider == kind.rawValue,
+                  active.callSessionId != nil, active.callSessionId == value.callSessionId else { return nil }
+        }
         request = value; requestProviderKind = kind
         result = nil; firstSentAt = now; queries = 0; lastQueryAt = nil
         return enqueue(.init(operation: .perform, request: value, providerKind: kind), now: now)
@@ -186,7 +201,17 @@ struct VisionProviderCall {
               now.isFinite, now >= pending.sentAt, now < pending.expiresAt else { return false }
         guard state.result.status != .started || pending.control.request.action == .start,
               state.result.status != .stopped || pending.control.request.action == .stop else { return false }
+        if state.result.status == .stopped {
+            guard let active = selectedActiveCall, active.callSessionId != nil,
+                  active.provider == pending.control.providerKind.rawValue,
+                  active.callSessionId == pending.control.request.callSessionId,
+                  active.callSessionId == state.result.callSessionId else { return false }
+        }
         self.pending = nil
+        if targetSupported {
+            if state.result.status == .started { activeCall = state.result }
+            if state.result.status == .stopped { activeCall = nil }
+        }
         result = targetSupported ? state.result : try? .init(requestId: pending.control.request.requestId,
             status: .unknown, reason: "provider_authentication_unverified", provider: pending.control.providerKind.rawValue)
         return true
@@ -267,13 +292,13 @@ extension StreamClient {
 
     var visionProviderCanStart: Bool {
         VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID &&
-            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.selectedResult?.status != .started &&
+            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.activeCall == nil &&
             visionForwarding?.binding != nil && visionAudioIntentContext.admitted
     }
     var visionProviderCanStop: Bool {
         VisionRemoteAudioStore.shared.model.owner == visionAudioOwnerID &&
-            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.selectedResult?.status == .started &&
-            visionProviderCall.selectedResult?.callSessionId != nil && visionForwarding?.providerCallSnapshot != nil && visionAudioIntentContext.admitted
+            visionProviderCall.hostKey == visionAudioTrustedHostKey && visionProviderCall.canPerform && visionProviderCall.selectedActiveCall != nil &&
+            visionProviderCall.selectedActiveCall?.callSessionId != nil && visionForwarding?.providerCallSnapshot != nil && visionAudioIntentContext.admitted
     }
     func performVisionProviderCall(_ action: ProviderCallRequest.Action) {
         guard action == .start ? visionProviderCanStart : visionProviderCanStop,
@@ -282,7 +307,7 @@ extension StreamClient {
               let request = try? ProviderCallRequest(requestId: UUID(), action: action,
                 expectedLeaseRevision: snapshot.revision, pairedDeviceId: model.device,
                 desiredInput: visionForwardingDesire.microphone, desiredOutput: visionForwardingDesire.playback,
-                callSessionId: action == .stop ? visionProviderCall.selectedResult?.callSessionId : nil),
+                callSessionId: action == .stop ? visionProviderCall.selectedActiveCall?.callSessionId : nil),
               let control = visionProviderCall.perform(request) else { return }
         sendVisionProviderCall(control, to: peer)
     }

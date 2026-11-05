@@ -87,7 +87,7 @@ let stop = try ProviderCallRequest(requestId: UUID(), action: .stop, expectedLea
     pairedDeviceId: device, desiredInput: true, desiredOutput: true, callSessionId: "call-1")
 expect(model.perform(stop)?.request.callSessionId == "call-1", "explicit stop binds the actual provider session")
 expect(!model.receive(try response(.started, request: stop), from: second), "stop cannot adopt start ACK")
-expect(model.receive(try response(.stopped, request: stop), from: second), "actual stop ACK is separate from media protection")
+expect(model.receive(try response(.stopped, request: stop, session: "call-1"), from: second), "actual stop ACK is separate from media protection")
 
 for invalid in [Double.nan, Double.infinity, -1] {
     model = VisionProviderCall(connection: first, target: .chatgptDots, clock: { invalid })
@@ -123,7 +123,7 @@ _ = model.perform(request)
 expect(model.receive(try response(.started, session: "old-host-call"), from: first), "first host result fixture")
 model.disconnected()
 model.observe(connection: second, capability: 1, hostKey: String(repeating: "d", count: 64))
-expect(model.request == nil && model.result == nil && model.hostKey != hostKey && model.canPerform, "different trusted Mac never inherits old call session")
+expect(model.request == request && model.activeCall?.callSessionId == "old-host-call" && model.hostKey == hostKey && !model.canPerform, "different trusted Mac cannot erase or inherit active call ownership")
 model.observe(connection: second, capability: 1, hostKey: nil)
 expect(!model.canPerform && model.query() == nil, "unverified Mac identity cannot use provider capability")
 print("PASS FINAL \(checks) Dots provider client checks")
@@ -187,7 +187,7 @@ expect(selection.selectTarget(.chatgptDots) && selection.result?.callSessionId =
 let selectedStop = try ProviderCallRequest(requestId: UUID(), action: .stop, expectedLeaseRevision: .init(7),
     pairedDeviceId: device, desiredInput: true, desiredOutput: true, callSessionId: "dots-only-session")
 expect(selection.perform(selectedStop)?.request.callSessionId == "dots-only-session", "same provider retains normal stop")
-expect(selection.receive(try response(.stopped, request: selectedStop), from: first), "confirmed stop ends ownership")
+expect(selection.receive(try response(.stopped, request: selectedStop, session: "dots-only-session"), from: first), "confirmed stop ends ownership")
 expect(selection.canChangeTarget && selection.selectTarget(.nativeCodex), "confirmed stopped permits another target")
 expect(selection.selectedResult == nil && selection.query() == nil, "new target cannot adopt retained Dots result")
 
