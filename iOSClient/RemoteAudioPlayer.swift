@@ -167,6 +167,9 @@ final class RemoteAudioPlayer: @unchecked Sendable {
                                 let destination = output[channel].mData!.assumingMemoryBound(to: Float.self)
                                 destination[frame] = ready && channel < channels ?
                                     self.samples[self.readIndex + channel] : 0
+                                if observes && ready && channel < channels {
+                                    self.renderCounters?.recordCopiedSample(destination[frame])
+                                }
                             }
                             if ready {
                                 self.readIndex += channels

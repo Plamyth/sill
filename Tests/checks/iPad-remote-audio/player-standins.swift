@@ -13,16 +13,19 @@ func holdAudioDecode(_ entered: DispatchSemaphore, _ release: DispatchSemaphore)
     RemoteAACDecoder.decoding = { entered.signal(); release.wait(); release.signal() }
 }
 final class FakeAudioSourceNode {
-    init(format: AVAudioFormat, renderBlock: @escaping (UnsafeMutablePointer<ObjCBool>, UnsafePointer<AudioTimeStamp>, AVAudioFrameCount, UnsafeMutablePointer<AudioBufferList>) -> OSStatus) {}
+    typealias Render = (UnsafeMutablePointer<ObjCBool>, UnsafePointer<AudioTimeStamp>, AVAudioFrameCount, UnsafeMutablePointer<AudioBufferList>) -> OSStatus
+    let render: Render
+    init(format: AVAudioFormat, renderBlock: @escaping Render) { render = renderBlock }
 }
 final class FakeAudioEngine {
     static var failStart = false
     static var starts = 0
     var stopped = false
     var isRunning = false
+    var source: FakeAudioSourceNode?
     let mainMixerNode = 0
     func stop() { stopped = true; isRunning = false }
-    func attach(_ source: FakeAudioSourceNode) {}
+    func attach(_ source: FakeAudioSourceNode) { self.source = source }
     func connect(_ source: FakeAudioSourceNode, to: Int, format: AVAudioFormat) {}
     func start() throws {
         Self.starts += 1

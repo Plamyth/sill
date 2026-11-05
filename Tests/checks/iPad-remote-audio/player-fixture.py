@@ -14,5 +14,13 @@ source = source[:close] + '''
     var currentEngine: FakeAudioEngine? { engine }
     func drainDecode() { decodeQueue.sync {} }
     func receive(_ packet: Data) { receive(packet, subscription: UUID()) { _ in } }
+    func seedDecoded(_ values: [Float], rate: Double = 48000, channels: Int = 2,
+                     attempt: UUID, ticket: IPadAudioAdmission.Ticket? = nil) {
+        let epoch = epochLock.withLock { $0 }
+        decodeQueue.async { [self] in
+            append(values, rate: rate, channels: channels, epoch: epoch, admission: ticket,
+                   diagnostics: IPadMicrophoneDiagnostics.shared.attempt(attempt), report: { _ in })
+        }
+    }
 ''' + source[close:]
 (out / 'PlaybackFixture.swift').write_text(source)

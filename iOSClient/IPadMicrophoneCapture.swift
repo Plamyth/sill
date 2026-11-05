@@ -100,6 +100,19 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         var silenceFilledFrames: UInt64 = 0
         var underrunTransitions: UInt64 = 0
         var admissionDeniedFrames: UInt64 = 0
+        var finiteCopiedSamples: UInt64 = 0
+        var nonzeroCopiedSamples: UInt64 = 0
+        var copiedSampleSumSquares: Double = 0
+        var copiedSamplePeak: Double = 0
+
+        mutating func recordCopiedSample(_ sample: Float) {
+            guard sample.isFinite, finiteCopiedSamples < UInt64.max else { return }
+            let value = Double(sample)
+            finiteCopiedSamples += 1
+            if value != 0 { nonzeroCopiedSamples += 1 }
+            copiedSampleSumSquares += value * value
+            copiedSamplePeak = max(copiedSamplePeak, abs(value))
+        }
     }
     private let observationID = UUID()
     private let observationStartedAt = Date().timeIntervalSince1970
@@ -173,6 +186,12 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         let reception = (id: observation.id, latest: observation.receptions)
         let latest = reception.latest.values.max { $0.observedUptimeNanoseconds < $1.observedUptimeNanoseconds }
         let verified = info["CCRSourceIdentityVerified"] as? Bool == true
+        var renderValue: Any = null
+        if let render, var fields = encode(render) as? [String: Any] {
+            fields["copiedSampleRMS"] = render.finiteCopiedSamples > 0
+                ? (render.copiedSampleSumSquares / Double(render.finiteCopiedSamples)).squareRoot() as Any : null
+            renderValue = fields
+        }
         let document: [String: Any] = [
             "schema": "ccr.ipad.audio-metadata/v1", "generatedAt": Date().timeIntervalSince1970,
             "appObservationSampledAt": Date().timeIntervalSince1970,
@@ -192,9 +211,9 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
             "tree": verified ? (info["CCRSourceTree"] as? String ?? (null as Any)) : null,
             "sourceIdentityVerified": verified,
             "runtime": encode(runtime), "audioSession": session(), "attempts": encode(observation.counters),
-            "render": render.map { encode($0) } ?? null, "playbackEngineRunning": playbackRunning,
+            "render": renderValue, "playbackEngineRunning": playbackRunning,
             "counterScope": "instrumented boundaries per attempt in this process; absent counters/fields are unknown; not Host receipts",
-            "renderScope": "per attempt and formatVersion, possibly retired; frames copied or silence-filled; no sample inspection or audible-output proof",
+            "renderScope": "per attempt and formatVersion, possibly retired; levels summarize finite Float samples copied to callback destinations, excluding silence-fill and admission denial; no sample payload retained or audible-output proof",
             "hostClockOffsetSeconds": null, "hostMediaCounters": null]
         let deadline = state.withLock { value -> UInt64? in
             guard value.connectionObservationID == observation.id else { return nil }
