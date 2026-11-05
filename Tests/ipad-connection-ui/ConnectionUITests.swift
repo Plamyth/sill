@@ -178,4 +178,48 @@ final class ConnectionUITests: XCTestCase {
         try await Task.sleep(nanoseconds: 10_000_000_000)
         captureMediaState(app, name: "ten-seconds-after-explicit-stop-ipad-audio")
     }
+
+    func test05ReadMonitorMenuAX() throws {
+        let app = try existingApp()
+        let navigation = app.navigationBars.matching(identifier: "오디오 입력·출력")
+        let count = navigation.count
+        guard count <= 1 else { throw NSError(domain: "ConnectionUI", code: 12) }
+        if count == 1 {
+            let bar = navigation.element(boundBy: 0)
+            guard bar.isHittable else { throw NSError(domain: "ConnectionUI", code: 13) }
+            try tapUnique(bar.buttons.matching(NSPredicate(format: "label == %@", "닫기")))
+            guard bar.waitForNonExistence(timeout: 5) else {
+                throw NSError(domain: "ConnectionUI", code: 14)
+            }
+        }
+        try ensureToolbarVisible(app)
+        let chooser = try unique(app.buttons.matching(identifier: "macDisplayChooser"))
+        guard chooser.label == "Mac 모니터 선택" else {
+            throw NSError(domain: "ConnectionUI", code: 15,
+                          userInfo: [NSLocalizedDescriptionKey: "소스 전환 없이 열 수 있는 모니터 선택 버튼 미확인"])
+        }
+        let value = try XCTUnwrap(chooser.value as? String, "현재 모니터 AX 값 미노출")
+        let chooserID = chooser.identifier
+        try tapChecked(chooser)
+        let menu = try unique(app.scrollViews.containing(.staticText, identifier: "Mac 모니터 선택"))
+        guard menu.isHittable else { throw NSError(domain: "ConnectionUI", code: 16) }
+        let choices = menu.buttons.allElementsBoundByIndex
+        guard choices.count <= 64 else { throw NSError(domain: "ConnectionUI", code: 17) }
+        let rows: [[String: Any]] = choices.map { item in
+            ["identifier": item.identifier, "label": item.label,
+             "value": item.value as? String ?? "", "enabled": item.isEnabled]
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "chooserIdentifier": chooserID, "currentMonitorAXValue": value,
+            "menuIdentifier": menu.identifier, "menuItems": rows,
+            "numericDisplayID": NSNull(),
+            "numericDisplayIDObservation": "제품 소스는 display.id를 AX에 별도 노출하지 않습니다. 이름을 ID로 해석하지 않습니다."
+        ], options: [.prettyPrinted, .sortedKeys])
+        let ax = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        ax.name = "monitor-menu-native-ax-values"
+        ax.lifetime = .keepAlways
+        add(ax)
+        captureMediaState(app, name: "monitor-menu-observation")
+        XCTAssertFalse(choices.isEmpty, "모니터 메뉴 항목 미노출. 실제 sourceID 검증으로 수용하지 않습니다.")
+    }
 }

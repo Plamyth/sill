@@ -4,7 +4,7 @@ import plistlib
 from pathlib import Path
 
 
-def prepare(source):
+def prepare(source, test05_only=False):
     assert source['__xctestrun_metadata__']['FormatVersion'] == 1
     assert set(source) == {'ConnectionUITests', '__xctestrun_metadata__'}
     original = source['ConnectionUITests']
@@ -36,6 +36,8 @@ def prepare(source):
         'MaximumTestExecutionTimeAllowance': 90,
         'ParallelizationEnabled': False,
     })
+    if test05_only:
+        target['OnlyTestIdentifiers'] = ['ConnectionUITests/test05ReadMonitorMenuAX']
     return {'ConnectionUITests': target,
             '__xctestrun_metadata__': source['__xctestrun_metadata__']}
 
@@ -44,8 +46,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('generated', type=Path)
     parser.add_argument('output', type=Path)
+    parser.add_argument('--test05-only', action='store_true')
     args = parser.parse_args()
-    data = prepare(plistlib.loads(args.generated.read_bytes()))
+    data = prepare(plistlib.loads(args.generated.read_bytes()), test05_only=args.test05_only)
     with args.output.open('xb') as output:
         plistlib.dump(data, output, sort_keys=True)
     assert plistlib.loads(args.output.read_bytes()) == data

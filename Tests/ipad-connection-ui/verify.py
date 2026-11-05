@@ -13,14 +13,14 @@ swift = FILES['ConnectionUITests.swift']
 assert swift.count('.tap()') == 3
 assert swift.count('fullDuplex.tap()') == 1
 assert 'guard fullDuplex.isHittable, fullDuplex.isEnabled' in swift
-assert swift.count('try tapUnique(') == 5
+assert swift.count('try tapUnique(') == 6
 assert 'guard element.isHittable, element.isEnabled' in swift
 assert 'if let nativeAudio, nativeAudio.isHittable' in swift
 assert 'identifier: "workspaceOverflow"' in swift
 assert 'menuAction(app, label: "설정")' in swift
 assert '"openAudioRoutes", "오디오 입력·출력 선택…"' in swift
 assert swift.count('toggle.tap()') == 1
-assert swift.count('try ensureToolbarVisible(app)') == 2
+assert swift.count('try ensureToolbarVisible(app)') == 3
 assert 'identifier: "iPadToolbarToggle"' in swift
 assert 'label == "상단 메뉴 표시", toggle.isHittable, toggle.isEnabled' in swift
 assert '상단 메뉴 숨기기' in swift
@@ -42,7 +42,7 @@ assert critical.count('capture(') == 1 and 'before-native-menu' not in opening
 assert swift.count('.activate()') == 1
 assert 'func test01ReadDefaultMonitorAX()' in swift
 assert 'func test02OpenNativeAudioChooserOnly()' in swift
-assert swift.count('func test') == 4
+assert swift.count('func test') == 5
 assert 'func test03EnableIPadFullDuplex() async throws' in swift
 assert 'func test04DisableIPadAudio() async throws' in swift
 for token in ('.launch(', '.terminate(', 'launchArguments', 'launchEnvironment',
@@ -62,12 +62,12 @@ assert 'guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_MEDIA_APPRO
 assert 'throw XCTSkip(' in media_helper
 assert 'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED' not in media_helper
 assert swift.count('return try activateExistingApp()') == 2
-assert swift.count('try existingApp()') == 2 and swift.count('try existingMediaApp()') == 2
+assert swift.count('try existingApp()') == 3 and swift.count('try existingMediaApp()') == 2
 assert 'XCTAttachment(string: app.debugDescription)' in swift
 assert 'Task.sleep(nanoseconds: 10_000_000_000)' in swift
 assert 'identifier: "useIPadFullDuplex"' in swift
 enable = swift.split('func test03EnableIPadFullDuplex()', 1)[1].split('func test04DisableIPadAudio()', 1)[0]
-disable = swift.split('func test04DisableIPadAudio()', 1)[1]
+disable = swift.split('func test04DisableIPadAudio()', 1)[1].split('func test05ReadMonitorMenuAX()', 1)[0]
 assert 'if !app.navigationBars["오디오 입력·출력"].exists' in enable
 assert enable.count('fullDuplex.tap()') == 1
 assert enable.index('fullDuplex.tap()') < enable.index('Task.sleep(') < enable.index('ten-seconds-after-enable-full-duplex')
@@ -81,6 +81,16 @@ assert 'selectOff' not in swift
 for forbidden in ('audioRouteInput', 'audioRouteOutput', 'applyAudioRoutes', 'swipe'):
     assert forbidden not in disable
 assert swift.count('Task.sleep(nanoseconds: 10_000_000_000)') == 2
+monitor = swift.split('func test05ReadMonitorMenuAX()', 1)[1]
+assert monitor.count('try existingApp()') == 1 and 'existingMediaApp' not in monitor
+assert 'bar.buttons.matching(NSPredicate(format: "label == %@", "닫기"))' in monitor
+assert 'guard count <= 1' in monitor
+assert monitor.index('guard chooser.label == "Mac 모니터 선택"') < monitor.index('try tapChecked(chooser)')
+assert monitor.count('try tapUnique(') == 1 and monitor.count('try tapChecked(') == 1
+assert 'app.scrollViews.containing(.staticText, identifier: "Mac 모니터 선택")' in monitor
+assert '"numericDisplayID": NSNull()' in monitor
+assert 'choices.map' in monitor
+assert 'item.tap' not in monitor
 assert '.runningBackgroundSuspended' in swift
 assert 'app.menuBars.descendants' in swift
 assert 'identifier: "macDisplayChooser"' in swift
@@ -123,6 +133,10 @@ for key in ('TestHostPath', 'TestBundlePath', 'UITargetAppPath', 'DependentProdu
             'UITargetAppCommandLineArguments', 'UITargetAppEnvironmentVariables'):
     assert key not in result
 assert plistlib.loads(plistlib.dumps(result)) == result
+monitor_contract = namespace['prepare'](seed, test05_only=True)['ConnectionUITests']
+assert monitor_contract['OnlyTestIdentifiers'] == ['ConnectionUITests/test05ReadMonitorMenuAX']
+assert monitor_contract['EnvironmentVariables'] == result['EnvironmentVariables']
+assert monitor_contract['UseDestinationArtifacts'] is True
 bad = dict(seed, ConnectionUITests=dict(seed['ConnectionUITests'], TestHostBundleIdentifier='other'))
 try:
     namespace['prepare'](bad)
