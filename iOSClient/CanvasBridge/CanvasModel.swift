@@ -930,6 +930,15 @@ enum VaultReviewError: LocalizedError {
 
 struct VaultReviewCard {
     enum Field: String, CaseIterable { case front, back }
+    enum Filter: String, CaseIterable {
+        case due = "기한이 된 카드", all = "모든 카드"
+
+        func includes(_ card: VaultReviewCard, at date: Date) -> Bool {
+            guard self == .due, let due = card.metadata.dueAt,
+                  date.timeIntervalSince1970.isFinite else { return true }
+            return Double(due) <= date.timeIntervalSince1970
+        }
+    }
     enum Grade: Int64, CaseIterable {
         case again = 300, hard = 600, good = 86_400, easy = 172_800
 

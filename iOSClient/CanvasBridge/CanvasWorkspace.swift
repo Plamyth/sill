@@ -74,6 +74,7 @@ struct CanvasWorkspace: View {
     @State private var noteRecoveryDiscardOpen = false
     @State private var pdfRecoveryDiscardOpen = false
     @State private var vaultReview: CanvasStore.VaultReviewSession?
+    @State private var vaultReviewFilter: VaultReviewCard.Filter = .due
     @State private var vaultRawMarkdown = false
     @State private var noteConflict: CanvasRelay.NoteConflict?
     @State private var noteConflictLocal: NoteConflictLocalState?
@@ -1364,9 +1365,22 @@ struct CanvasWorkspace: View {
         }
             .frame(minHeight:44).disabled(!store.vaultReviewCanInsert)
             .accessibilityIdentifier("obsidianInsertReviewCard")
-        Button("복습 보기") { vaultReview = store.beginVaultReview() }
-            .frame(minHeight:44).disabled(!store.vaultReviewCanBegin)
-            .accessibilityIdentifier("obsidianReviewCard")
+        if let item = store.vaultReviewItem {
+            Picker("복습 대상",selection:$vaultReviewFilter) {
+                ForEach(VaultReviewCard.Filter.allCases,id:\.self) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.menu).frame(minHeight:44)
+                .accessibilityIdentifier("obsidianReviewFilter")
+            TimelineView(.explicit([Date(),Date(timeIntervalSince1970:Double(item.card.metadata.dueAt ?? 0))].sorted())) { tick in
+                if item.isVisible(filter:vaultReviewFilter,at:tick.date) {
+                    Button("복습 보기") { vaultReview = store.beginVaultReview(filter:vaultReviewFilter,at:Date()) }
+                        .frame(minHeight:44).disabled(!store.vaultReviewCanBegin)
+                        .accessibilityIdentifier("obsidianReviewCard")
+                } else if let due = item.card.metadata.dueAt {
+                    Text("다음 복습: \(Date(timeIntervalSince1970:Double(due)).formatted(date:.abbreviated,time:.shortened))")
+                        .accessibilityIdentifier("obsidianReviewDeferred")
+                }
+            }
+        }
     }
 
     private func loadVaultEntries() async {

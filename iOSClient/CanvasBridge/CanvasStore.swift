@@ -2322,6 +2322,29 @@ final class CanvasStore: ObservableObject {
         return (try? card.reviewQuestion(revealed:false)) != nil
     }
 
+    struct VaultReviewItem {
+        let card: VaultReviewCard
+        let sourceSHA: String
+        let confirmationPending: Bool
+
+        func isVisible(filter: VaultReviewCard.Filter, at date: Date) -> Bool {
+            confirmationPending || filter.includes(card,at:date)
+        }
+    }
+
+    var vaultReviewItem: VaultReviewItem? {
+        let note = noteContext.map(noteContextIsCurrent) == true ? vaultNote : nil
+        let recovery = noteRecovery.flatMap { record in
+            noteRecoveryMatches(record) && (note == nil || record.base.path == note?.path) ? record : nil
+        }
+        let pending = note == nil || vaultSaving || vaultLoading || vaultBlocked || noteRecoveryWriteFailed ||
+            !noteRecoveryReadable || noteReconciliationHeld || recovery?.submittedText != nil
+        // A submitted rating is not a saved schedule until readback and recovery cleanup succeed.
+        guard let source = pending ? recovery?.base ?? note : note else { return nil }
+        guard let card = try? VaultReviewCard.parse(source.text), card.ready else { return nil }
+        return VaultReviewItem(card:card,sourceSHA:source.sha256,confirmationPending:pending)
+    }
+
     var vaultReviewMessage: String {
         do {
             guard let card = try VaultReviewCard.parse(vaultDraft) else {
@@ -2343,12 +2366,13 @@ final class CanvasStore: ObservableObject {
         } catch { vaultStatus = error.localizedDescription; return false }
     }
 
-    func beginVaultReview() -> VaultReviewSession? {
+    func beginVaultReview(filter: VaultReviewCard.Filter = .all, at date: Date = Date()) -> VaultReviewSession? {
         guard vaultCanAttach, noteRecoveryReadable, !noteRecoveryWriteFailed,
               let base = vaultNote, let inputSessionID = vaultInputSessionID else { return nil }
         do {
             guard let card = try VaultReviewCard.parse(base.text) else { return nil }
             guard card.ready else { throw VaultReviewError.empty }
+            guard filter.includes(card,at:date) else { return nil }
             _ = try card.reviewQuestion(revealed:false)
             return VaultReviewSession(id:UUID(),card:card,base:base,inputSessionID:inputSessionID,
                 editGeneration:noteEditGeneration,selection:vaultSelection,selectedNode:selectedNode,
