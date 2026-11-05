@@ -44,30 +44,38 @@ extension StreamClient {
     }
 
     var iPadProviderCanStart: Bool {
-        providerCall.canPerform && providerCall.result?.status != .started && providerCallOwnsBinding(for: .start)
+        providerCall.canPerform && providerCall.activeCall == nil && providerCallOwnsBinding(for: .start)
     }
     var iPadProviderCanStop: Bool {
-        providerCall.canPerform && providerCall.result?.status == .started &&
-            providerCall.result?.callSessionId != nil && providerCallOwnsBinding(for: .stop)
+        providerCall.canPerform && providerCall.selectedActiveCall?.callSessionId != nil && providerCallOwnsBinding(for: .stop)
     }
     var iPadProviderCanCheckPrevious: Bool { providerCallRegistered && providerCall.canManuallyQuery }
 
+    @discardableResult
+    func selectIPadProviderCallTarget(_ target: IPadCallTarget) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard providerCall.selectTarget(target) else { return false }
+        providerCallQueryWake?.cancel(); providerCallQueryWake = nil
+        reconcileIPadProviderCall()
+        return true
+    }
+
     func performIPadProviderCall(_ action: ProviderCallRequest.Action, target: IPadCallTarget) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard target.supportsProviderCall, action == .start ? iPadProviderCanStart : iPadProviderCanStop,
+        guard target == providerCall.target, target.supportsProviderCall, action == .start ? iPadProviderCanStart : iPadProviderCanStop,
               let peer = connection, let snapshot = audioForwarding.snapshot,
               let device = audioForwardingDevice,
               let request = try? ProviderCallRequest(requestId: UUID(), action: action,
                 expectedLeaseRevision: snapshot.revision, pairedDeviceId: device,
                 desiredInput: desiredAudio.selection.microphone, desiredOutput: desiredAudio.selection.playback,
-                callSessionId: action == .stop ? providerCall.result?.callSessionId : nil),
+                callSessionId: action == .stop ? providerCall.selectedActiveCall?.callSessionId : nil),
               request.matches(snapshot), let control = providerCall.perform(request) else { return }
         sendIPadProviderCall(control, to: peer)
     }
 
     func checkPreviousIPadProviderCall(target: IPadCallTarget) {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard target.supportsProviderCall, iPadProviderCanCheckPrevious, let peer = connection,
+        guard target == providerCall.target, target.supportsProviderCall, iPadProviderCanCheckPrevious, let peer = connection,
               let control = providerCall.manualQuery() else { return }
         providerCallQueryWake?.cancel(); providerCallQueryWake = nil
         sendIPadProviderCall(control, to: peer)
@@ -78,6 +86,7 @@ extension StreamClient {
         guard identity != providerCallPeer else { return }
         providerCallPeer = identity
         providerCallCapability = nil
+        providerCallKindsCapability = nil
         providerCallConnection = UUID()
         providerCall.observe(connection: providerCallConnection, capability: nil, hostKey: nil)
         providerCallQueryWake?.cancel(); providerCallQueryWake = nil
@@ -86,13 +95,14 @@ extension StreamClient {
     func observeIPadProviderCalls(_ list: WindowList, from peer: NWConnection) {
         guard connection === peer else { return }
         providerCallCapability = list.providerCalls
+        providerCallKindsCapability = list.providerCallKinds
         reconcileIPadProviderCall()
     }
 
     func reconcileIPadProviderCall() {
         dispatchPrecondition(condition: .onQueue(.main))
         providerCall.observe(connection: providerCallConnection, capability: providerCallCapability,
-                             hostKey: providerCallTrustedHostKey)
+                             hostKey: providerCallTrustedHostKey, providerCallKinds: providerCallKindsCapability)
         guard providerCallRegistered, let peer = connection, providerCallQueryWake == nil,
               providerCall.needsAutomaticQuery else { return }
         let generation = providerCallConnection
@@ -110,6 +120,7 @@ extension StreamClient {
     private func sendIPadProviderCall(_ control: ProviderCallControl, to peer: NWConnection) {
         let generation = providerCallConnection
         guard connection === peer, providerCallRegistered, providerCall.connection == generation,
+              control.providerKind == providerCall.target.providerKind, providerCall.targetSupported,
               let pending = providerCall.pending else { return }
         let payload = Wire.encode(control)
         guard !payload.isEmpty, payload.count <= StreamMessage.clientPayloadLimit(for: .providerCallControl) else { return }

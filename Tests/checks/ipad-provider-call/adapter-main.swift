@@ -54,9 +54,9 @@ struct ProviderAdapterChecks {
         peer.messages.filter { $0.first == 221 }.compactMap { Wire.decode(ProviderCallControl.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
     }
     @MainActor static func deliver(_ client: StreamClient, _ status: ProviderCallResult.Status,
-                                   request: ProviderCallRequest, peer: NWConnection, session: String? = nil) async throws {
+                                   request: ProviderCallRequest, peer: NWConnection, session: String? = nil, provider: String = "chatgpt-dots-webguest") async throws {
         let state = try ProviderCallState(request: request, result: .init(requestId: request.requestId, status: status,
-            reason: "fixture_result", callSessionId: session))
+            reason: "fixture_result", callSessionId: session, provider: provider))
         let data = Wire.encode(state)
         let header = StreamMessage.parseHeader(StreamMessage(kind: .providerCallState, timestamp: 0, isKeyframe: false, payload: data).serialized())!
         expect(client.receiveIPadProviderCall(header, data, from: peer), "222 dispatched through actual adapter")
@@ -194,6 +194,35 @@ struct ProviderAdapterChecks {
             expect(controls(endingPeer).last?.request.action == .stop &&
                 controls(endingPeer).last?.request.callSessionId == "paused-call", "stop retains exact current call session during pause")
         }
+        let native = try await ready(), nativePeer = native.connection!
+        expect(native.selectIPadProviderCallTarget(.nativeCodex), "select native explicitly")
+        native.performIPadProviderCall(.start, target: .nativeCodex)
+        expect(controls(nativePeer).isEmpty && !native.iPadProviderCanStart, "legacy capability sends no native request")
+        native.providerCallKindsCapability = ["codex-app-server"]
+        native.reconcileIPadProviderCall()
+        expect(native.iPadProviderCanStart, "explicit native capability plus current binding permits control")
+        native.performIPadProviderCall(.start, target: .chatGPTDots)
+        expect(controls(nativePeer).isEmpty, "passed target cannot redirect native selection to Dots")
+        native.performIPadProviderCall(.start, target: .nativeCodex)
+        let nativeStart = controls(nativePeer).last!
+        expect(nativeStart.schemaVersion == 2 && nativeStart.providerKind == .nativeCodex, "actual adapter emits schema2 selector")
+        let exactSession = "abCDef01-2345-4678-9abc-0123456789Ab"
+        try await deliver(native, .started, request: nativeStart.request, peer: nativePeer, session: exactSession, provider: "chatgpt-dots-webguest")
+        expect(native.providerCall.pending != nil && !native.iPadProviderCanStop, "wrong provider cannot consume active native wire")
+        try await deliver(native, .started, request: nativeStart.request, peer: nativePeer, session: exactSession, provider: "codex-app-server")
+        expect(native.iPadProviderCanStop && !native.iPadProviderCanStart && !native.selectIPadProviderCallTarget(.chatGPTDots), "direct native session owns stop and locks target")
+        native.performIPadProviderCall(.stop, target: .nativeCodex)
+        let failedStop = controls(nativePeer).last!
+        try await deliver(native, .failed, request: failedStop.request, peer: nativePeer, provider: "codex-app-server")
+        expect(native.iPadProviderCanStop && !native.iPadProviderCanStart, "failed native stop preserves explicit same-session recovery")
+        native.performIPadProviderCall(.stop, target: .nativeCodex)
+        let finalStop = controls(nativePeer).last!
+        expect(finalStop.request.callSessionId == exactSession && finalStop.request.requestId != failedStop.request.requestId,
+               "manual retry creates one new command for same raw session")
+        try await deliver(native, .stopped, request: finalStop.request, peer: nativePeer, session: exactSession.lowercased(), provider: "codex-app-server")
+        expect(native.providerCall.pending != nil && native.providerCall.activeCall != nil, "normalized session spelling cannot finish native stop")
+        try await deliver(native, .stopped, request: finalStop.request, peer: nativePeer, session: exactSession, provider: "codex-app-server")
+        expect(native.providerCall.activeCall == nil && native.iPadProviderCanStart, "matching native stopped releases current session")
         print("PASS \(checks) actual iPad adapter checks; device/host/audio/network effects0")
     }
 }

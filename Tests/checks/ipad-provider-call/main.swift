@@ -19,7 +19,7 @@ expect(nativeRoundtrip.provider == "codex-app-server" && nativeRoundtrip.mediaPr
 var now = 100.0
 var model = IPadProviderCall(connection: first, clock: { now })
 expect(IPadCallTarget.defaultTarget == .nativeCodex, "default target is native Codex")
-expect(!IPadCallTarget.nativeCodex.supportsProviderCall && !IPadCallTarget.grokBot.supportsProviderCall && IPadCallTarget.chatGPTDots.supportsProviderCall, "221 only represents Dots")
+expect(IPadCallTarget.nativeCodex.supportsProviderCall && !IPadCallTarget.grokBot.supportsProviderCall && IPadCallTarget.chatGPTDots.supportsProviderCall, "native and Dots use explicit provider selectors; Grok unsupported")
 expect(model.perform(request) == nil && model.manualQuery() == nil, "unadvertised contract sends nothing")
 for cap in [nil, 0, 2] as [Int?] {
     model.observe(connection: first, capability: cap, hostKey: hostKey)
@@ -203,6 +203,9 @@ for row in nativeRows {
 }
 expect(decodedNativeTargets.count == 2 && decodedNativeTargets[0].targetHash != decodedNativeTargets[1].targetHash,
        "uppercase and lowercase UUID vectors have distinct valid hashes")
-expect(!IPadCallTarget.nativeCodex.supportsProviderCall, "prepared decoding cannot enable unconfirmed native 221 control")
+var unadvertised = IPadProviderCall(connection: first, target: .nativeCodex, clock: { 1 })
+unadvertised.observe(connection: first, capability: 1, hostKey: hostKey)
+expect(!unadvertised.targetSupported && unadvertised.perform(request) == nil,
+       "prepared decoding alone cannot enable native without explicit capability")
 expect(model.result?.status != .started && model.pending == nil, "pure target decoding cannot mutate existing provider ownership")
-print("PASS \(checks) iPad Dots model and wire checks; native call and sentry authority unimplemented; external effects0")
+print("PASS \(checks) iPad Dots model and wire checks; native media and sentry authority not asserted; external effects0")

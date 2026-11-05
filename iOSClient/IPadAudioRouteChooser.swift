@@ -7,7 +7,7 @@ import StreamProtocol
 struct IPadAudioRouteChooser: View {
     @ObservedObject var client: StreamClient
     @Environment(\.dismiss) private var dismiss
-    @State private var callTarget = IPadCallTarget.defaultTarget
+    private var callTarget: IPadCallTarget { client.providerCall.target }
     @State private var selection = IPadAudioRoutePolicy.Selection()
     @State private var context: IPadAudioRoutePolicy.Context?
     @State private var acknowledgedMac: IPadAudioRouteAcknowledgments.Identity?
@@ -26,33 +26,30 @@ struct IPadAudioRouteChooser: View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("통화 대상", selection: $callTarget) {
+                    Picker("통화 대상", selection: Binding(get: { client.providerCall.target },
+                        set: { _ = client.selectIPadProviderCallTarget($0) })) {
                         ForEach(IPadCallTarget.allCases) { target in
                             Text(target.title).tag(target)
                         }
                     }
                     .accessibilityIdentifier("iPadCallTarget")
+                    .disabled(!client.providerCall.canChangeTarget)
                     switch callTarget {
-                    case .nativeCodex:
-                        Text("기본 대상은 Mac 순정 Codex 음성입니다. 아래 iPad 입력·출력 선택은 Mac 연결의 공통 음성 전달이며, 특정 Codex 통화에 연결됐다는 뜻은 아닙니다.")
-                        Text("순정 Codex 통화 시작·종료는 아직 지원하지 않습니다. iPad 입출력 연결과 순정 Codex 통화 연결 상태는 별도로 확인합니다.")
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("iPadNativeCodexCallUnsupported")
                     case .grokBot:
                         Text("Grok Bot 통화 시작·종료는 아직 지원하지 않습니다. 다른 대상의 통화 명령으로 대신 실행하지 않습니다.")
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("iPadGrokBotCallUnsupported")
-                    case .chatGPTDots:
-                        Button("ChatGPT Dots 통화 시작") { client.performIPadProviderCall(.start, target: callTarget) }
+                    case .nativeCodex, .chatGPTDots:
+                        Button(callTarget == .nativeCodex ? "음성 대화 시작" : "ChatGPT Dots 통화 시작") { client.performIPadProviderCall(.start, target: callTarget) }
                             .disabled(!client.iPadProviderCanStart)
                             .accessibilityIdentifier("iPadProviderCallStart")
-                        Button("ChatGPT Dots 통화 종료", role: .destructive) { client.performIPadProviderCall(.stop, target: callTarget) }
+                        Button(callTarget == .nativeCodex ? "음성 대화 종료" : "ChatGPT Dots 통화 종료", role: .destructive) { client.performIPadProviderCall(.stop, target: callTarget) }
                             .disabled(!client.iPadProviderCanStop)
                             .accessibilityIdentifier("iPadProviderCallStop")
                         Text(client.providerCall.message)
                             .accessibilityIdentifier("iPadProviderCallStatus")
                         if client.providerCall.request != nil {
-                            Button("이전 Dots 요청 결과 확인") { client.checkPreviousIPadProviderCall(target: callTarget) }
+                            Button(callTarget == .nativeCodex ? "이전 음성 요청 결과 확인" : "이전 Dots 요청 결과 확인") { client.checkPreviousIPadProviderCall(target: callTarget) }
                                 .disabled(!client.iPadProviderCanCheckPrevious)
                                 .accessibilityIdentifier("iPadProviderCallCheckPrevious")
                         }
@@ -62,7 +59,7 @@ struct IPadAudioRouteChooser: View {
                         }
                     }
                 } header: { Text("통화 대상과 제어") } footer: {
-                    Text("입력·출력 선택은 통화를 시작하지 않습니다. ChatGPT Dots는 별도 추가 기능입니다. 재연결할 때는 이전 Dots 요청 결과만 조회하며, 조회 기록은 현재 통화나 음성 권한을 증명하지 않습니다.")
+                    Text("입력·출력 선택은 통화를 시작하지 않습니다. 이전 요청 기록과 현재 통화 상태는 별도로 확인합니다.")
                 }
 
                 Section {

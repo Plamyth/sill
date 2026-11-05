@@ -245,10 +245,11 @@ final class StreamClient: ObservableObject {
     lazy var microphoneFrames = IPadMicrophoneFrameGate(admission: audioAdmission)
     var microphoneCapture: IPadMicrophoneCapture?
     var microphoneCaptureToken: UUID?
-    @Published var providerCall = IPadProviderCall(connection: UUID())
+    @Published var providerCall = IPadProviderCall(connection: UUID(), target: .nativeCodex)
     var providerCallConnection = UUID()
     var providerCallPeer: ObjectIdentifier?
     var providerCallCapability: Int?
+    var providerCallKindsCapability: [String]?
     var providerCallQueryWake: DispatchWorkItem?
     var audioForwarding = IPadAudioForwarding()
     var audioForwardingLocalGeneration = UUID()

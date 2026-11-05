@@ -23,6 +23,12 @@ with tempfile.TemporaryDirectory(prefix='ipad-provider-call-', dir=root) as temp
     run(['xcrun', 'swiftc', *flags, *link, root / 'iOSClient/IPadProviderCall.swift',
          Path(__file__).with_name('main.swift'), '-o', out / 'model'])
     run([out / 'model', Path(__file__).with_name('vectors.json')])
+    native = out / 'native'
+    native.mkdir()
+    (native / 'main.swift').write_bytes(Path(__file__).with_name('native-main.swift').read_bytes())
+    run(['xcrun', 'swiftc', *flags, *link, root / 'iOSClient/IPadProviderCall.swift',
+         native / 'main.swift', '-o', native / 'checks'])
+    run([native / 'checks'])
     run(['xcrun', 'swiftc', *flags, *link, root / 'iOSClient/IPadDesiredAudio.swift',
          root / 'iOSClient/IPadAudioForwarding.swift', root / 'Tests/checks/ipad-audio-forwarding/main.swift', '-o', out / 'forwarding'])
     run([out / 'forwarding'])

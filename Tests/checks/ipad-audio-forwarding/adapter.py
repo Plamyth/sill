@@ -122,6 +122,7 @@ final class StreamClient {
  var providerCallConnection = UUID()
  var providerCallPeer: ObjectIdentifier?
  var providerCallCapability: Int?
+ var providerCallKindsCapability: [String]?
  var providerCallQueryWake: DispatchWorkItem?
  var inputPaused = false
  var authenticated = true
