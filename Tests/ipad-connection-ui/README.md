@@ -162,3 +162,33 @@ c18c의 `StreamScreen.swift` 1692~1758을 읽기 대조했다. `macDisplayChoose
 기본 변환 allowlist는 계속 01/02다. `prepare_destination.py GENERATED OUTPUT --test05-only`는 별도 05 단독 UseDestinationArtifacts 계약을 만들며 세 gate는 모두0으로 둔다. 부모가 동일 기기 `00008112-00116854362BC01E`와 actual source c18c/build83/PID3571, Root lease, 오디오 OFF metadata를 직전에 재확인한 경우에만 일반 승인과 OFF flag를1로 둔다. media flag는0을 유지한다. 이 단독 계약에는 정상 앱 launch arguments/environment가 없다.
 
 부모는 실행 전후 AUT source commit/tree/build/PID와 선택 sourceID·권한·키·설정의 동일성을 기존 readback으로 대조하고, 실제 달라진 값이 있으면 원인 미확인으로 남긴다. 테스트는 AX에서 노출되지 않는 SourceHash/UDID/권한을 추정 검증하지 않는다. 새 앱·bundleID·key/profile/권한은 만들지 않는다. 후보 산출물은 `signedcandidate/monitor-read05`, 기존 TeamZPTXHJ866D/profile40b0이며 서명·설치·실기 UI 수용의 부모 조율과 구분한다. 이번 작업은 runner build/서명까지만, 실제 설치·실행은0이다. 제품과 Host를 쓰지 않는 비작성 독립 검수 결과를 영수증에 연결하고 최종 동일대상·SourceHash·flags·권한 불변 검사와 실기 수용은 부모가 연결한다.
+
+## 06 actual86의 native·Dots Picker 관측 후보
+
+기준 제품은 `a7ecaed3a9160bececcfc3753be2b26c4faa9173`, tree `1ba6369b9c0427c6aec9cf354310cd8720ee4c73`다. actual86 설치와 Host241 또는243의 native 광고 부재는 부모 인계 전제이며 이 담당은 기기나 Host를 조회하지 않는다. 소유 브랜치는 `codex/ipad-ui-native06-20261105`, 소유 폴더는 `Tests/ipad-connection-ui`뿐이다. 01~05와 기존 공용 helper는 원문 SHA `d2282679266e9ed82c5da456d48e0484e0453062454828a5ffeebab71e3650e2`로 보존을 검사한다.
+
+`IPadAudioRouteChooser.swift`의 Picker는 `client.providerCall.target`을 읽고 `selectIPadProviderCallTarget`으로 쓴다. 두 버튼의 문구도 같은 모델의 target을 읽는다. `IPadProviderCall.swift`는 인증된 Host key와 실제 `providerCalls`/`providerCallKinds` 광고를 받아 native 지원을 계산한다. `StreamClient+ProviderCall.swift`가 이 광고를 수신·조정한다. 테스트는 이 경로에 mock이나 capability를 넣지 않는다. normal Picker 선택은 모델 target 변경과 reconcile을 호출하므로 미처리 이전 요청이 없는 조건도 검사한다.
+
+`test06ReadNativeDotsUnsupportedChooserAX`는 runner의 `CCR_CONNECTION_UI_MEDIA_APPROVED=0`을 먼저 요구하고, 기존 `existingApp()`의 일반 읽기 승인1과 직전 OFF 확인1을 모두 요구한다. 누락·다른 값이면 AUT 객체 생성과 activate 전에 skip한다. 부모는 Root와 단일 writer를 조율하고 같은 기기·actual86 source/build/PID·Host241/243·인증된 광고 경로·fresh OFF metadata를 직전에 확인해야 한다. OFF 근거에는 desired microphone/playback, capture/engine, pending attempts와 Host intent를 포함하며 실행 뒤에도 대조한다. 이 flag는 runner에만 주고 정상 앱 args/env에는 주지 않는다.
+
+실행 중인 canonical AUT만 activate한다. 기존 오디오창이 없으면 기존 native 메뉴 경로로 열고 정확한 navigation bar를 확인한다. 아래 순서만 수행한다.
+
+1. `iPadCallTarget`의 현재 값이 정확히 `Mac 순정 Codex 음성`인지 확인한다. Picker는 유일한 button 또는 popUpButton이며 enabled/hittable이어야 한다. 값은 exact value 또는 값이 비어 있을 때 exact `통화 대상, Mac 순정 Codex 음성` label만 허용한다.
+2. `iPadProviderCallStart`/`Stop`의 native 문구와 두 버튼의 비활성, `iPadProviderCallStatus`의 정확한 `이 Mac 연결은 순정 Codex 음성 대화 제어를 지원하지 않습니다.`를 AX·JSON·캡처로 관측한다. 이전 요청 확인 버튼이나 과거 결과가 노출되면 중지한다. 지원됨·pending·이전 unsupported 결과·미확인 상태는 이 전용 case의 성공이 아니다.
+3. 정상 Picker와 exact native menu 항목으로 `ChatGPT Dots`를 선택한다. 같은 Picker의 값, Dots용 시작·종료 문구, 비활성, 모델의 초기 Dots 상태를 관측한다. Dots는 실제 Host 광고에 따라 지원 또는 미지원 초기 문구를 허용하지만 두 버튼은 계속 비활성이어야 한다.
+4. 정상 Picker로 원래 native 값을 복원한다. native 미지원 상태를 다시 확인하고 정확한 navigation bar 내부 `닫기` 버튼만 눌러 창이 사라지는지 확인한다. 캡처와 AX를 남긴다. 제품 close의 authorization 정리와 acknowledge 동작은 유지한다.
+
+Dots 관측이 실패하면 근거를 먼저 남긴다. Picker·버튼·상태가 안전한 전제를 만족할 때만 native 복원과 닫기를 시도하며 원래 실패도 반환한다. 메뉴가 닫히지 않았거나 AX 형식·값·버튼·지원 전제가 다르면 추가 조작하지 않고 복원 미확인 원인을 함께 반환한다. 좌표·키·스크롤·새 진단앱으로 우회하지 않는다. native 지원 문구가 보이면 해당 전용 case를 중지한다. Dots가 표시되는 동안 native 광고는 AX에 별도로 노출되지 않으므로 순간적인 광고 변경을 이 UI만으로 증명할 수 없다. 부모의 동일 Host·인증 경로·전후 metadata 대조가 필요하다.
+
+start/stop, 마이크, 스피커, 경로 적용, Mac 장치, 모니터, 원격 입력 버튼은 누르지 않는다. launch/terminate/설치·AUT args/env 변경·제품/Host/Core 변경은 없다. 기본01/02와05 단독 선택은 유지한다. `prepare_destination.py GENERATED OUTPUT --test06-only`만06 하나를 선택하며 모든 flag는0으로 생성한다. 05/06 동시 선택은 CLI와 함수에서 모두 거부한다. `UseDestinationArtifacts`/`UseUITargetAppProvidedByTests` 보호와 설치 artifact 경로 제외는 그대로다.
+
+산출물은 storage-route가 확인한 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/ui-native06-20261105`에만 둔다. 이 경로의 새 `DerivedData`만 사용하고 기존 산출물은 읽거나 재빌드하지 않는다. Apple iOS SDK의 generic `build-for-testing`은 러너 하나만 만들며 기존 Team `ZPTXHJ866D`, identity와 profile `40b0d631-e2f5-48bb-b79d-8fb083507835`를 재사용한다. provisioning 갱신·키 생성은 하지 않는다. 이 담당의 기기 설치·실행은0이며 실제 UI 수용과 최종 Pencil 확인은 부모의 마지막 묶음에 남긴다.
+
+Pstack Feature의 how 단계는 위 세 제품 소스와 기존 테스트/변환 계약을 직접 대조했다. architect는 사용자 ARENA 금지에 따라 기존 helper와 `ReadOnlyCallTarget` 관측 모델 하나를 재사용했다. Ponytail 최소 선택은 XCTest와 Python 표준 도구뿐이며 새 앱·의존성은 없다. throughput checkpoint는 다음과 같다.
+
+- Blocking first steps. 정확한 base/tree·clean·기존 테스트·서명·저장 경로를 확인했다.
+- Independent workstreams. 이 writer는 UI 테스트만, 부모는 제품86·Host·기기·원장을 소유한다. Mini 정적 검사와 Apple 빌드는 독립 수행한다.
+- Shared mutable state. 새 워크트리와 이 산출물 경로만 쓴다. 공유 integration·기기·현재 runner는 변경하지 않는다.
+- Smallest safe decomposition. 테스트·선택기·그 보호 검사는 결합된 한 단위여서 한 writer가 소유한다.
+
+하위 에이전트 도구가 제공되지 않아 본 담당이 구현했다. `BLOCKED: independent review`는 부모의 비작성 검수로 넘기며 자체 검사나 빌드를 독립 검수로 세지 않는다. 검증 가능한 한 단위로 검사·커밋하고 exact commit/tree와 signed hash를 외장 영수증에 연결한다. PR·push·integration 반영·서버·설치·실행은 이 단위의 범위 밖이다. 실제 AX 노출·닫기·바인딩 수용은 미검증이며 지원 전제가 다르면 부모에게 정확한 AX 차이를 반환한다.

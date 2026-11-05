@@ -222,4 +222,129 @@ final class ConnectionUITests: XCTestCase {
         captureMediaState(app, name: "monitor-menu-observation")
         XCTAssertFalse(choices.isEmpty, "모니터 메뉴 항목 미노출. 실제 sourceID 검증으로 수용하지 않습니다.")
     }
+
+    private enum ReadOnlyCallTarget: String {
+        case native = "Mac 순정 Codex 음성"
+        case dots = "ChatGPT Dots"
+
+        var start: String { self == .native ? "음성 대화 시작" : "ChatGPT Dots 통화 시작" }
+        var stop: String { self == .native ? "음성 대화 종료" : "ChatGPT Dots 통화 종료" }
+        var statuses: [String] {
+            if self == .native {
+                return ["이 Mac 연결은 순정 Codex 음성 대화 제어를 지원하지 않습니다."]
+            }
+            return ["이 Mac 연결은 ChatGPT Dots 통화 제어를 지원하지 않습니다.",
+                    "통화와 음성 입출력 상태는 각각 확인합니다."]
+        }
+    }
+
+    private func callTargetPicker(_ app: XCUIApplication) throws -> XCUIElement {
+        let picker = try unique(app.descendants(matching: .any).matching(identifier: "iPadCallTarget"))
+        guard [.button, .popUpButton].contains(picker.elementType), picker.isEnabled, picker.isHittable else {
+            throw NSError(domain: "ConnectionUI", code: 20,
+                          userInfo: [NSLocalizedDescriptionKey: "정상 통화 대상 Picker의 native AX 형식·활성 상태 미확인"])
+        }
+        return picker
+    }
+
+    private func selectedCallTarget(_ picker: XCUIElement) throws -> ReadOnlyCallTarget {
+        let value = picker.value as? String
+        for target in [ReadOnlyCallTarget.native, .dots] {
+            if value == target.rawValue ||
+                ((value == nil || value == "") && picker.label == "통화 대상, " + target.rawValue) {
+                return target
+            }
+        }
+        throw NSError(domain: "ConnectionUI", code: 21,
+                      userInfo: [NSLocalizedDescriptionKey: "현재 통화 대상 AX 값 미확인. 추정 선택하지 않습니다."])
+    }
+
+    private func observeReadOnlyCall(_ app: XCUIApplication, target: ReadOnlyCallTarget,
+                                     name: String) throws {
+        captureMediaState(app, name: name)
+        let picker = try callTargetPicker(app)
+        let start = try unique(app.buttons.matching(identifier: "iPadProviderCallStart"))
+        let stop = try unique(app.buttons.matching(identifier: "iPadProviderCallStop"))
+        let status = try unique(app.staticTexts.matching(identifier: "iPadProviderCallStatus"))
+        guard try selectedCallTarget(picker) == target,
+              start.label == target.start, stop.label == target.stop,
+              !start.isEnabled, !stop.isEnabled,
+              target.statuses.contains(status.label),
+              app.buttons.matching(identifier: "iPadProviderCallCheckPrevious").count == 0,
+              app.staticTexts.matching(identifier: "iPadProviderCallHistoricalResult").count == 0 else {
+            throw NSError(domain: "ConnectionUI", code: 22,
+                          userInfo: [NSLocalizedDescriptionKey:
+                            "미지원 전용 전제와 AX가 다릅니다. 지원 광고·이전 요청·활성 버튼·대상 불일치 시 중지합니다."])
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "target": target.rawValue, "pickerIdentifier": picker.identifier,
+            "pickerLabel": picker.label, "pickerValue": picker.value as? String ?? "",
+            "startLabel": start.label, "startEnabled": start.isEnabled,
+            "stopLabel": stop.label, "stopEnabled": stop.isEnabled,
+            "status": status.label,
+            "scope": "정상 Picker와 모델의 표시 바인딩 관측. Host 버전·인증·fresh OFF는 부모 metadata 전제."
+        ], options: [.prettyPrinted, .sortedKeys])
+        let ax = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        ax.name = name + "-values"
+        ax.lifetime = .keepAlways
+        add(ax)
+    }
+
+    private func selectReadOnlyCallTarget(_ app: XCUIApplication, from: ReadOnlyCallTarget,
+                                          to: ReadOnlyCallTarget) throws {
+        let picker = try callTargetPicker(app)
+        guard try selectedCallTarget(picker) == from else {
+            throw NSError(domain: "ConnectionUI", code: 23,
+                          userInfo: [NSLocalizedDescriptionKey: "선택 직전 통화 대상이 바뀌었습니다."])
+        }
+        try tapChecked(picker)
+        captureMediaState(app, name: "native06-target-menu-" + to.rawValue)
+        try tapUnique(menuAction(app, label: to.rawValue))
+    }
+
+    private func restoreNativeCallAndClose(_ app: XCUIApplication) throws {
+        captureMediaState(app, name: "native06-before-restore")
+        let current = try selectedCallTarget(callTargetPicker(app))
+        if current == .dots {
+            try observeReadOnlyCall(app, target: .dots, name: "native06-restore-guard")
+            try selectReadOnlyCallTarget(app, from: .dots, to: .native)
+        }
+        try observeReadOnlyCall(app, target: .native, name: "native06-restored")
+        let bar = try unique(app.navigationBars.matching(identifier: "오디오 입력·출력"))
+        try tapUnique(bar.buttons.matching(NSPredicate(format: "label == %@", "닫기")))
+        guard bar.waitForNonExistence(timeout: 5) else {
+            throw NSError(domain: "ConnectionUI", code: 24,
+                          userInfo: [NSLocalizedDescriptionKey: "native 값 복원 후 오디오창 닫힘 미확인"])
+        }
+        captureMediaState(app, name: "native06-closed")
+    }
+
+    func test06ReadNativeDotsUnsupportedChooserAX() throws {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "0" else {
+            throw XCTSkip("06은 media 승인값이 정확히 0일 때만 실행합니다.")
+        }
+        let app = try existingApp()
+        if !app.navigationBars["오디오 입력·출력"].exists {
+            try openAudioChooser(app)
+        }
+        try requireAudioChooser(app)
+        try observeReadOnlyCall(app, target: .native, name: "native06-initial-unsupported")
+        do {
+            try selectReadOnlyCallTarget(app, from: .native, to: .dots)
+            try observeReadOnlyCall(app, target: .dots, name: "native06-dots-binding")
+        } catch {
+            let observationError = error
+            captureMediaState(app, name: "native06-observation-failed")
+            do {
+                try restoreNativeCallAndClose(app)
+            } catch {
+                throw NSError(domain: "ConnectionUI", code: 25,
+                              userInfo: [NSLocalizedDescriptionKey:
+                                "관측 실패: \(observationError). 안전한 복원·닫기도 미확인: \(error). 추가 조작하지 않습니다."])
+            }
+            throw observationError
+        }
+        try restoreNativeCallAndClose(app)
+    }
 }

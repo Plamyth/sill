@@ -9,7 +9,10 @@ if 'FILES' not in globals():
     root = Path(__file__).resolve().parent
     FILES = {str(p.relative_to(root)): p.read_text() for p in root.rglob('*')
              if p.is_file() and p.suffix in {'.swift', '.py', '.pbxproj', '.xcscheme'}}
-swift = FILES['ConnectionUITests.swift']
+full_swift = FILES['ConnectionUITests.swift']
+swift, native06 = full_swift.split('\n    private enum ReadOnlyCallTarget:', 1)
+swift = swift.rstrip() + '\n}\n'
+assert hashlib.sha256(swift.encode()).hexdigest() == 'd2282679266e9ed82c5da456d48e0484e0453062454828a5ffeebab71e3650e2'
 assert swift.count('.tap()') == 3
 assert swift.count('fullDuplex.tap()') == 1
 assert 'guard fullDuplex.isHittable, fullDuplex.isEnabled' in swift
@@ -47,7 +50,7 @@ assert 'func test03EnableIPadFullDuplex() async throws' in swift
 assert 'func test04DisableIPadAudio() async throws' in swift
 for token in ('.launch(', '.terminate(', 'launchArguments', 'launchEnvironment',
               'coordinate(', 'typeText(', 'press(', 'swipe', 'adjust(', 'springboard'):
-    assert token not in swift, token
+    assert token not in full_swift, token
 assert 'CCR_CONNECTION_UI_APPROVED' in swift
 import re
 audio_gate = re.search(
@@ -137,6 +140,54 @@ monitor_contract = namespace['prepare'](seed, test05_only=True)['ConnectionUITes
 assert monitor_contract['OnlyTestIdentifiers'] == ['ConnectionUITests/test05ReadMonitorMenuAX']
 assert monitor_contract['EnvironmentVariables'] == result['EnvironmentVariables']
 assert monitor_contract['UseDestinationArtifacts'] is True
+native_contract = namespace['prepare'](seed, test06_only=True)['ConnectionUITests']
+assert native_contract['OnlyTestIdentifiers'] == ['ConnectionUITests/test06ReadNativeDotsUnsupportedChooserAX']
+assert {k: v for k, v in native_contract.items() if k != 'OnlyTestIdentifiers'} == {
+    k: v for k, v in result.items() if k != 'OnlyTestIdentifiers'}
+try:
+    namespace['prepare'](seed, test05_only=True, test06_only=True)
+except ValueError:
+    pass
+else:
+    raise AssertionError('mixed 05/06 selection accepted')
+assert 'add_mutually_exclusive_group()' in FILES['prepare_destination.py']
+assert full_swift.count('func test') == 6
+assert full_swift.count('.tap()') == swift.count('.tap()')
+assert full_swift.count('.activate()') == 1
+for forbidden in ('existingMediaApp', '.tap()', 'Task.sleep', 'performIPadProviderCall',
+                  'selectIPadProviderCallTarget', 'audioRouteInput', 'audioRouteOutput',
+                  'applyAudioRoutes', 'applyMacAudioRoutes', 'stopIPadAudio',
+                  'useIPadFullDuplex', 'fetchMacAudioRoutes', 'macDisplayChooser',
+                  'WindowList', 'nativeSupported', 'providerCallKinds'):
+    assert forbidden not in native06, forbidden
+test06 = native06.split('func test06ReadNativeDotsUnsupportedChooserAX()', 1)[1]
+assert test06.index('environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "0"') < test06.index('try existingApp()')
+assert 'throw XCTSkip(' in test06
+assert test06.count('try existingApp()') == 1
+assert test06.index('target: .native, name: "native06-initial-unsupported"') < test06.index('from: .native, to: .dots')
+assert test06.index('from: .native, to: .dots') < test06.index('target: .dots, name: "native06-dots-binding"')
+assert test06.count('try restoreNativeCallAndClose(app)') == 2
+assert 'throw observationError' in test06
+picker_check = native06.split('private func callTargetPicker(', 1)[1].split('private func selectedCallTarget(', 1)[0]
+assert 'identifier: "iPadCallTarget"' in picker_check
+assert '[.button, .popUpButton].contains(picker.elementType), picker.isEnabled, picker.isHittable' in picker_check
+observation = native06.split('private func observeReadOnlyCall(', 1)[1].split('private func selectReadOnlyCallTarget(', 1)[0]
+for expected in ('!start.isEnabled, !stop.isEnabled', 'target.statuses.contains(status.label)',
+                 'start.label == target.start, stop.label == target.stop',
+                 'try selectedCallTarget(picker) == target',
+                 'identifier: "iPadProviderCallCheckPrevious").count == 0',
+                 'identifier: "iPadProviderCallHistoricalResult").count == 0'):
+    assert expected in observation, expected
+assert observation.index('captureMediaState(') < observation.index('let picker =')
+assert 'return ["이 Mac 연결은 순정 Codex 음성 대화 제어를 지원하지 않습니다."]' in native06
+selection06 = native06.split('private func selectReadOnlyCallTarget(', 1)[1].split('private func restoreNativeCallAndClose(', 1)[0]
+assert selection06.index('guard try selectedCallTarget(picker) == from') < selection06.index('try tapChecked(picker)')
+assert selection06.count('try tapChecked(') == 1 and selection06.count('try tapUnique(') == 1
+assert 'menuAction(app, label: to.rawValue)' in selection06
+restoration = native06.split('private func restoreNativeCallAndClose(', 1)[1].split('func test06', 1)[0]
+assert restoration.index('target: .dots, name: "native06-restore-guard"') < restoration.index('from: .dots, to: .native')
+assert restoration.index('target: .native, name: "native06-restored"') < restoration.index('bar.buttons.matching')
+assert 'bar.waitForNonExistence(timeout: 5)' in restoration
 bad = dict(seed, ConnectionUITests=dict(seed['ConnectionUITests'], TestHostBundleIdentifier='other'))
 try:
     namespace['prepare'](bad)
