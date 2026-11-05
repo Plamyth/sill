@@ -124,7 +124,7 @@ extension StreamClient {
         let presented = connection === visionDisplayPeer ? visionPresentedPeerEpoch : nil
         let result = visionDisplaySelection.begin(command, presented: presented, macID: visionAutomaticDisplayMacID)
         #else
-        let result = visionDisplaySelection.begin(command)
+        let result = visionDisplaySelection.begin(command, macID: visionAutomaticDisplayMacID)
         #endif
         guard !known, result.code == .releasing else { return result }
         guard let expected = connection, expected === visionDisplayPeer else {

@@ -2,34 +2,67 @@ import Foundation
 import StreamProtocol
 
 struct VisionDisplaySelection {
-    // A window value is scoped to the authenticated Mac and the exact host inventory.
+    // Window identity survives inventories; catalog/epoch admission does not.
     struct WindowTarget: Codable, Hashable {
         let macID: String
         let launchID: String
         let inventoryID: UUID
         let displayID: UInt32
+        var stableDisplayIdentity: String? = nil
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            guard lhs.macID == rhs.macID else { return false }
+            if let identity = lhs.stableDisplayIdentity {
+                return identity == rhs.stableDisplayIdentity
+            }
+            return rhs.stableDisplayIdentity == nil && lhs.launchID == rhs.launchID &&
+                lhs.inventoryID == rhs.inventoryID && lhs.displayID == rhs.displayID
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(macID); hasher.combine(stableDisplayIdentity)
+            if stableDisplayIdentity == nil {
+                hasher.combine(launchID); hasher.combine(inventoryID); hasher.combine(displayID)
+            }
+        }
+
+        func resolvedDisplayID(macID: String?, catalog: Catalog?) -> UInt32? {
+            guard self.macID == macID, let catalog, catalog.capability == 1, catalog.validInventory,
+                  let launch = catalog.launchID, !launch.isEmpty, launch.utf8.count <= 128 else { return nil }
+            if let identity = stableDisplayIdentity {
+                let matches = catalog.displays?.filter { $0.stableIdentity == identity } ?? []
+                return matches.count == 1 ? matches.first?.id : nil
+            }
+            guard launchID == catalog.launchID, inventoryID == catalog.inventory,
+                  catalog.displays?.contains(where: { $0.id == displayID }) == true else { return nil }
+            return displayID
+        }
 
         func matches(macID: String?, catalog: Catalog?) -> Bool {
-            guard let catalog else { return false }
-            return self.macID == macID && launchID == catalog.launchID &&
-                inventoryID == catalog.inventory && catalog.validInventory &&
-                catalog.displays?.contains(where: { $0.id == displayID }) == true
+            resolvedDisplayID(macID: macID, catalog: catalog) != nil
         }
     }
     var windowTarget: WindowTarget?
+    private var manualWindowTarget: WindowTarget?
 
     func windowTarget(macID: String?, displayID: UInt32) -> WindowTarget? {
         guard let macID, !macID.isEmpty, let catalog, catalog.capability == 1,
               catalog.validInventory, let launchID = catalog.launchID, !launchID.isEmpty,
               let inventoryID = catalog.inventory, choices.contains(where: { $0.id == displayID }) else { return nil }
         guard independentWindowsAvailable else { return nil }
-        return WindowTarget(macID: macID, launchID: launchID, inventoryID: inventoryID, displayID: displayID)
+        let identity = choices.first { $0.id == displayID }?.stableIdentity
+        let unique = identity.map { value in !value.isEmpty && value.utf8.count <= 128 && choices.filter { $0.stableIdentity == value }.count == 1 } == true
+        return WindowTarget(macID: macID, launchID: launchID, inventoryID: inventoryID, displayID: displayID,
+                            stableDisplayIdentity: unique ? identity : nil)
     }
 
     func windowTargetPresented(macID: String?, epoch: VideoEpoch?) -> Bool {
         guard let windowTarget else { return true }
-        guard windowTarget.matches(macID: macID, catalog: catalog), let catalog, let epoch else { return false }
-        return independentWindowsAvailable && catalog.source == .desktop && catalog.activeDisplay == windowTarget.displayID &&
+        guard let displayID = windowTarget.resolvedDisplayID(macID: macID, catalog: catalog), let catalog, let epoch else { return false }
+        if windowTarget.stableDisplayIdentity == nil {
+            guard manualWindowTarget?.matches(macID: macID, catalog: catalog) == true else { return false }
+        }
+        return independentWindowsAvailable && catalog.source == .desktop && catalog.activeDisplay == displayID &&
             catalog.epoch == epoch && epoch.matches(source: .desktop, generation: catalog.generation)
     }
 
@@ -190,8 +223,9 @@ struct VisionDisplaySelection {
               let token else { return nil }
         let target: DisplayInfo?
         if let windowTarget {
-            guard independentWindowsAvailable, windowTarget.matches(macID: macID, catalog: catalog) else { return nil }
-            target = choices.first { $0.id == windowTarget.displayID }
+            guard independentWindowsAvailable, windowTarget.stableDisplayIdentity != nil,
+                  windowTarget.matches(macID: macID, catalog: catalog) else { return nil }
+            target = choices.first { $0.id == windowTarget.resolvedDisplayID(macID: macID, catalog: catalog) }
             if let previous = automaticInventories[inventory],
                admission.generation <= previous.admissionGeneration { return nil }
         } else if let previous = automaticInventories[inventory] {
@@ -271,6 +305,7 @@ struct VisionDisplaySelection {
         guard self.peerEpoch != peerEpoch else { return }
         cancel(.peerChanged)
         self.peerEpoch = peerEpoch; catalog = nil; revision &+= 1
+        manualWindowTarget = nil
         unresolved = false; modernSeen = false
         automaticOpportunity = nil; automaticInventories = [:]; automaticPhase = .open
         newestSelectionAdmission = nil; selectionAdmissionConflicted = false
@@ -296,6 +331,10 @@ struct VisionDisplaySelection {
     mutating func observe(_ next: Catalog) {
         let old = catalog
         catalog = next
+        if windowTarget != nil, old?.inventory != next.inventory || old?.launchID != next.launchID {
+            automaticOpportunity = nil
+            automaticPhase = .open
+        }
         if let admission = next.selectionAdmission {
             if newestSelectionAdmission == nil || admission.generation > newestSelectionAdmission!.generation {
                 newestSelectionAdmission = admission
@@ -348,6 +387,7 @@ struct VisionDisplaySelection {
               catalog == next else { return }
         if waiting.command.automaticRevision == nil, let macID {
             rememberedManualDisplay = rememberedDisplay(macID: macID, epoch: epoch)
+            manualWindowTarget = windowTarget(macID: macID, displayID: waiting.command.displayID)
         }
         finish(.observed)
         unresolved = false
@@ -383,8 +423,10 @@ struct VisionDisplaySelection {
             else if token != command.token { code = .staleScope }
             else if windowTarget != nil && !independentWindowsAvailable { code = .unsupportedCapability }
             else if let windowTarget,
-                    (windowTarget.launchID != catalog.launchID || windowTarget.inventoryID != catalog.inventory ||
-                     windowTarget.displayID != command.displayID) { code = .staleScope }
+                    command.automaticRevision != nil && !windowTarget.matches(macID: windowTarget.macID, catalog: catalog) { code = .staleScope }
+            else if let windowTarget,
+                    let resolved = windowTarget.resolvedDisplayID(macID: windowTarget.macID, catalog: catalog),
+                    resolved != command.displayID { code = .staleScope }
             else if !choices.contains(where: { $0.id == command.displayID }) { code = .unknownDisplay }
             else if pending != nil { code = .busy }
             else { code = .ready }
@@ -397,10 +439,23 @@ struct VisionDisplaySelection {
         let result = preview(command)
         guard !known(command.requestID) else { return result }
         guard result.code == .ready, let catalog else { remember(command, result); return result }
+        if let target = windowTarget {
+            guard macID == target.macID else {
+                let rejected = Result(requestID: command.requestID, code: .staleScope)
+                remember(command, rejected); return rejected
+            }
+            if command.automaticRevision == nil {
+                windowTarget = self.windowTarget(macID: macID, displayID: command.displayID)
+                manualWindowTarget = windowTarget
+            }
+        }
         if let presented, catalog.epoch == presented, catalog.source == .desktop,
            catalog.activeDisplay == command.displayID,
            presented.matches(source: .desktop, generation: catalog.generation) {
-            if let macID { rememberedManualDisplay = rememberedDisplay(macID: macID, epoch: presented) }
+            if let macID {
+                rememberedManualDisplay = rememberedDisplay(macID: macID, epoch: presented)
+                if command.automaticRevision == nil { manualWindowTarget = windowTarget(macID: macID, displayID: command.displayID) }
+            }
             unresolved = false
             let unchanged = Result(requestID: command.requestID, code: .unchanged)
             remember(command, unchanged)

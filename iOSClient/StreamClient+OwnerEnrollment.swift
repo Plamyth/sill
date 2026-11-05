@@ -10,6 +10,13 @@ extension StreamClient {
         guard !visionWindowRetired, visionStartupForeground, appInForeground,
               visionDisplaySelection.lease != nil,
               SavedMacs.automaticTarget(savedMacs, preferredID: id) != nil else { return }
+        if let target = visionDisplaySelection.windowTarget {
+            guard target.macID == id, visionWindowReconnectIsCurrent(id),
+                  let saved = savedMac(id) else { return }
+            if reconnect == nil { _ = beginVisionSavedMacReconnect(saved) }
+            reconnectIfListed()
+            return
+        }
         dialSaved(id, why: .tap)
     }
     #endif

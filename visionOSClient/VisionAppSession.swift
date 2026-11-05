@@ -158,8 +158,7 @@ final class VisionAppSession: ObservableObject {
         client.startRemote()
         if let target = client.visionDisplaySelection.windowTarget {
             expectedPin = client.savedMac(target.macID)?.fingerprintData
-            client.stopSavedMacAutoConnect()
-            client.connectVisionTrustedMac(target.macID)
+            client.armSavedMacAutoConnect(targetMacID: target.macID)
         } else {
             expectedPin = client.visionExpectedMacPin
             client.armSavedMacAutoConnect()

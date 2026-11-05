@@ -192,7 +192,9 @@ final class StreamClient: ObservableObject {
         let recognitionKey: Data
         let preferredID: String?
         let devicePin: Data
+        var windowMacID: String? = nil
     }
+    private var visionWindowReconnectTarget: VisionStartupTarget?
     private var startupRemoteCheck: DispatchWorkItem?
     @Published var ownerBootstrap = OwnerBootstrapState()
     var ownerBootstrapDial: RemoteConnector?
@@ -1458,7 +1460,7 @@ final class StreamClient: ObservableObject {
     #if os(iOS) || os(visionOS)
     /// 저장 신뢰가 있으면 기존 키만 사용한다. 최초 빈 저장소는 별도의 소유 Mac 등록 정책을 따른다.
     /// 저장된 선호 대상의 검증 실패를 다른 Mac의 자동 등록으로 우회하지 않는다.
-    func armSavedMacAutoConnect() {
+    func armSavedMacAutoConnect(targetMacID: String? = nil) {
         guard case .unarmed = startupAutoConnection else { return }
         #if os(visionOS)
         guard case .ordinary = visionCableBootstrap.launch else { stopSavedMacAutoConnect(); return }
@@ -1467,9 +1469,10 @@ final class StreamClient: ObservableObject {
         // Explicit harness dials and seeded records own their own startup behavior.
         if CommandLine.arguments.contains(where: { $0.hasPrefix("-Sill") }) { startupAutoConnection = .stopped; return }
         #endif
-        let preferred = UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey)
+        let preferred = targetMacID ?? UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey)
         guard let target = SavedMacs.automaticTarget(savedMacs, preferredID: preferred) else {
             #if os(visionOS)
+            if targetMacID != nil { startupAutoConnection = .stopped; return }
             startupAutoConnection = .ownerBootstrap
             startOwnerBootstrap()
             #else
@@ -1485,8 +1488,10 @@ final class StreamClient: ObservableObject {
         #if os(visionOS)
         guard let pin = target.fingerprintData, let recognitionKey = target.recognitionKeyData,
               let devicePin = DeviceIdentity.existing()?.fingerprint else { return }
-        startupAutoConnection = .waiting(VisionStartupTarget(macID: target.macID, pin: pin,
-            recognitionKey: recognitionKey, preferredID: preferred, devicePin: devicePin))
+        let intent = VisionStartupTarget(macID: target.macID, pin: pin,
+            recognitionKey: recognitionKey, preferredID: preferred, devicePin: devicePin, windowMacID: targetMacID)
+        visionWindowReconnectTarget = intent
+        startupAutoConnection = .waiting(intent)
         #else
         startupAutoConnection = .waiting(target.macID)
         #endif
@@ -1508,8 +1513,16 @@ final class StreamClient: ObservableObject {
     func rememberPreferredMac(_ macID: String) {
         #if os(visionOS)
         guard !VisionReleaseTestContext.isTestBundle else { return }
+        guard visionDisplaySelection.windowTarget == nil else { return }
         #endif
-        guard SavedMacs.automaticTarget(savedMacs, preferredID: macID) != nil else { return }
+        guard let saved = SavedMacs.automaticTarget(savedMacs, preferredID: macID) else { return }
+        #if os(visionOS)
+        if let pin = saved.fingerprintData, let recognitionKey = saved.recognitionKeyData,
+           let devicePin = DeviceIdentity.existing()?.fingerprint {
+            visionWindowReconnectTarget = VisionStartupTarget(macID: macID, pin: pin,
+                recognitionKey: recognitionKey, preferredID: macID, devicePin: devicePin)
+        }
+        #endif
         UserDefaults.standard.set(macID, forKey: Self.preferredTrustedMacKey)
         stopSavedMacAutoConnect()
     }
@@ -1556,7 +1569,7 @@ final class StreamClient: ObservableObject {
         guard !visionWindowRetired, !connected, connection == nil, reconnect == nil,
               remoteDial == nil, pairingDial == nil, homeDialer == nil, pairing == .idle, homeAsk == nil,
               case .ordinary = visionCableBootstrap.launch,
-              UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey) == target.preferredID,
+              (target.windowMacID != nil || UserDefaults.standard.string(forKey: Self.preferredTrustedMacKey) == target.preferredID),
               let saved = SavedMacs.automaticTarget(savedMacs, preferredID: target.preferredID),
               savedMacs.filter({ $0.macID == target.macID }).count == 1,
               saved.macID == target.macID, saved.fingerprintData == target.pin,
@@ -1595,6 +1608,16 @@ final class StreamClient: ObservableObject {
         } else {
             dialSaved(target.macID, why: .automatic)
         }
+    }
+
+    func visionWindowReconnectIsCurrent(_ macID: String?) -> Bool {
+        guard let window = visionDisplaySelection.windowTarget else { return true }
+        guard let target = visionWindowReconnectTarget, target.macID == window.macID,
+              target.macID == macID, savedMacs.filter({ $0.macID == target.macID }).count == 1,
+              let saved = SavedMacs.automaticTarget(savedMacs, preferredID: target.macID),
+              saved.fingerprintData == target.pin, saved.recognitionKeyData == target.recognitionKey,
+              DeviceIdentity.existing()?.fingerprint == target.devicePin else { return false }
+        return true
     }
     #endif
     #endif

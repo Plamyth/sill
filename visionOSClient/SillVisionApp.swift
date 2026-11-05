@@ -173,7 +173,10 @@ struct SillVisionWorkspace: View {
         .onChange(of: controlEventsShown) { _, _ in updateInputAdmission() }
         .onChange(of: testDestinationsShown) { _, _ in updateInputAdmission() }
         .onChange(of: client.visionInputBinding, initial: true) { _, _ in pinCurrentWindow() }
-        .onChange(of: client.visionDisplaySelection.revision) { _, _ in pinCurrentWindow() }
+        .onChange(of: client.visionDisplaySelection.revision) { _, _ in
+            if let current = client.visionDisplaySelection.windowTarget { windowTarget = current }
+            pinCurrentWindow()
+        }
         .onChange(of: client.videoSize) { _, _ in releaseInput() }
         .onChange(of: client.active) { _, _ in releaseInput() }
         .onChange(of: client.visionTextScope) { _, _ in
@@ -206,7 +209,8 @@ struct SillVisionWorkspace: View {
             VisionDisplayChooser(client: client, openInNewWindow: { target in
                 withWindowOwnership {
                     guard phase == .active,
-                          client.visionDisplaySelection.windowTarget(macID: client.session?.macID, displayID: target.displayID) == target,
+                          let displayID = target.resolvedDisplayID(macID: client.session?.macID, catalog: client.visionDisplaySelection.catalog),
+                          client.visionDisplaySelection.windowTarget(macID: client.session?.macID, displayID: displayID) == target,
                           client.visionDisplaySelection.observedDisplay != target.displayID else { return }
                     openWindow(id: "mac", value: target)
                     newWindowChooserShown = false

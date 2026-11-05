@@ -39,7 +39,8 @@ struct VisionDisplayChooser: View {
                                   (openInNewWindow != nil && (target == nil || !client.visionDisplaySelection.independentWindowsAvailable ||
                                    client.visionDisplaySelection.observedDisplay == display.id)) ||
                                   (openInNewWindow == nil && client.visionDisplaySelection.windowTarget != nil &&
-                                   client.visionDisplaySelection.windowTarget?.displayID != display.id))
+                                   client.visionDisplaySelection.windowTarget?.resolvedDisplayID(macID: client.session?.macID,
+                                       catalog: client.visionDisplaySelection.catalog).map { $0 != display.id } == true))
                         .accessibilityHint("이 모니터를 명시적으로 요청합니다. 체크 표시는 Mac 목록에서 관측한 현재 모니터입니다.")
                     }
                 }

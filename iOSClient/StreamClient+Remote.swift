@@ -355,6 +355,9 @@ extension StreamClient {
         // with it retires this record (RemoteDialPolicy.successors, SavedMacs.superseding).
         var successors: [String: [Data]] = [:]
         for c in candidates {
+            #if os(visionOS)
+            if visionDisplaySelection.windowTarget != nil { continue }
+            #endif
             let keys = RemoteDialPolicy.successors(of: mac, at: c, in: savedMacs, allowLoopback: Self.keepsLoopback)
                 .compactMap(\.fingerprintData)
             if !keys.isEmpty { successors[c.key] = keys }
@@ -365,6 +368,9 @@ extension StreamClient {
         connector.onWinner = { [weak self, weak connector] winner in
             DispatchQueue.main.async {
                 guard let self, let connector, self.remoteDial === connector else { winner.connection.cancel(); return }
+                #if os(visionOS)
+                guard self.visionWindowReconnectIsCurrent(macID) else { winner.connection.cancel(); self.cancelRemoteDial(); return }
+                #endif
                 self.remoteDial = nil
                 var macID = macID
                 if winner.fingerprint != pin,
@@ -653,6 +659,7 @@ extension StreamClient {
     @discardableResult
     func beginVisionSavedMacReconnect(_ saved: SavedMac) -> Bool {
         guard !visionWindowRetired, appInForeground, visionStartupForeground,
+              visionWindowReconnectIsCurrent(saved.macID),
               !connected, connection == nil, reconnect == nil,
               let current = SavedMacs.automaticTarget(savedMacs, preferredID: saved.macID),
               current.fingerprintData == saved.fingerprintData else { return false }
@@ -693,6 +700,12 @@ extension StreamClient {
     func reconnectIfListed() -> Bool {
         #if os(visionOS)
         guard !VisionReleaseTestContext.isTestBundle else { return false }
+        if !visionWindowReconnectIsCurrent(reconnect?.macID) {
+            reconnectCheck?.cancel(); reconnectCheck = nil
+            reconnect = nil
+            cancelRemoteDial()
+            return false
+        }
         #endif
         reconnectCheck?.cancel()
         reconnectCheck = nil
