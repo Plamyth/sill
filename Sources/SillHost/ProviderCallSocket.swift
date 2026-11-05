@@ -11,6 +11,14 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "ccr.provider.command-socket")
     private var descriptor: Int32?
+    private enum Mode { case command, transitioning, media, closed }
+    private enum Direction { case read, write }
+    private var mode = Mode.command
+    private var readingMedia = false
+    private var writingMedia = false
+    private let readQueue = DispatchQueue(label: "ccr.provider.media-read")
+    private let writeQueue = DispatchQueue(label: "ccr.provider.media-write")
+    private static let mediaBodyLimit = 4_578
     private static let limit = 32_768
     private let frameLimit: Int
 
@@ -73,6 +81,7 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
         lock.lock()
         let fd = descriptor
         descriptor = nil
+        mode = .closed
         if let fd { _ = shutdown(fd, SHUT_RDWR); Darwin.close(fd) }
         lock.unlock()
     }
@@ -91,7 +100,7 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
                 queue.async { [self] in
                     do {
                         lock.lock()
-                        let fd = descriptor.map { dup($0) } ?? -1
+                        let fd = mode == .command ? descriptor.map { dup($0) } ?? -1 : -1
                         lock.unlock()
                         guard fd >= 0 else { throw ProviderCallFailure.unavailable }
                         defer { Darwin.close(fd) }
@@ -110,6 +119,130 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
                 }
             }
         } onCancel: { [self] in invalidate() }
+    }
+
+    func beginMedia(ready: Data, until deadline: TimeInterval) async throws {
+        let header = try Self.mediaHeader(ready)
+        let object = try JSONSerialization.jsonObject(with: header) as? [String: Any]
+        guard object?["kind"] as? String == "ready", ready.count == 6 + header.count,
+              deadline.isFinite else { throw ProviderCallFailure.invalidFields }
+        try reserveMediaTransition()
+        do {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    queue.async { [self] in
+                        do {
+                            let fd = try duplicate(transition: true)
+                            defer { Darwin.close(fd) }
+                            _ = try ProviderPeerAnchor.verify(fd, policy: .core)
+                            try Self.write(ready, to: fd, until: deadline)
+                            _ = try ProviderPeerAnchor.verify(fd, policy: .core)
+                            try finishMediaTransition()
+                            continuation.resume()
+                        } catch { invalidate(); continuation.resume(throwing: error) }
+                    }
+                }
+            } onCancel: { [self] in invalidate() }
+        } catch { invalidate(); throw error }
+    }
+
+    func sendMedia(_ frame: Data, until deadline: TimeInterval) async throws {
+        _ = try Self.mediaHeader(frame)
+        try await mediaIO(.write, until: deadline) { fd in
+            try Self.write(frame, to: fd, until: deadline)
+        }
+    }
+
+    func receiveMedia(until deadline: TimeInterval) async throws -> Data {
+        try await mediaIO(.read, until: deadline) { fd in
+            let prefix = try Self.readExactly(4, from: fd, until: deadline)
+            let length = prefix.reduce(0) { ($0 << 8) | Int($1) }
+            guard (3...Self.mediaBodyLimit).contains(length) else { throw ProviderCallFailure.invalidFields }
+            let body = try Self.readExactly(length, from: fd, until: deadline)
+            let frame = prefix + body
+            _ = try Self.mediaHeader(frame)
+            return frame
+        }
+    }
+
+    private func reserveMediaTransition() throws {
+        lock.lock(); defer { lock.unlock() }
+        guard mode == .command, descriptor != nil else { throw ProviderCallFailure.unavailable }
+        mode = .transitioning
+    }
+    private func finishMediaTransition() throws {
+        lock.lock(); defer { lock.unlock() }
+        guard mode == .transitioning, descriptor != nil else { throw ProviderCallFailure.unavailable }
+        mode = .media
+    }
+    private func duplicate(transition: Bool = false) throws -> Int32 {
+        lock.lock(); defer { lock.unlock() }
+        guard mode == (transition ? .transitioning : .media), let descriptor else { throw ProviderCallFailure.unavailable }
+        let fd = dup(descriptor)
+        guard fd >= 0 else { throw ProviderCallFailure.unavailable }
+        guard fcntl(fd, F_SETFD, FD_CLOEXEC) == 0 else { Darwin.close(fd); throw ProviderCallFailure.unavailable }
+        return fd
+    }
+    private func reserve(_ direction: Direction) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard mode == .media, descriptor != nil,
+              direction == .read ? !readingMedia : !writingMedia else { throw ProviderCallFailure.unavailable }
+        if direction == .read { readingMedia = true } else { writingMedia = true }
+    }
+    private func release(_ direction: Direction) {
+        lock.lock(); defer { lock.unlock() }
+        if direction == .read { readingMedia = false } else { writingMedia = false }
+    }
+    private func mediaIO<Value: Sendable>(_ direction: Direction, until deadline: TimeInterval,
+                                         operation: @escaping @Sendable (Int32) throws -> Value) async throws -> Value {
+        guard deadline.isFinite else { throw ProviderCallFailure.invalidFields }
+        try reserve(direction)
+        defer { release(direction) }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                (direction == .read ? readQueue : writeQueue).async { [self] in
+                    do {
+                        let fd = try duplicate()
+                        defer { Darwin.close(fd) }
+                        _ = try ProviderPeerAnchor.verify(fd, policy: .core)
+                        let value = try operation(fd)
+                        _ = try ProviderPeerAnchor.verify(fd, policy: .core)
+                        guard ProcessInfo.processInfo.systemUptime < deadline else { throw ProviderCallFailure.expired }
+                        continuation.resume(returning: value)
+                    } catch { invalidate(); continuation.resume(throwing: error) }
+                }
+            }
+        } onCancel: { [self] in invalidate() }
+    }
+
+    private static func mediaHeader(_ frame: Data) throws -> Data {
+        guard frame.count >= 7, frame.count <= mediaBodyLimit + 4 else { throw ProviderCallFailure.invalidFields }
+        let bytes = [UInt8](frame.prefix(6))
+        let bodyLength = bytes.prefix(4).reduce(0) { ($0 << 8) | Int($1) }
+        let headerLength = Int(bytes[4]) << 8 | Int(bytes[5])
+        guard bodyLength == frame.count - 4, (1...4096).contains(headerLength),
+              bodyLength >= headerLength + 2, bodyLength - headerLength - 2 <= 480 else {
+            throw ProviderCallFailure.invalidFields
+        }
+        let header = Data(frame.dropFirst(6).prefix(headerLength))
+        try LocalAudioRelayJSON.validate(header)
+        return header
+    }
+    private static func readExactly(_ size: Int, from fd: Int32, until deadline: TimeInterval) throws -> Data {
+        guard (1...mediaBodyLimit).contains(size) else { throw ProviderCallFailure.invalidFields }
+        var bytes = [UInt8](repeating: 0, count: size)
+        var received = 0
+        defer { bytes.withUnsafeMutableBytes { $0.initializeMemory(as: UInt8.self, repeating: 0) } }
+        try bytes.withUnsafeMutableBytes { raw in
+            while received < size {
+                try wait(fd, events: Int16(POLLIN), until: deadline)
+                let count = recv(fd, raw.baseAddress!.advanced(by: received), size - received, 0)
+                if count < 0, errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK { continue }
+                guard count > 0 else { throw ProviderCallFailure.unavailable }
+                received += count
+            }
+        }
+        return Data(bytes)
     }
 
     private static func wait(_ fd: Int32, events: Int16, until deadline: TimeInterval) throws {
