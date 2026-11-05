@@ -35,3 +35,9 @@ python3 -B Tests/checks/ipad-audio-forwarding/build-ios.py "$OUT"
 앱 빌드는 설치된 Xcode의 실제 iOS SDK가 필요한 Mac 전용 검사다. 이 작업은 허용된 로컬 compact 검사와 실제 iOS 빌드 범위에서 수행했다. 서명·설치·네트워크 로그인·실기기·공유 UI·오디오 실행은 하지 않는다. bootstrap은 기존 프로비저닝 검사와 같은 전부 0인 공개 합성 지문만 넣는다. 이 앱 산출물은 실제 기기용 설치 후보가 아니다.
 
 독립 비작성 검수와 원 통합/설치는 부모 담당이 정확한 커밋으로 이어간다. 이 작성자 검사는 실기기 음성 수용이나 호스트 교체의 근거가 아니다.
+
+## 초기 보호 시작과 권한 복귀 회귀
+
+privacy v2의 `protected=false`는 아직 보호를 시작하지 않은 정상 상태일 수 있다. 인증된 218과 정확한 기기·Mac·화면 문맥이 있으면 새 사용자의 명시적 선택을 217로 요청할 수 있다. 같은 자기 기기와 현재 intent ID/revision/generation·선택이 일치하는 저장 의도만 기존 계약으로 resume한다. 이는 새 권한이나 다른 기기의 intent 선점이 아니다. observe/submitting/quiescing 중 반복된 초기 false catalog는 제어 요청을 취소하지 않는다. 이미 보호되었거나 active인 상태에서 false가 오면 즉시 차단하고, true 복귀만으로 미디어를 재개하지 않는다.
+
+OS 권한창은 기존 catalog를 폐기하므로 동일한 승인 문맥의 명시 선택만 새 observe 뒤에 대기시킨다. 실제 capture/render는 여전히 v2 protected·현재 active binding·기존 scope/grant·fresh deadline이 전부 필요하다. 미지원/누락된 privacy 버전은 선택과 미디어 모두 허용하지 않는다. `adapter-main.swift`는 초기 false, 반복 catalog, 권한 복귀와 fresh218 경합, 자기 durable resume, 보호 상실, 지원 버전 거부를 실제 어댑터 본문으로 검증한다.

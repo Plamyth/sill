@@ -27,6 +27,12 @@ enum AVCaptureDevice {
  enum Media { case audio }; enum Status { case authorized, denied }
  static func authorizationStatus(for: Media) -> Status { .authorized }
 }
+final class IPadMicrophoneDiagnostics {
+ static let shared = IPadMicrophoneDiagnostics()
+ func connectionChanged() {}
+ func attempt(_ id: UUID) -> Self { self }
+ func record(_ name: String, _ fields: [String: String] = [:]) {}
+}
 final class IPadAudioSession { static let shared = IPadAudioSession(); var microphoneAvailable = true }
 final class IPadAudioResumeObserver { init(client: StreamClient) {} }
 final class Frames { func close() {} }

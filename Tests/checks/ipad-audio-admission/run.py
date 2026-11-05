@@ -24,7 +24,8 @@ final class ClientProbe {
     func observeVisionInputCatalog(_ list: WindowList, from peer: NWConnection) {
         precondition(connection === peer)
     }
-    func suspendDesiredAudio() { suspensions += 1; remoteAudioControl.backgrounded() }
+    var audioPrivacyState: AudioPrivacyState?
+    func suspendDesiredAudio(preserveManualPermission: Bool = false) { suspensions += 1; remoteAudioControl.backgrounded() }
 '''
 if new:
     fixture += '    let audioAdmission = IPadAudioAdmission()\n    var audioCatalogAdmission: IPadAudioAdmission.Ticket?\n'

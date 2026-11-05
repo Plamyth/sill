@@ -29,12 +29,6 @@ extension UIApplication {
  static let didEnterBackgroundNotification = Notification.Name.didEnterBackground
  static let didBecomeActiveNotification = Notification.Name.didBecomeActive
 }
-final class IPadMicrophoneDiagnostics {
- func connectionChanged() {}
- static let shared = IPadMicrophoneDiagnostics()
- func attempt(_ id: UUID) -> Self { self }
- func record(_ name: String, _ fields: [String: String] = [:]) {}
-}
 '''
     desired = (root / 'iOSClient/StreamClient+DesiredAudio.swift').read_text()
     desired = desired[desired.index('extension StreamClient'):desired.rindex('#endif')]

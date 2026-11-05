@@ -16,7 +16,7 @@ struct AdapterChecks {
         let epoch = VideoEpoch(generation: generation.uuidString, source: .desktop,
             geometry: .init(x: 0, y: 0, width: 800, height: 600), width: 800, height: 600)
         var list = WindowList(macName: "fixture", windows: [], active: .desktop, remoteAudio: 1,
-            inputGeneration: generation.uuidString, videoEpoch: epoch, audioPrivacy: .init(version: 2, protected: true))
+            inputGeneration: generation.uuidString, videoEpoch: epoch, audioPrivacy: .init(version: 2, protected: false))
         let peer = client.connection!
         client.desiredAudioSetConnection(peer)
         _ = client.microphonePolicy.setConnection(ObjectIdentifier(peer))
@@ -34,11 +34,25 @@ struct AdapterChecks {
         client.receive(try .init(requestID: observe.requestID, operation: .observe, catalog: catalog(empty, intent: 0, binding: 0), result: nil))
         check(client.microphonePolicy.scope == nil && !client.microphonePolicy.canStart, "pre-binding microphone catalog absent")
         check(client.audioRouteCapabilities.microphone && client.audioRouteCapabilities.playback, "authenticated218 supports explicit choice before media capability")
+        check(!client.desiredAudioPermits(.microphone) && !client.desiredAudioPermits(.playback), "unarmed host never admits media")
+        client.clock.now = 0.15
+        client.fixtureObserve(list)
+        check(client.audioForwarding.phase == .ready, "repeated unarmed catalog preserves authenticated control")
+        let permission = IPadAudioRoutePolicy.Authorization(context: client.audioRouteContext!)
+        client.audioRouteAuthorization = permission
+        client.clock.now = 0.16
+        client.fixtureObserve(list)
+        check(client.audioRouteAuthorization == permission, "same-scope unarmed catalog preserves explicit permission request")
+        client.audioRouteAuthorization = nil
         client.clock.now = 0.2
         try await client.applyAudioRoutes(.init(input: .iPadMicrophone, output: .iPadPlayback), context: client.audioRouteContext)
         let request = client.command(), r = client.command().intent!
         check(request.operation == .submit && r.inputDesired && r.outputDesired, "actual chooser submits full duplex atomically")
         check(client.subscriptions.filter(\.enabled).isEmpty && client.microphoneAttempts == 0, "217 submit alone never sends200/204")
+        client.clock.now = 0.25
+        client.fixtureObserve(list)
+        check(client.audioForwarding.phase == .submitting && client.audioForwarding.pendingRequestID == request.requestID,
+              "unarmed catalog cannot cancel explicit protection request")
         let configuration = try AudioForwardingConfiguration(controllerBootId: UUID(), privacyGeneration: UUID(), registryRevision: .init(1),
             members: [.init(participantId: "native.sill", bootId: UUID()), .init(participantId: "s23.audio.relay", bootId: UUID())])
         let intent = try AudioForwardingSnapshot.Intent(pairedDeviceId: device, intentId: r.intentId, intentRevision: r.intentRevision,
@@ -49,6 +63,14 @@ struct AdapterChecks {
         client.clock.now = 0.3
         client.receive(try .init(requestID: request.requestID, operation: .submit, catalog: nil, result: .accepted(quiet)))
         check(!client.desiredAudioPermits(.microphone) && !client.desiredAudioPermits(.playback), "quiescing keeps legacy grants closed")
+        client.clock.now = 0.4
+        client.fixtureObserve(list)
+        check(client.audioForwarding.phase == .quiescing, "unarmed catalog keeps quiescing control alive")
+        check(client.subscriptions.filter(\.enabled).isEmpty && client.microphoneAttempts == 0,
+              "unarmed quiescing sends no media start")
+        list.audioPrivacy = .init(version: 2, protected: true)
+        client.clock.now = 0.5
+        client.fixtureObserve(list)
         client.clock.now = 1.2
         client.reconcileAudioForwarding()
         let poll = client.command()
@@ -170,6 +192,111 @@ struct AdapterChecks {
         check(failedSend.audioForwardingWire == nil && failedSend.audioForwarding.phase == .blocked,
               "send failure drains retained old-scope wire without authorizing new scope")
         check(failedPeer.maximumForwardingInFlight == 1, "failed old-scope send never overlaps217")
+        let permissionClient = StreamClient()
+        permissionClient.desiredAudioSetConnection(permissionClient.connection)
+        var permissionList = list
+        permissionList.microphone = nil
+        permissionList.audioPrivacy = .init(version: 2, protected: false)
+        permissionClient.fixtureObserve(permissionList)
+        let permissionObserve = permissionClient.command()
+        permissionClient.clock.now = 0.1
+        permissionClient.receive(try .init(requestID: permissionObserve.requestID, operation: .observe,
+            catalog: catalog(empty, intent: 0, binding: 0), result: nil))
+        AVCaptureDevice.status = .notDetermined
+        AVCaptureDevice.holdPermission = true
+        let pendingPermission = Task { @MainActor in
+            try await permissionClient.applyAudioRoutes(.init(input: .iPadMicrophone, output: .iPadPlayback), context: permissionClient.audioRouteContext)
+        }
+        for _ in 0..<1000 where AVCaptureDevice.permissionWaiter == nil { await Task.yield() }
+        check(AVCaptureDevice.permissionWaiter != nil, "unarmed chooser reaches real permission boundary")
+        UIApplication.shared.applicationState = .inactive
+        NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+        permissionClient.fixtureObserve(permissionList)
+        UIApplication.shared.applicationState = .active
+        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+        await flush()
+        check(!permissionClient.audioForwarding.supported, "foreground has no fresh218 before permission returns")
+        AVCaptureDevice.status = .authorized
+        AVCaptureDevice.holdPermission = false
+        AVCaptureDevice.permissionWaiter?.resume(returning: true)
+        AVCaptureDevice.permissionWaiter = nil
+        try await pendingPermission.value
+        check(permissionClient.desiredAudio.selection.microphone && permissionClient.desiredAudio.selection.playback,
+              "same-scope explicit choice survives permission and pending fresh218")
+        let refreshed = permissionClient.command()
+        check(refreshed.operation == .observe && permissionClient.microphoneAttempts == 0 && permissionClient.subscriptions.filter(\.enabled).isEmpty,
+              "permission alone queues fresh observe and never starts media")
+        permissionClient.clock.now = 0.2
+        permissionClient.receive(try .init(requestID: refreshed.requestID, operation: .observe,
+            catalog: catalog(empty, intent: 0, binding: 0), result: nil))
+        check(permissionClient.command().intent?.action == .request,
+              "fresh218 submits previously explicit permission-approved intent")
+        let reconnect = StreamClient()
+        let identity = reconnect.desiredAudioIdentity!
+        reconnect.desiredAudioStore.save(.init(microphone: true, playback: true), for: identity)
+        reconnect.desiredAudioStore.saveForwarding(.init(device: device, intentID: intent.intentId,
+            revision: intent.intentRevision, generation: intent.intentGeneration,
+            selection: .init(microphone: true, playback: true)), for: identity)
+        reconnect.desiredAudioSetConnection(reconnect.connection)
+        reconnect.fixtureObserve(permissionList)
+        let reconnectObserve = reconnect.command()
+        reconnect.clock.now = 0.1
+        reconnect.receive(try .init(requestID: reconnectObserve.requestID, operation: .observe,
+            catalog: catalog(live, intent: 1, binding: 1), result: nil))
+        check(reconnect.command().intent?.action == .resume && reconnect.command().intent?.intentId == intent.intentId,
+              "unarmed reconnect resumes only matching previously approved durable intent")
+        check(reconnect.microphoneAttempts == 0 && reconnect.subscriptions.filter(\.enabled).isEmpty,
+              "durable resume still requires protected active media proof")
+        for initiallyProtected in [true, false] {
+            let lossClient = StreamClient()
+            lossClient.desiredAudioSetConnection(lossClient.connection)
+            _ = lossClient.microphonePolicy.setConnection(ObjectIdentifier(lossClient.connection!))
+            lossClient.remoteAudioControl.setConnection(ObjectIdentifier(lossClient.connection!))
+            var lossList = list
+            lossList.audioPrivacy = .init(version: 2, protected: initiallyProtected)
+            lossClient.fixtureObserve(lossList)
+            let discovery = lossClient.command()
+            lossClient.clock.now = 0.1
+            lossClient.receive(try .init(requestID: discovery.requestID, operation: .observe,
+                catalog: catalog(empty, intent: 0, binding: 0), result: nil))
+            try await lossClient.applyAudioRoutes(.init(input: .iPadMicrophone, output: .iPadPlayback), context: lossClient.audioRouteContext)
+            let submission = lossClient.command(), selection = submission.intent!
+            let ownerIntent = try AudioForwardingSnapshot.Intent(pairedDeviceId: device, intentId: selection.intentId,
+                intentRevision: selection.intentRevision, intentGeneration: UUID(), inputDesired: true, outputDesired: true)
+            let ownerBinding = AudioForwardingBinding(pairedDeviceId: device, intentGeneration: ownerIntent.intentGeneration,
+                bindingEpoch: UUID(), transportId: selection.transportId, transportKind: .native,
+                operationId: UUID(), phase: .active, configuration: configuration)
+            let active = try AudioForwardingSnapshot(revision: .init(10), intent: ownerIntent, binding: ownerBinding)
+            lossClient.clock.now = 0.2
+            lossClient.receive(try .init(requestID: submission.requestID, operation: .submit, catalog: nil, result: .accepted(active)))
+            let oldTicket = lossClient.audioCatalogAdmission
+            if !initiallyProtected {
+                check(lossClient.subscriptions.filter(\.enabled).isEmpty && lossClient.microphoneAttempts == 0,
+                      "active binding without protected catalog cannot start media")
+            }
+            lossList.audioPrivacy = .init(version: 2, protected: false)
+            lossClient.clock.now = 0.3
+            lossClient.fixtureObserve(lossList)
+            check(lossClient.audioForwarding.phase == .blocked && !lossClient.desiredAudioPermits(.microphone) && !lossClient.desiredAudioPermits(.playback),
+                  "unprotected active or loss of established protection blocks immediately")
+            check(!lossClient.audioAdmission.withAdmission(oldTicket, {}), "protection loss invalidates render ticket")
+            lossList.audioPrivacy = .init(version: 2, protected: true)
+            lossClient.clock.now = 0.4
+            lossClient.fixtureObserve(lossList)
+            check(lossClient.audioForwarding.phase == .blocked && !lossClient.desiredAudioPermits(.playback),
+                  "restored privacy alone cannot resume media")
+        }
+        for privacy: AudioPrivacyState? in [nil, .init(version: 1, protected: true), .init(version: 3, protected: true)] {
+            let unsupported = StreamClient()
+            unsupported.desiredAudioSetConnection(unsupported.connection)
+            var unsupportedList = list
+            unsupportedList.audioPrivacy = privacy
+            unsupported.fixtureObserve(unsupportedList)
+            check(!unsupported.audioRouteCapabilities.microphone && !unsupported.audioRouteCapabilities.playback,
+                  "missing or unsupported privacy version cannot select audio")
+            check(!unsupported.desiredAudioPermits(.microphone) && !unsupported.desiredAudioPermits(.playback),
+                  "unsupported privacy has no media admission")
+        }
         print("실제 iPad 어댑터·가짜 전송/시계 검사 \(checks)개 통과. 실제 미디어·기기·네트워크 없음.")
     }
 }
