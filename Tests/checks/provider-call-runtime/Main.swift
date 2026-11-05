@@ -152,6 +152,16 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
             checks.append(["name": name, "passed": value]); print("\(value ? "PASS" : "FAIL") \(name)")
         }
         try selectorWireChecks(check)
+        if CommandLine.arguments.contains("--handlers-only") {
+            await handlerChecks(check)
+            let failures = checks.filter { $0["passed"] as? Bool == false }
+            let report: [String: Any] = ["checks": checks, "failures": failures,
+                "passedCount": checks.count - failures.count, "checkCount": checks.count,
+                "actualProviderClicks": 0, "actualKeychainAccess": 0]
+            try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(
+                to: URL(fileURLWithPath: CommandLine.arguments[3]).appendingPathComponent("report.json"))
+            exit(failures.isEmpty ? 0 : 1)
+        }
         func wait(_ condition: () -> Bool) async throws {
             let until = ContinuousClock.now.advanced(by: .seconds(6))
             while !condition(), ContinuousClock.now < until { try await Task.sleep(for: .milliseconds(5)) }

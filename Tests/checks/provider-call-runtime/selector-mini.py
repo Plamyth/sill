@@ -55,10 +55,12 @@ with tempfile.TemporaryDirectory(prefix='host-selector-input-') as temporary:
     (stage / 'output').mkdir()
     command = ['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run', '--source', str(stage),
         '--owner', os.environ.get('CODEX_THREAD_ID', 'native-call-selector-20261105'),
-        '--job', 'host-native-call-selector-20261105', '--', '/usr/bin/env',
+        '--job', 'host-native-call-selector-fallback-20261105', '--', '/usr/bin/env',
         'PATH=/Users/sin-wonho/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin',
         'python3', '-B', 'Tests/checks/provider-call-runtime/run.py', '--manifest', 'manifest.json',
         '--sha256', sha(raw), '--production-commit', commit, '--production-tree', tree]
+    if '--handlers-only' in sys.argv:
+        command.append('--handlers-only')
     run = subprocess.run(command, capture_output=True, text=True, timeout=480)
 assert hashes == {name: sha((root / name).read_bytes()) for name in hashes}
 assert not git('status', '--porcelain') and git('rev-parse', 'HEAD').decode().strip() == commit

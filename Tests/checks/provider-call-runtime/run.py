@@ -19,6 +19,7 @@ parser.add_argument('--manifest', required=True, type=Path)
 parser.add_argument('--sha256', required=True)
 parser.add_argument('--production-commit', required=True)
 parser.add_argument('--production-tree', required=True)
+parser.add_argument('--handlers-only', action='store_true')
 args = parser.parse_args()
 sha = lambda data: hashlib.sha256(data).hexdigest()
 raw = args.manifest.read_bytes()
@@ -109,7 +110,7 @@ final class HostIdentity {
     subprocess.run(['codesign', '--verify', '--strict', str(binary)], check=True)
     signature = subprocess.run(['codesign', '-dv', '--verbose=4', str(binary)], capture_output=True, text=True, check=True)
     cases = out / 'cases'; cases.mkdir()
-    worker = subprocess.Popen([str(binary), shutil.which('node'), str(shared / 'child.js'), str(cases), str(node)],
+    worker = subprocess.Popen([str(binary), shutil.which('node'), str(shared / 'child.js'), str(cases), str(node)] + (['--handlers-only'] if args.handlers_only else []),
         start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
         output, _ = worker.communicate(timeout=150)
@@ -133,7 +134,7 @@ final class HostIdentity {
             child['fixture'] = str(info.relative_to(cases)); children.append(child)
         result['fixtureChildren'] = children
         result['fixtureLogs'] = {str(p.relative_to(cases)): p.read_text() for p in cases.rglob('*.jsonl')}
-        assert children and all(c['pidAbsent'] and c['workerPidAbsent'] and c['portClosed'] for c in children), 'fixture child/listener leaked'
+        assert (args.handlers_only or children) and all(c['pidAbsent'] and c['workerPidAbsent'] and c['portClosed'] for c in children), 'fixture child/listener leaked'
         assert worker.returncode == (1 if result['failures'] else 0)
     finally:
         try: os.killpg(worker.pid, signal.SIGTERM)

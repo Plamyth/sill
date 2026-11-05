@@ -83,6 +83,21 @@ typealias StreamServer = HandlerFixture
         c.admissionCurrent = { false }
         check("actual connection admission cancels stale USB proof", !f.connectionIsCurrent(c.connection) && c.connection.state == .cancelled)
     }
+    for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
+        let f = HandlerFixture(), c = f.add(), coordinator = CoordinatorFixture(f)
+        let peer = AudioForwardingPairedDevice(id: id, pairingGeneration: UUID())
+        coordinator.remote = PairingFixture(peer)
+        coordinator.forwardingClients[ObjectIdentifier(c.connection)] = .init(connection: c.connection,
+            route: c.route, generation: UUID())
+        f.onProviderControl = { _, _, _ in }
+        f.provider(Wire.encode(ProviderCallControl(operation: .perform, request: r, providerKind: kind)), c)
+        await coordinator.invoke(c.providerExchange!, c.connection, c.route); f.drain()
+        let state = f.sent.first.flatMap { Wire.decode(ProviderCallState.self, from: $0) }
+        check("actual coordinator fallback retains \(kind.rawValue) selector", f.sent.count == 1 &&
+            state?.result.status == .failed && state?.result.reason == "audio_session_unavailable" &&
+            state?.result.provider == kind.rawValue && state?.requestDigest == r.digest &&
+            state?.result.requestId == r.requestId && c.connection.state == .ready)
+    }
     for cause in ["unpaired", "plain", "unobserved", "control-only", "oversize", "duplicate-key", "unknown-key"] {
         let f = HandlerFixture(), c = f.add()
         var input = payload, called = 0
