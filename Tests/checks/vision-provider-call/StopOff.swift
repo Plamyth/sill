@@ -249,3 +249,54 @@ check(catalogClient.visionProviderCall.nativeSupported, "다른 peer의 목록�
 catalogClient.observeVisionProviderCalls(advertised, from: catalogClient.connection!)
 check(!catalogClient.visionProviderCall.nativeSupported, "현재 peer가 명시적 지원을 철회하면 native 실행도 차단함")
 print("PASS: 실제 catalog codec·peer·native capability 연결 회귀. 외부 효과 0")
+for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
+    for status in [ProviderCallResult.Status.failed, .unsupported, .unknown] {
+        now = 101
+        let target: VisionCallTarget = kind == .nativeCodex ? .nativeCodex : .chatgptDots
+        var owned = VisionProviderCall(connection: connection, target: target, clock: { now })
+        owned.observe(connection: connection, capability: 1, hostKey: hostKey, providerCallKinds: [kind.rawValue])
+        _ = owned.perform(start)
+        check(owned.receive(try .init(request: start, result: .init(requestId: start.requestId, status: .started,
+            reason: "fixture_started", callSessionId: "owned-session", provider: kind.rawValue)), from: connection), "활성 통화 시작")
+        let client = StreamClient(owned, forwarding)
+        client.visionAudioIntentConnection = connection
+        VisionRemoteAudioStore.shared.model.owner = client.visionAudioOwnerID
+        client.performVisionProviderCall(.stop)
+        check(client.sent.count == 1, "실제 종료 메서드의 첫 수동 요청")
+        let firstStop = client.sent[0].request
+        check(client.visionProviderCall.receive(try .init(request: firstStop, result: .init(requestId: firstStop.requestId,
+            status: status, reason: "provider_not_dispatched", provider: kind.rawValue)), from: connection), "종료 명령의 실패·미지원·불명확 결과")
+        check(!client.visionProviderCall.canChangeTarget && !client.visionProviderCall.selectTarget(.grok),
+            "P2-1 종료 실패 뒤 살아 있는 통화의 대상 소유권을 유지함")
+        check(client.visionProviderCanStop && !client.visionProviderCanStart,
+            "종료 실패 뒤 같은 세션의 수동 종료만 가능함")
+        check(client.sent.count == 1, "결과 수신만으로 종료를 자동 재시도하지 않음")
+        VisionRemoteAudioStore.shared.model.owner = UUID()
+        client.performVisionProviderCall(.stop)
+        check(client.sent.count == 1, "다른 오디오 소유자는 종료를 재요청할 수 없음")
+        VisionRemoteAudioStore.shared.model.owner = client.visionAudioOwnerID
+        client.visionAudioIntentContext.inputBlocked = true
+        client.performVisionProviderCall(.stop)
+        check(client.sent.count == 1, "차단된 화면은 종료를 재요청할 수 없음")
+        client.visionAudioIntentContext.inputBlocked = false
+        client.performVisionProviderCall(.stop)
+        check(client.sent.count == 2 && client.sent[1].providerKind == kind &&
+            client.sent[1].request.requestId != firstStop.requestId &&
+            client.sent[1].request.callSessionId == "owned-session" && client.sent[1].request.matches(off),
+            "명시적인 재요청은 동일 selector·세션과 최신 원장을 보존함")
+        let retry = client.sent[1].request
+        check(!client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
+            status: .stopped, reason: "fixture_stopped", callSessionId: "other-session", provider: kind.rawValue)), from: connection),
+            "다른 세션의 stopped는 소유권을 해제하지 않음")
+        check(!client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
+            status: .stopped, reason: "fixture_stopped", callSessionId: "owned-session",
+            provider: kind == .nativeCodex ? ProviderCallKind.chatgptDots.rawValue : ProviderCallKind.nativeCodex.rawValue)), from: connection),
+            "다른 selector의 stopped는 소유권을 해제하지 않음")
+        check(client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
+            status: .stopped, reason: "fixture_stopped", callSessionId: "owned-session", provider: kind.rawValue)), from: connection),
+            "같은 세션·selector의 확인된 stopped만 수용함")
+        check(client.visionProviderCall.canChangeTarget && !client.visionProviderCanStop && client.visionProviderCall.selectTarget(.grok),
+            "확인된 종료 뒤에만 활성 통화 소유권을 해제함")
+    }
+}
+print("PASS: 실제 Vision 메서드의 실패 종료 복구·대상 잠금·동일 세션 종료 회귀")

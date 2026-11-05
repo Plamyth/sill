@@ -10,6 +10,8 @@ import sys
 import tempfile
 
 root = Path(__file__).resolve().parents[3]
+suites = ['vision-provider-call'] if '--provider-only' in sys.argv else [
+    'vision-provider-call', 'vision-microphone-permission', 'vision-audio-privacy']
 if '--remote' in sys.argv:
     with tempfile.TemporaryDirectory(prefix='vision-voice-checks-') as scratch:
         def run(name):
@@ -22,7 +24,7 @@ if '--remote' in sys.argv:
             return dict(name=name, exitCode=result.returncode, stdout=result.stdout,
                         stderr=result.stderr, logs=logs)
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-            results = list(pool.map(run, ['vision-provider-call', 'vision-microphone-permission', 'vision-audio-privacy']))
+            results = list(pool.map(run, suites))
         print('CHECK_RESULTS ' + json.dumps(results), flush=True)
         code = int(any(r['exitCode'] for r in results))
     print('CHECK_SCRATCH_REMOVED ' + str(not Path(scratch).exists()).lower(), flush=True)
@@ -45,8 +47,10 @@ with tempfile.TemporaryDirectory(prefix='vision-voice-input-') as staging:
         shutil.copyfile(path, destination)
     command = ['/Users/ambrion/.local/bin/mini-ephemeral-source', 'run', '--source', staging,
                '--owner', os.environ.get('CODEX_THREAD_ID', 'vision-native-voice-20261105'),
-               '--job', 'vision-native-voice-contract', '--',
+               '--job', 'vision-native-stop-recovery-contract', '--',
                'python3', '-B', 'Tests/checks/vision-provider-call/mini.py', '--remote']
+    if '--provider-only' in sys.argv:
+        command.append('--provider-only')
     result = subprocess.run(command, capture_output=True, text=True, timeout=300)
 record = dict(exitCode=result.returncode, stdout=result.stdout, stderr=result.stderr,
               sourceSHA256=before, sourceUnchanged=all(hashlib.sha256((root / p).read_bytes()).hexdigest() == h for p, h in before.items()),
