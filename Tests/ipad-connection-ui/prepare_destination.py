@@ -23,6 +23,7 @@ def prepare(source):
         'EnvironmentVariables': {
             'CCR_CONNECTION_UI_APPROVED': '0',
             'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED': '0',
+            'CCR_CONNECTION_UI_MEDIA_APPROVED': '0',
         },
         'OnlyTestIdentifiers': [
             'ConnectionUITests/test01ReadDefaultMonitorAX',

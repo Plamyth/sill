@@ -10,6 +10,18 @@ final class ConnectionUITests: XCTestCase {
         guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED"] == "1" else {
             throw XCTSkip("직전 기기·Host metadata의 오디오 OFF를 부모가 확인한 뒤에만 활성화합니다.")
         }
+        return try activateExistingApp()
+    }
+
+    private func existingMediaApp() throws -> XCUIApplication {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "1" else {
+            throw XCTSkip("부모의 명시적 media 승인과 별도 테스트 선택 후에만 실행합니다.")
+        }
+        return try activateExistingApp()
+    }
+
+    private func activateExistingApp() throws -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "com.ambrion.sillcanvas.ipad")
         guard [.runningForeground, .runningBackground, .runningBackgroundSuspended].contains(app.state) else {
             throw XCTSkip("정상 앱이 실행 중이지 않습니다. 이 후보는 앱을 launch하지 않습니다.")
@@ -31,6 +43,7 @@ final class ConnectionUITests: XCTestCase {
 
     private func ensureToolbarVisible(_ app: XCUIApplication) throws {
         let monitor = app.buttons.matching(identifier: "macDisplayChooser")
+        guard monitor.count <= 1 else { throw NSError(domain: "ConnectionUI", code: 10) }
         if monitor.count == 1, monitor.firstMatch.isHittable { return }
         let toggle = try unique(app.buttons.matching(identifier: "iPadToolbarToggle"))
         guard toggle.label == "상단 메뉴 표시", toggle.isHittable else {
@@ -74,7 +87,7 @@ final class ConnectionUITests: XCTestCase {
 
     private func tapUnique(_ query: XCUIElementQuery) throws {
         let element = try unique(query)
-        guard element.isHittable else {
+        guard element.isHittable, element.isEnabled else {
             throw NSError(domain: "ConnectionUI", code: 6,
                           userInfo: [NSLocalizedDescriptionKey: "정확한 native AX 요소가 조작 가능하지 않습니다."])
         }
@@ -89,10 +102,15 @@ final class ConnectionUITests: XCTestCase {
 
     func test02OpenNativeAudioChooserOnly() throws {
         let app = try existingApp()
+        try openAudioChooser(app)
+    }
+
+    private func openAudioChooser(_ app: XCUIApplication) throws {
         try ensureToolbarVisible(app)
         capture(app, name: "before-native-menu")
         let audio = app.menuBars.descendants(matching: .any).matching(
             NSPredicate(format: "label == %@", "오디오"))
+        guard audio.count <= 1 else { throw NSError(domain: "ConnectionUI", code: 11) }
         if audio.count == 1, audio.firstMatch.isHittable {
             try tapUnique(audio)
             capture(app, name: "native-audio-menu")
@@ -107,5 +125,62 @@ final class ConnectionUITests: XCTestCase {
         }
         XCTAssertTrue(app.navigationBars["오디오 입력·출력"].waitForExistence(timeout: 5))
         capture(app, name: "audio-input-output-chooser")
+    }
+
+    private func captureMediaState(_ app: XCUIApplication, name: String) {
+        capture(app, name: name)
+        let ax = XCTAttachment(string: app.debugDescription)
+        ax.name = name + "-native-ax"
+        ax.lifetime = .keepAlways
+        add(ax)
+    }
+
+    private func requireAudioChooser(_ app: XCUIApplication) throws {
+        let chooser = try unique(app.navigationBars.matching(identifier: "오디오 입력·출력"))
+        guard chooser.isHittable else { throw NSError(domain: "ConnectionUI", code: 7) }
+    }
+
+    func test03EnableIPadFullDuplex() async throws {
+        let app = try existingMediaApp()
+        if !app.navigationBars["오디오 입력·출력"].exists {
+            try openAudioChooser(app)
+        }
+        try requireAudioChooser(app)
+        captureMediaState(app, name: "before-enable-full-duplex")
+        let fullDuplex = try unique(app.buttons.matching(identifier: "useIPadFullDuplex"))
+        guard fullDuplex.isHittable, fullDuplex.isEnabled else {
+            throw NSError(domain: "ConnectionUI", code: 8,
+                          userInfo: [NSLocalizedDescriptionKey: "full-duplex 버튼이 비활성 또는 미노출입니다."])
+        }
+        fullDuplex.tap()
+        captureMediaState(app, name: "after-enable-full-duplex")
+        try await Task.sleep(nanoseconds: 10_000_000_000)
+        captureMediaState(app, name: "ten-seconds-after-enable-full-duplex")
+    }
+
+    private func selectOff(_ app: XCUIApplication, identifier: String, title: String) throws {
+        let picker = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier == %@ AND (elementType == %d OR elementType == %d)", identifier,
+            Int(XCUIElement.ElementType.button.rawValue), Int(XCUIElement.ElementType.popUpButton.rawValue)))
+        try tapUnique(picker)
+        try tapUnique(menuAction(app, label: title))
+        let selected = try unique(picker)
+        let reflected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", title), object: selected)
+        captureMediaState(app, name: "selected-" + identifier)
+        guard XCTWaiter.wait(for: [reflected], timeout: 2) == .completed else {
+            throw NSError(domain: "ConnectionUI", code: 9,
+                          userInfo: [NSLocalizedDescriptionKey: "picker OFF 선택값 미확인. 적용하지 않습니다."])
+        }
+    }
+
+    func test04DisableIPadAudio() throws {
+        let app = try existingMediaApp()
+        try requireAudioChooser(app)
+        captureMediaState(app, name: "before-disable-ipad-audio")
+        try selectOff(app, identifier: "audioRouteInput", title: "전송 안 함")
+        try selectOff(app, identifier: "audioRouteOutput", title: "재생 안 함")
+        try tapUnique(app.buttons.matching(identifier: "applyAudioRoutes"))
+        captureMediaState(app, name: "after-disable-ipad-audio")
     }
 }
