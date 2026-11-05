@@ -21,6 +21,7 @@ fixture = '''import Foundation
 import StreamProtocol
 final class Clock: @unchecked Sendable { var now = 0.0 }
 final class NWConnection {
+ var peerPin: Data? = Data(repeating: 7, count: 32)
  enum Completion { case contentProcessed((NWError?) -> Void) }
  var messages: [Data] = []
  var cancellations = 0
@@ -78,18 +79,33 @@ enum DeviceIdentity {
  static func existing() -> Identity? { Identity() }
 }
 final class IPadAudioSession { static let shared = IPadAudioSession(); var microphoneAvailable = true }
+enum RemoteTLS { static func peerFingerprint(_ peer: NWConnection) -> Data? { peer.peerPin } }
 final class Frames { var closes = 0; func close() { closes += 1 } }
 final class IPadMicrophoneDiagnostics {
  func connectionChanged() {}
- final class Attempt { func record(_ s: String, _ fields: [String:String] = [:]) {} }
+ static var records: [(String, [String: String], UUID)] = []
+ final class Attempt {
+  let id: UUID
+  init(_ id: UUID) { self.id = id }
+  func record(_ s: String, _ fields: [String:String] = [:]) { IPadMicrophoneDiagnostics.records.append((s, fields, id)) }
+  FORWARDING_GUARDS_METHOD
+ }
  static let shared = IPadMicrophoneDiagnostics()
- func attempt(_ id: UUID) -> Attempt { Attempt() }
+ func attempt(_ id: UUID) -> Attempt { Attempt(id) }
  static func route() -> String { "controlled route" }
 }
 final class StreamClient {
  func observeAudioDiagnostics() {}
  struct Saved { let macID: String; let fingerprintData: Data? }
- struct Session { var macID: String? = "fixture" }
+ struct Session {
+  struct Route { var isRemote = true }
+  enum Home: Equatable { case saved(pin: Data), unknown }
+  var macID: String? = "fixture"
+  var route = Route()
+  var home = Home.unknown
+ }
+ var macInfoSaved = true
+ var macInfoVerified: (info: Session, fingerprint: Data)? = (Session(), Data(repeating: 7, count: 32))
  let suite = "forwarding-adapter-" + UUID().uuidString
  let clock = Clock()
  lazy var audioAdmission = IPadAudioAdmission(now: { [clock] in clock.now })
@@ -113,6 +129,7 @@ final class StreamClient {
  var audioForwardingLocalGeneration = UUID()
  var audioForwardingWake: DispatchWorkItem?
  var audioForwardingWire: ForwardingExchange?
+ var audioForwardingStopDiagnostic: (id: UUID, context: IPadAudioForwarding.Context?)?
  var audioForwardingWireTimeout: DispatchWorkItem?
  var audioForwardingDevice: AudioForwardingDeviceID?
  var audioForwardingCatalogAt: TimeInterval?
@@ -175,6 +192,10 @@ final class StreamClient {
  deinit { providerCallQueryWake?.cancel(); audioForwardingWake?.cancel(); audioForwardingWireTimeout?.cancel(); UserDefaults.standard.removePersistentDomain(forName: suite) }
 }
 '''
+diagnostics = (root/'iOSClient/IPadMicrophoneCapture.swift').read_text()
+a = diagnostics.index('        func recordForwardingGuards(')
+b = diagnostics.index('\n        }', a) + len('\n        }')
+fixture = fixture.replace('FORWARDING_GUARDS_METHOD', diagnostics[a:b])
 def method(file, name):
     s = (root/'iOSClient'/file).read_text()
     start = s.index('    private func ' + name) if '    private func ' + name in s else s.index('    func ' + name)

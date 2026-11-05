@@ -297,6 +297,112 @@ struct AdapterChecks {
             check(!unsupported.desiredAudioPermits(.microphone) && !unsupported.desiredAudioPermits(.playback),
                   "unsupported privacy has no media admission")
         }
+        let guarded = StreamClient()
+        guarded.desiredAudioSetConnection(guarded.connection)
+        check(guarded.forwardingContextReadiness["forwardingDevicePresent"] == false &&
+              guarded.forwardingContextReadiness["desiredScopePresent"] == false &&
+              guarded.forwardingContextReadiness["contextPresent"] == false,
+              "missing device and scope are observed without initializing them")
+        guarded.fixtureObserve(list)
+        let readyGuards = guarded.forwardingContextReadiness
+        check(readyGuards["contextPresent"] == true && readyGuards["contextMatchesForwardingState"] == true &&
+              readyGuards["wirePresent"] == true && readyGuards["pendingPresent"] == true &&
+              readyGuards["forwardingFaulted"] == false, "actual observe exposes context and held wire without authority")
+        let guardMessageCount = guarded.connection!.messages.count
+        _ = guarded.forwardingContextReadiness
+        check(guarded.connection!.messages.count == guardMessageCount, "sampling guards sends nothing")
+        guarded.connected = false
+        check(guarded.forwardingContextReadiness["connected"] == false && guarded.forwardingContextReadiness["contextPresent"] == false,
+              "disconnected guard is sampled independently")
+        guarded.connected = true
+        guarded.appInForeground = false
+        check(guarded.forwardingContextReadiness["appInForeground"] == false, "foreground intent guard observed")
+        guarded.appInForeground = true
+        UIApplication.shared.applicationState = .inactive
+        check(guarded.forwardingContextReadiness["applicationActive"] == false && guarded.forwardingContextReadiness["contextMatchesForwardingState"] == false,
+              "inactive sample cannot imply current context authority")
+        UIApplication.shared.applicationState = .active
+        let guardPeer = guarded.connection
+        guarded.connection = nil
+        check(guarded.forwardingContextReadiness["connectionPresent"] == false && guarded.forwardingContextReadiness["authenticatedPeerMatchesConnection"] == false,
+              "two absent peers are never reported as authenticated match")
+        guarded.connection = guardPeer
+        guarded.authenticated = false
+        check(guarded.forwardingContextReadiness["authenticatedPeerMatchesConnection"] == false && guarded.forwardingContextReadiness["desiredIdentityPresent"] == false,
+              "authentication and identity absence remain booleans")
+        guarded.authenticated = true
+        for key in ["auth.sessionPresent", "auth.idPresent", "auth.macInfoSaved", "auth.verifiedInfoPresent",
+                    "auth.verifiedIDMatches", "auth.savedMacPresent", "auth.pinPresent", "auth.verifiedPinMatches",
+                    "auth.tlsPeerPinMatches", "auth.trustedRoute"] {
+            check(guarded.forwardingContextReadiness[key] == true, "valid fixture reports " + key)
+        }
+        let savedSession = guarded.session
+        guarded.session = nil
+        check(guarded.forwardingContextReadiness["auth.sessionPresent"] == false && guarded.forwardingContextReadiness["auth.idPresent"] == false,
+              "absent session cannot masquerade as matching IDs")
+        guarded.session = savedSession
+        guarded.session?.macID = nil
+        check(guarded.forwardingContextReadiness["auth.idPresent"] == false && guarded.forwardingContextReadiness["auth.verifiedIDMatches"] == false,
+              "absent ID is distinguished")
+        guarded.session = savedSession
+        guarded.macInfoSaved = false
+        check(guarded.forwardingContextReadiness["auth.macInfoSaved"] == false, "saved-info flag observed")
+        guarded.macInfoSaved = true
+        let verified = guarded.macInfoVerified
+        guarded.macInfoVerified = nil
+        check(guarded.forwardingContextReadiness["auth.verifiedInfoPresent"] == false && guarded.forwardingContextReadiness["auth.verifiedPinMatches"] == false,
+              "absent verified information cannot match a pin")
+        guarded.macInfoVerified = (StreamClient.Session(macID: "other"), Data(repeating: 8, count: 32))
+        check(guarded.forwardingContextReadiness["auth.verifiedIDMatches"] == false && guarded.forwardingContextReadiness["auth.verifiedPinMatches"] == false,
+              "verified ID and pin mismatches are separate booleans")
+        guarded.macInfoVerified = verified
+        let savedMacs = guarded.savedMacs
+        guarded.savedMacs = []
+        check(guarded.forwardingContextReadiness["auth.savedMacPresent"] == false && guarded.forwardingContextReadiness["auth.pinPresent"] == false,
+              "absent saved Mac and pin distinguished")
+        guarded.savedMacs = [.init(macID: "fixture", fingerprintData: nil)]
+        check(guarded.forwardingContextReadiness["auth.savedMacPresent"] == true && guarded.forwardingContextReadiness["auth.pinPresent"] == false,
+              "saved Mac without pin distinguished")
+        guarded.savedMacs = savedMacs
+        guarded.connection?.peerPin = nil
+        check(guarded.forwardingContextReadiness["auth.tlsPeerPinMatches"] == false, "TLS pin absence observed without exporting it")
+        guarded.connection?.peerPin = Data(repeating: 7, count: 32)
+        guarded.session?.route.isRemote = false
+        check(guarded.forwardingContextReadiness["auth.trustedRoute"] == false, "untrusted route observed")
+        guarded.session?.home = .saved(pin: Data(repeating: 7, count: 32))
+        check(guarded.forwardingContextReadiness["auth.trustedRoute"] == true, "existing saved home route observed")
+        guarded.session = savedSession
+        guarded.desiredAudio.set(.microphone, desired: true)
+        guarded.desiredAudio.set(.playback, desired: true)
+        let beforeStop = guarded.forwardingContextReadiness
+        let heldObserve = guarded.command()
+        guarded.cancelDesiredAudioRequest()
+        let stopEvent = IPadMicrophoneDiagnostics.records.last { $0.0 == "explicit_stop_requested" }
+        let stopAuth = IPadMicrophoneDiagnostics.records.last { $0.0 == "explicit_stop_requested_auth" }
+        check(stopEvent?.1.merging(stopAuth!.1, uniquingKeysWith: { _, next in next }) == beforeStop.mapValues { String($0) } &&
+              stopEvent?.2 == stopAuth?.2 && stopEvent?.1.count == 14 && stopAuth?.1.count == 10,
+              "same-sample stop events preserve all 24 guards under one diagnostic ID")
+        check(!guarded.desiredAudio.selection.microphone && !guarded.desiredAudio.selection.playback &&
+              guarded.desiredAudioStore.selection(for: guarded.desiredAudioIdentity!) == .init(),
+              "diagnostic stop retains existing OFF storage contract")
+        check(guarded.microphoneAttempts == 0 && guarded.subscriptions.filter(\.enabled).isEmpty,
+              "guard sampling and stop cannot start media")
+        let sendsBefore = IPadMicrophoneDiagnostics.records.filter { $0.0 == "explicit_stop_first_217_submitted" }.count
+        guarded.receive(try .init(requestID: heldObserve.requestID, operation: .observe,
+            catalog: catalog(live, intent: 1, binding: 1), result: nil))
+        let sendEvents = IPadMicrophoneDiagnostics.records.filter { $0.0 == "explicit_stop_first_217_submitted" }
+        let sendAuth = IPadMicrophoneDiagnostics.records.last { $0.0 == "explicit_stop_first_217_submitted_auth" }
+        check(sendEvents.count == sendsBefore + 1 && sendEvents.last?.1["isStopSubmission"] == "true" &&
+              guarded.command().intent?.action == .stop && guarded.audioForwardingStopDiagnostic == nil,
+              "existing send boundary records the first stop control once and retires diagnostic")
+        check(sendEvents.last!.1.values.allSatisfy { $0 == "true" || $0 == "false" },
+              "stop send event contains boolean values only")
+        check(sendEvents.last?.1.count == 16 && sendAuth?.1.count == 10 && sendEvents.last?.2 == sendAuth?.2 && sendAuth?.2 == stopAuth?.2,
+              "first217 main and auth events preserve 26 fields with the same stop diagnostic ID")
+        guarded.desiredAudio.sourceWillChange()
+        check(guarded.forwardingContextReadiness["desiredScopePresent"] == false && guarded.forwardingContextReadiness["sourceNotNone"] == false &&
+              guarded.forwardingContextReadiness["contextMatchesForwardingState"] == false,
+              "retired scope reports absence without inherited context authority")
         print("실제 iPad 어댑터·가짜 전송/시계 검사 \(checks)개 통과. 실제 미디어·기기·네트워크 없음.")
     }
 }

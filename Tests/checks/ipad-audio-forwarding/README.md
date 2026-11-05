@@ -41,3 +41,19 @@ python3 -B Tests/checks/ipad-audio-forwarding/build-ios.py "$OUT"
 privacy v2의 `protected=false`는 아직 보호를 시작하지 않은 정상 상태일 수 있다. 인증된 218과 정확한 기기·Mac·화면 문맥이 있으면 새 사용자의 명시적 선택을 217로 요청할 수 있다. 같은 자기 기기와 현재 intent ID/revision/generation·선택이 일치하는 저장 의도만 기존 계약으로 resume한다. 이는 새 권한이나 다른 기기의 intent 선점이 아니다. observe/submitting/quiescing 중 반복된 초기 false catalog는 제어 요청을 취소하지 않는다. 이미 보호되었거나 active인 상태에서 false가 오면 즉시 차단하고, true 복귀만으로 미디어를 재개하지 않는다.
 
 OS 권한창은 기존 catalog를 폐기하므로 동일한 승인 문맥의 명시 선택만 새 observe 뒤에 대기시킨다. 실제 capture/render는 여전히 v2 protected·현재 active binding·기존 scope/grant·fresh deadline이 전부 필요하다. 미지원/누락된 privacy 버전은 선택과 미디어 모두 허용하지 않는다. `adapter-main.swift`는 초기 false, 반복 catalog, 권한 복귀와 fresh218 경합, 자기 durable resume, 보호 상실, 지원 버전 거부를 실제 어댑터 본문으로 검증한다.
+
+## Build 81 이후 context guard 관측
+
+기준은 실제 설치 81의 `d5a591fa8f57c3fb62ae17fea7c62bc1425f1f01`, tree `2ef2bb7d649da07664da3cb38417cb6050cb70f5`다. 기존 `connection81-20261105/after-stop81-audio.json`에서 로컬 desired/capture/engine OFF와 forwarding unknown을 확인했다. `forwardingLastReceived` 부재는 현재 scope의 요약 부재이며 한 번도 218을 받지 않았다는 증거가 아니다. Host intent 25 ON의 원인은 아직 미확인이다. 같은 기기 tap을 반복하지 않는다.
+
+기존 Runtime의 optional `forwardingContextReadiness`는 context guard, 내부 인증 guard 각각의 존재·일치 여부, 현재 context 일치, wire/pending 존재와 forwarding fault를 boolean으로만 기록한다. scope가 달라도 실패한 guard를 관측할 수 있지만 인증·미디어 권한·전송·Host OFF의 근거가 아니다. 기존 인증 함수와 미디어 gate는 바꾸지 않는다. ID·pin·credential·원본 payload·오디오 내용은 새 map과 event에 포함하지 않는다. 과거 attempt scope에는 새 map을 복사하지 않는다.
+
+`cancelDesiredAudioRequest` 진입에서 `explicit_stop_requested` event에 중지 전 같은 guard map을 남긴다. 기존 217 `send` 호출이 실제로 제출된 뒤, 원래 context와 일치하는 첫 경계만 같은 진단 ID의 `explicit_stop_first_217_submitted`에 기록한다. 값은 boolean의 문자열 표현이며 `isObserve`와 `isStopSubmission`을 구분한다. 전달 완료·218 수용·Host OFF를 의미하지 않는다. 연결 교체나 새 ON 선택은 대기 진단을 폐기한다. 상시 polling event는 추가하지 않는다.
+
+Euclid P2 검수에서 기존 event encoder의 sorted prefix 16 때문에 한 event의 24/26필드가 잘리는 결함을 확인했다. 전역 제한과 Runtime 전체 map은 유지한다. 한 번 계산한 map을 `Attempt.recordForwardingGuards`에서 `auth.*` 10개와 나머지 14개로 분리하고 같은 진단 ID의 `explicit_stop_requested`/`explicit_stop_requested_auth`에 저장한다. 첫 217은 `explicit_stop_first_217_submitted`/`explicit_stop_first_217_submitted_auth`로 구분하며, 앞 event에 추가 boolean 2개까지 포함해 정확히 16개다. guard를 다시 읽지 않는다. 실제 제품의 전체 24개 key를 사용한 metadata encoder 검사에서 두 event 합집합, 각 event 한도, 동일 진단 ID, boolean-only 값과 Runtime 전체 map 보존을 검증한다. 이전 12개 metadata 검사는 작은 map만 사용했으므로 이 결함을 검출한 근거로 사용하지 않는다.
+
+P2 보정 후보는 실제 metadata encoder 21개, 모델 191개, actual adapter 99개, desired 모델 57개·adapter 5개를 Mini에서 통과했다. 첫 실행은 필드 보존 검사 뒤 기존 고정 지연 스냅샷 검사가 이전 파일을 읽어 실패했다. fixture를 최대 5초의 실제 저장 readback으로 보정한 뒤 전체 좁은 검사가 통과했고 Mini 임시 소스·출력 삭제를 확인했다. 전역 기록 함수와 Runtime 구조는 `b73ec21e`와 동일하다. Euclid 독립 재검수 전에는 CLEAR로 표시하지 않는다.
+
+소유 작업은 `01a1aa6e-b243-7892-83f7-59fa5b97f2de`, WT는 `/Users/ambrion/.codex/worktrees/ipad-forwarding-context-readiness-20261105`, 브랜치는 `codex/ipad-forwarding-context-readiness-20261105`다. product 변경은 `StreamClient+AudioForwarding.swift`, `StreamClient+DesiredAudio.swift`, `StreamClient.swift`, `IPadMicrophoneCapture.swift`뿐이다. 기준 검사에서 모델 191개·실제 metadata 추출 5개가 Mini에서 통과했고 임시 실행 사본 삭제를 확인했다. 후보의 actual adapter·metadata·desired 검사 영수증은 승인 외장 `forwarding-context-readiness-20261105`에 연결한다. Mini 검사는 Git source-guard 이전 수용이 아닌 exact 파일 해시의 좁은 독립 검사다. 전체 SDK/서명·실기·Host·UI·integration 쓰기는 하지 않으며, 부모가 독립 검수와 `74441294` 이후 통합·82 빌드를 맡는다.
+
+2026-11-05 후보 검사는 모델 191개·실제 adapter 98개·실제 metadata 추출 12개·desired 모델 57개·desired adapter 5개가 통과했다. 첫 후속 실행의 Mini Xcode 경로 부재와 다음 실행의 `/tmp`/`/private/tmp` 모듈 캐시 충돌은 실패 이력으로 보존했다. CLT와 canonical `/private/tmp`를 사용한 최종 실행은 exit 0이며 임시 사본과 검사 출력은 정리됐다. `candidate-source-sha256.json`은 실제 실행한 product/test 파일과 일치하고 `74441294`는 product 4파일을 바꾸지 않았다. 독립 검수는 부모가 지정한 Euclid 대기이며 작성자 검사를 독립 CLEAR로 표시하지 않는다.

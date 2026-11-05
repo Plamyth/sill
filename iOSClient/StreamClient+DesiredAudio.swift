@@ -15,6 +15,7 @@ extension StreamClient {
         providerCallSetConnection(connection)
         let peer = connection.map(ObjectIdentifier.init)
         guard desiredAudio.peer != peer else { return }
+        audioForwardingStopDiagnostic = nil
         IPadMicrophoneDiagnostics.shared.connectionChanged()
         retireAudioForwardingWire(unless: peer)
         suspendAudioForwarding()
@@ -97,6 +98,7 @@ extension StreamClient {
 
     func setDesiredAudioSelection(_ selection: IPadDesiredAudio.Selection,
                                   confirming directions: [IPadDesiredAudio.Direction] = IPadDesiredAudio.Direction.allCases) {
+        if selection.microphone || selection.playback { audioForwardingStopDiagnostic = nil }
         refreshDesiredAudioIdentity()
         guard audioForwardingContext != nil || (!selection.microphone && !selection.playback) else { return }
         desiredAudio.confirmSession(directions.filter { selection[$0] })
@@ -114,6 +116,10 @@ extension StreamClient {
     }
 
     func cancelDesiredAudioRequest() {
+        let observation = UUID()
+        audioForwardingStopDiagnostic = (observation, audioForwardingContext)
+        let guards = forwardingContextReadiness
+        IPadMicrophoneDiagnostics.shared.attempt(observation).recordForwardingGuards("explicit_stop_requested", guards)
         setDesiredAudioSelection(.init())
     }
 

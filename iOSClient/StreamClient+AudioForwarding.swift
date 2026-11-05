@@ -30,6 +30,46 @@ extension StreamClient {
                      lifecycle: audioForwardingLocalGeneration)
     }
 
+    var forwardingContextReadiness: [String: Bool] {
+        let peer = connection.map(ObjectIdentifier.init)
+        let context = audioForwardingContext
+        let currentSession = session
+        let id = currentSession?.macID
+        let verified = macInfoVerified
+        let saved = id.flatMap { id in savedMacs.first { $0.macID == id } }
+        let pin = saved?.fingerprintData
+        let peerPin = connection.flatMap { RemoteTLS.peerFingerprint($0) }
+        let trustedRoute = currentSession.map { session in
+            session.route.isRemote || (pin.map { session.home == .saved(pin: $0) } ?? false)
+        } ?? false
+        return [
+            "connected": connected,
+            "appInForeground": appInForeground,
+            "applicationActive": UIApplication.shared.applicationState == .active,
+            "connectionPresent": peer != nil,
+            "authenticatedPeerMatchesConnection": peer != nil && authenticatedMacAudioRoutePeer == peer,
+            "auth.sessionPresent": currentSession != nil,
+            "auth.idPresent": id != nil,
+            "auth.macInfoSaved": macInfoSaved,
+            "auth.verifiedInfoPresent": verified != nil,
+            "auth.verifiedIDMatches": id != nil && verified?.info.macID == id,
+            "auth.savedMacPresent": saved != nil,
+            "auth.pinPresent": pin != nil,
+            "auth.verifiedPinMatches": pin != nil && verified?.fingerprint == pin,
+            "auth.tlsPeerPinMatches": pin != nil && peerPin == pin,
+            "auth.trustedRoute": trustedRoute,
+            "desiredIdentityPresent": desiredAudioIdentity != nil,
+            "forwardingDevicePresent": audioForwardingDevice != nil,
+            "desiredScopePresent": desiredAudio.scope != nil,
+            "sourceNotNone": desiredAudio.scope.map { $0.source != .none } ?? false,
+            "contextPresent": context != nil,
+            "contextMatchesForwardingState": context != nil && audioForwarding.context == context,
+            "wirePresent": audioForwardingWire != nil,
+            "pendingPresent": audioForwarding.pendingRequestID != nil,
+            "forwardingFaulted": audioAdmission.forwardingFaulted,
+        ]
+    }
+
     func reconcileAudioForwarding() {
         if audioForwardingDevice == nil, let identity = DeviceIdentity.existing() {
             audioForwardingDevice = AudioForwardingDeviceID(fingerprint: identity.fingerprint)
@@ -112,6 +152,16 @@ extension StreamClient {
                     self.audioForwarding.block(); self.applyAudioForwarding(nil)
                 }
             })
+            if let observation = audioForwardingStopDiagnostic {
+                audioForwardingStopDiagnostic = nil
+                if observation.context == context {
+                    var fields = forwardingContextReadiness
+                    fields["isObserve"] = command.operation == .observe
+                    fields["isStopSubmission"] = command.intent?.action == .stop
+                    IPadMicrophoneDiagnostics.shared.attempt(observation.id)
+                        .recordForwardingGuards("explicit_stop_first_217_submitted", fields)
+                }
+            }
         }
         if audioForwardingPhase != audioForwarding.phase { audioForwardingPhase = audioForwarding.phase }
         let microphone = audioForwardingPermits(.microphone)
