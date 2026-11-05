@@ -302,9 +302,11 @@ for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
             client.sent[1].request.callSessionId == "owned-session" && client.sent[1].request.matches(off),
             "명시적인 재요청은 동일 selector·세션과 최신 원장을 보존함")
         let retry = client.sent[1].request
-        check(!client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
-            status: .stopped, reason: "fixture_stopped", provider: kind.rawValue)), from: connection),
-            "세션이 없는 stopped도 소유권을 해제하지 않음")
+        if kind == .nativeCodex {
+            check(!client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
+                status: .stopped, reason: "fixture_stopped", provider: kind.rawValue)), from: connection),
+                "native 세션이 없는 stopped는 소유권을 해제하지 않음")
+        }
         check(!client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
             status: .stopped, reason: "fixture_stopped", callSessionId: "other-session", provider: kind.rawValue)), from: connection),
             "다른 세션의 stopped는 소유권을 해제하지 않음")
@@ -313,8 +315,8 @@ for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
             provider: kind == .nativeCodex ? ProviderCallKind.chatgptDots.rawValue : ProviderCallKind.nativeCodex.rawValue)), from: connection),
             "다른 selector의 stopped는 소유권을 해제하지 않음")
         check(client.visionProviderCall.receive(try .init(request: retry, result: .init(requestId: retry.requestId,
-            status: .stopped, reason: "fixture_stopped", callSessionId: "owned-session", provider: kind.rawValue)), from: connection),
-            "같은 세션·selector의 확인된 stopped만 수용함")
+            status: .stopped, reason: "fixture_stopped", callSessionId: kind == .nativeCodex ? "owned-session" : nil, provider: kind.rawValue)), from: connection),
+            "native 정확 세션 또는 Dots 기존 null 종료 규약을 수용함")
         check(client.visionProviderCall.canChangeTarget && !client.visionProviderCanStop && client.visionProviderCall.selectTarget(.grok),
             "확인된 종료 뒤에만 활성 통화 소유권을 해제함")
     }

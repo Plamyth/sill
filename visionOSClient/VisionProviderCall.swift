@@ -204,8 +204,12 @@ struct VisionProviderCall {
         if state.result.status == .stopped {
             guard let active = selectedActiveCall, active.callSessionId != nil,
                   active.provider == pending.control.providerKind.rawValue,
-                  active.callSessionId == pending.control.request.callSessionId,
-                  active.callSessionId == state.result.callSessionId else { return false }
+                  active.callSessionId == pending.control.request.callSessionId else { return false }
+            if pending.control.providerKind == .nativeCodex {
+                guard active.callSessionId == state.result.callSessionId else { return false }
+            } else if let session = state.result.callSessionId {
+                guard active.callSessionId == session else { return false }
+            }
         }
         self.pending = nil
         if targetSupported {
