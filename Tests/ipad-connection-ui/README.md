@@ -6,7 +6,7 @@
 
 - 기준은 `origin integration/ccr-ipad`의 `ff98f3c05361ee9a6777704c80783e3c30413f04`, tree `1de78b48752e3821130eea50f7b258a08f2b09fe`다.
 - 정상 앱은 `com.ambrion.sillcanvas.ipad`다. 이미 실행 중일 때만 `activate()`한다. `launch`, `terminate`, launch arguments/environment 변경은 없다. 상태 확인과 activate 사이 앱이 종료되는 경합까지 원천 방지하는 공식 API는 없으므로 향후 Root가 안정된 기기 구간에서 검증해야 한다.
-- 두 테스트는 모니터 AX가 보이지 않을 때 `iPadToolbarToggle`의 유일성·hittable·정확한 ‘상단 메뉴 표시’ 라벨을 확인해 각 테스트당 최대 한 번만 누른다. ‘상단 메뉴 숨기기’ 라벨 반영과 모니터 AX의 유일성·hittable을 검사하고 전후 캡처를 남긴다. 반복 탭이나 스와이프는 없다. 실기 AX 반영 성공은 아직 미검증이다.
+- 상단바가 숨겨졌으면 `iPadToolbarToggle`의 유일성·hittable·enabled·정확한 ‘상단 메뉴 표시’ 라벨을 확인해 각 테스트당 최대 한 번 누른다. ‘상단 메뉴 숨기기’면 누르지 않고, 토글이 없는 pinned 상태도 다음 목표 AX 검사로 확인한다. 토글 중복·미확인 라벨은 실패한다. 표시 후 실제 목표 AX의 유일성·hittable을 확인하며, 사전 전체 캡처·모니터 재조회·라벨 대기는 하지 않는다. 반복 탭이나 스와이프는 없다.
 - `test01ReadDefaultMonitorAX`는 `macDisplayChooser`의 label/value와 앱 스크린샷을 첨부한다. 모니터를 선택하지 않는다. 관측한 이름이 요구된 기본 모니터인지는 원본과 대조해야 한다.
 - `test02OpenNativeAudioChooserOnly`는 native menu bar의 ‘오디오’가 유일하고 hittable이면 ‘입력·출력 선택…’ 경로를 쓴다. 그 조건을 만족하지 않으면 소스의 정확한 앱 native AX 경로 `workspaceOverflow` → UIKit 메뉴 ‘설정’ → `openAudioRoutes`이면서 라벨이 ‘오디오 입력·출력 선택…’인 버튼을 쓴다. 모든 탭은 유일성·hittable 검사를 통과해야 한다. 메뉴 항목은 정확 라벨의 button 또는 menuItem만 허용한다. 마지막 ‘오디오 입력·출력’ 창 표시를 확인하고 캡처한다. 원격 영상·좌표·스와이프·키·오디오 toggle은 누르지 않는다. native 경로를 누른 뒤 실패했을 때 다른 경로를 재시도하지 않는다.
 - 오디오 창을 열면 기존 앱의 presentation/offer 상태가 바뀌고 Mac 장치 목록을 조회한다. 마이크·출력 활성화 호출은 하지 않는다. 테스트는 이름의 01 → 02 순서로 관측 후 창을 열며 순서를 무작위화하지 않는다. 선택·적용·닫기는 누르지 않는다. 특히 기존 `close()`가 오디오 승인 상태를 변경하므로 자동 복구 조작을 넣지 않았다. 창은 열린 채 남는다. 실패 시 열린 메뉴도 남을 수 있다.
@@ -116,3 +116,14 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild build-for-te
 새 서명 후보는 기존 라우팅 root의 `signedcandidate/media-controls`에 분리한다. 기존 Team/profile만 사용하고 새 cert/key를 만들지 않는다. 별도 비작성 검수는 Mini의 비영속·read-only Codex reviewer에 정확한 소스 snapshot을 메모리로 전달해 시도하며 실제 반환·남은 검수 상태를 영수증에 기록한다. 이번 작업은 기기 실행·설치·Host·음성 0이며, 부모는 검수와 기기 점유 조율 뒤 첫 실제 native picker 노출·동작을 판정한다.
 
 비작성 검수 결과: 첫 Mini reviewer 모델 `gpt-6`는 계정에서 미지원으로 실패했다. 기존 설정 모델의 별도 읽기 전용 reviewer가 monitor/audio 중복 AX에서 대체 탭 가능성을 BLOCK하여, 두 쿼리의 count > 1이면 탭 전에 throw하도록 수정했다. 새 비작성 재검수는 동일한 Swift/변환기/verify 소스 SHA를 대조한 뒤 APPROVE, actionable finding 없음으로 반환했다. reviewer는 도구·파일·기기 작업을 수행하지 않았다. 최종 signed build-for-testing과 Mini 정적 검사도 통과했다. 실행·설치는 부모가 별도로 수행하며 실제 AX 형식·실음성은 미검증이다. 근거는 `independent-review-final.json`, `build-reviewed.log`, `mini-static-reviewed.json`이다.
+
+
+## 79 실기 로그에 따른 toolbar 타이밍 보정
+
+사용자 인계와 `signedcandidate/media-controls/read79.log`를 읽기 대조했다. 실제 79에서 01 pass, 02 fail이며 full-duplex 탭과 음성 ON 시험은 아직 0이다. 02의 로그는 toggle 2.79초, 모니터 조회 5.20초, 캡처 5.73초, `workspaceOverflow` 확인 7.22초를 기록한다. 상단바의 4초 유휴 숨김 전에 메뉴를 누르지 못한 경로를 수정하며 동일 후보를 재실행하지 않는다.
+
+`unique()`는 count를 한 번 얻고 존재하면 즉시 유일성 검사로 진행한다. count가 0일 때만 최대 5초 존재 대기 후 count를 한 번 다시 얻는다. 중복이면 throw한다. 탭 전 hittable·enabled 검사는 유지한다.
+
+`openAudioChooser()`는 상단바 표시 전에 native menu AX를 한 번 집계한다. 유일하고 hittable인 native 오디오 요소는 같은 element로 검사·탭하며 쿼리 count를 반복하지 않는다. native 경로가 없으면 정확한 토글 상태를 확인·필요시 한 번 탭한 직후 `workspaceOverflow`를 유일성·hittable·enabled 검사하고 탭한다. 이 구간에 캡처, 모니터 재조회, 표시 라벨 기대 대기, 추가 native 메뉴 탐색을 넣지 않는다. 전체 화면 캡처는 native 메뉴가 열린 뒤부터 수집한다. 01의 모니터 관측·최종 캡처는 유지한다. 03의 전후·10초 후 media 증거와 04의 OFF 선택 증거는 오디오창 안에서 그대로 수집한다.
+
+4초 이내 실제 탭은 아직 실기 미검증이다. XCTest 자체의 idle 동기화 시간은 소스로 보장하지 않는다. 제품 source·설정·강제 toolbar preference·원격 좌표·스와이프·키·반복 탭은 변경하거나 실행하지 않는다. 기본 01/02 allowlist·세 gate의 기본 0·media gate 분리는 유지한다. 새 후보 경로는 `signedcandidate/toolbar-timing`이며 별도 비작성 검수·정식 서명 빌드·실제 파일 SHA를 함께 반환한다. 부모가 Root 슬롯을 반납한다는 인계는 수신했으며 이 작업이 슬롯을 점유하거나 실기 재시도하지 않는다.

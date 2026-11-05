@@ -13,20 +13,32 @@ swift = FILES['ConnectionUITests.swift']
 assert swift.count('.tap()') == 3
 assert swift.count('fullDuplex.tap()') == 1
 assert 'guard fullDuplex.isHittable, fullDuplex.isEnabled' in swift
-assert swift.count('try tapUnique(') == 8
+assert swift.count('try tapUnique(') == 7
 assert 'guard element.isHittable, element.isEnabled' in swift
-assert 'if audio.count == 1, audio.firstMatch.isHittable' in swift
-assert swift.index('guard audio.count <= 1') < swift.index('if audio.count == 1')
-assert swift.index('guard monitor.count <= 1') < swift.index('toggle.tap()')
+assert 'if let nativeAudio, nativeAudio.isHittable' in swift
 assert 'identifier: "workspaceOverflow"' in swift
 assert 'menuAction(app, label: "설정")' in swift
 assert '"openAudioRoutes", "오디오 입력·출력 선택…"' in swift
 assert swift.count('toggle.tap()') == 1
 assert swift.count('try ensureToolbarVisible(app)') == 2
 assert 'identifier: "iPadToolbarToggle"' in swift
-assert 'toggle.label == "상단 메뉴 표시", toggle.isHittable' in swift
+assert 'label == "상단 메뉴 표시", toggle.isHittable, toggle.isEnabled' in swift
 assert '상단 메뉴 숨기기' in swift
-assert 'XCTWaiter.wait(for: [reflected], timeout: 2)' in swift
+unique_helper = swift.split('private func unique(', 1)[1].split('private func ensureToolbarVisible', 1)[0]
+assert 'var count = query.count' in unique_helper
+assert 'if count == 0 {' in unique_helper
+assert unique_helper.count('query.count') == 2
+assert unique_helper.count('waitForExistence') == 1
+assert 'guard count == 1' in unique_helper
+reveal = swift.split('private func ensureToolbarVisible(', 1)[1].split('private func capture(', 1)[0]
+assert 'capture(' not in reveal and 'waitFor' not in reveal and 'macDisplayChooser' not in reveal
+assert reveal.index('guard count <= 1') < reveal.index('toggle.tap()')
+opening = swift.split('private func openAudioChooser(', 1)[1].split('private func captureMediaState(', 1)[0]
+assert opening.index('let count = audio.count') < opening.index('try ensureToolbarVisible(app)')
+assert opening.index('guard count <= 1') < opening.index('try tapChecked(nativeAudio)')
+critical = opening.split('try ensureToolbarVisible(app)', 1)[1].split('workspace-native-menu', 1)[0]
+assert 'try tapUnique(app.buttons.matching(identifier: "workspaceOverflow"))' in critical
+assert critical.count('capture(') == 1 and 'before-native-menu' not in opening
 assert swift.count('.activate()') == 1
 assert 'func test01ReadDefaultMonitorAX()' in swift
 assert 'func test02OpenNativeAudioChooserOnly()' in swift
