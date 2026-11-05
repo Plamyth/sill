@@ -1,5 +1,6 @@
 import Foundation
 import StreamProtocol
+import CryptoKit
 
 var checks = 0
 func expect(_ value: Bool, _ name: String) { checks += 1; precondition(value, name) }
@@ -138,4 +139,70 @@ for vector in try JSONDecoder().decode([Vector].self, from: Data(contentsOf: URL
 }
 let oldList = try JSONDecoder().decode(WindowList.self, from: Wire.encode(WindowList(macName: "old", windows: [], active: .desktop)))
 expect(oldList.providerCalls == nil, "old WindowList optional capability compatibility")
+// Native prepared targets: exact frozen Host/Core vectors, no delivery or media assumption.
+let nativeVectorsURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("native-target-vectors.json")
+let nativeVectors = try JSONSerialization.jsonObject(with: Data(contentsOf: nativeVectorsURL)) as! [String: Any]
+let nativeRows = nativeVectors["vectors"] as! [[String: Any]]
+func targetBytes(_ fields: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: fields) }
+func targetRejected(_ fields: [String: Any]) -> Bool {
+    guard let data = try? targetBytes(fields) else { return true }
+    return (try? IPadCallTarget.nativeCodex.preparedNativeTarget(from: data)) == nil
+}
+func rehashedTarget(_ fields: [String: Any]) throws -> [String: Any] {
+    let strings = ["schema","providerKind","providerInstanceId","threadId","voiceSessionId"].map { fields[$0] as! String }
+    let bytes = try JSONSerialization.data(withJSONObject: strings, options: [.withoutEscapingSlashes])
+    var changed = fields
+    changed["targetHash"] = SHA256.hash(data: bytes).map { String(format:"%02x",$0) }.joined()
+    return changed
+}
+var decodedNativeTargets: [CodexRealtimePreparedTarget] = []
+for row in nativeRows {
+    let fields = row["target"] as! [String: Any]
+    let data = try targetBytes(fields)
+    let target = try IPadCallTarget.nativeCodex.preparedNativeTarget(from: data)
+    decodedNativeTargets.append(target)
+    expect((try target.hash()) == row["sha256"] as! String, "native hash matches independently frozen Host/Core SHA256")
+    let canonical = try JSONSerialization.data(withJSONObject: [target.schema, target.providerKind,
+        target.providerInstanceId, target.threadId, target.voiceSessionId], options: [.withoutEscapingSlashes])
+    expect(String(data: canonical, encoding: .utf8) == row["canonicalUTF8"] as? String,
+           "native UUID spelling and ordered JSON bytes match exact Host/Core golden vector")
+    expect(target.providerInstanceId == fields["providerInstanceId"] as? String && target.threadId == fields["threadId"] as? String
+           && target.voiceSessionId == fields["voiceSessionId"] as? String, "native IDs preserve source bytes without UUID normalization")
+    for other in [IPadCallTarget.chatGPTDots, .grokBot] {
+        expect((try? other.preparedNativeTarget(from: data)) == nil, "native target cannot be consumed by Dots or Grok selection")
+    }
+    for key in fields.keys {
+        var changed = fields; changed.removeValue(forKey: key)
+        expect(targetRejected(changed), "every one of the exact native six fields is required")
+        changed = fields; changed[key] = NSNull()
+        expect(targetRejected(changed), "native fields cannot be null")
+        changed[key] = 1
+        expect(targetRejected(changed), "native fields cannot be numbers")
+    }
+    for hash in [String(repeating:"0",count:64), target.targetHash.uppercased(), "", target.targetHash + " "] {
+        var changed = fields; changed["targetHash"] = hash
+        expect(targetRejected(changed), "forged or noncanonical native hash is rejected")
+    }
+    for key in ["providerInstanceId", "threadId", "voiceSessionId"] {
+        for invalid in (nativeVectors["rejectIdentifiers"] as! [String]) + ["675e086f96724f3fa8d2ff690ac6cae0", "675e086f-9672-4f3f-a8d2-ff690ac6cae0\n"] {
+            var changed = fields; changed[key] = invalid
+            expect(targetRejected(try rehashedTarget(changed)), "native UUID rejects malformed shape even with a matching recomputed hash")
+        }
+        var changed = fields; changed[key] = UUID().uuidString
+        expect(targetRejected(changed), "independently changed instance/thread/session cannot keep a prior hash")
+    }
+    for (key, value) in ["schema":"ccr-provider-target-v1", "providerKind":"chatgpt-dots-webguest", "voiceSessionId":"voice-session"] {
+        var changed = fields; changed[key] = value
+        expect(targetRejected(try rehashedTarget(changed)), "wrong schema/provider/voice identity is rejected even with matching hash")
+    }
+    for key in ["profileId", "leafId", "guestId", "url", "timeOrigin", "realtimeSessionId", "finalEvent", "codec", "token"] {
+        var changed = fields; changed[key] = "extra"
+        expect(targetRejected(changed), "legacy, final-event, codec or credential fields cannot extend prepared contract")
+    }
+    expect(!targetRejected(fields), "failed mixed-contract decodes cannot poison later valid decode")
+}
+expect(decodedNativeTargets.count == 2 && decodedNativeTargets[0].targetHash != decodedNativeTargets[1].targetHash,
+       "uppercase and lowercase UUID vectors have distinct valid hashes")
+expect(!IPadCallTarget.nativeCodex.supportsProviderCall, "prepared decoding cannot enable unconfirmed native 221 control")
+expect(model.result?.status != .started && model.pending == nil, "pure target decoding cannot mutate existing provider ownership")
 print("PASS \(checks) iPad Dots model and wire checks; native call and sentry authority unimplemented; external effects0")

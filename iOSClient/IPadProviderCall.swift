@@ -13,6 +13,13 @@ enum IPadCallTarget: String, CaseIterable, Identifiable {
         }
     }
     var supportsProviderCall: Bool { self == .chatGPTDots }
+
+    /// Decode only the confirmed prepared-target payload. Delivery, final-event matching,
+    /// authorization and media remain separate contracts; this never sends 221 or starts audio.
+    func preparedNativeTarget(from data: Data) throws -> CodexRealtimePreparedTarget {
+        guard self == .nativeCodex else { throw ProviderCallWireFailure.invalidTarget }
+        return try JSONDecoder().decode(CodexRealtimePreparedTarget.self, from: data)
+    }
 }
 
 struct IPadProviderCall {

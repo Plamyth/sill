@@ -35,3 +35,7 @@ mini-ephemeral-source run --source "$WT" --owner 01a16b23-ace2-78d0-a1e0-d0762ff
 독립 비작성 검수·통합·공유 Host 갱신·실기기 수용은 부모 소유다. 이 작성자 검사와 SDK 빌드는 그 완료 증거가 아니다. Native/Grok 새 제어와 실제 센츄리 권한 소비는 확정 후속 계약을 기다린다.
 
 Pstack Feature의 작성 위임 역할로 직접 구현했다. 선행 how/설계·독립 검수는 부모가 소유한다. ARENA와 중첩 spawn은 실행하지 않았다. Ponytail full로 기존 Vision 모델·iPad 저장/미디어·fixture를 재사용하고 의존성을 추가하지 않았다. 독립 Mini 검사와 로컬 SDK 컴파일만 병렬 진행했으며, 공유 기기·서비스 조작은 수행하지 않았다.
+
+## 2026-11-05 native prepared target 준비
+
+확정된 Root `8a59`의 6필드/hash 소비 타입과 순수 iPad decoder 준비는 [NATIVE-PREPARED.md](NATIVE-PREPARED.md)에 기록했다. 실제 native 통화·최종 이벤트·미디어 기능 지원 상태는 바꾸지 않았다.
