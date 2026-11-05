@@ -166,57 +166,12 @@ final class ConnectionUITests: XCTestCase {
         captureMediaState(app, name: "ten-seconds-after-enable-full-duplex")
     }
 
-    private func selectOff(_ app: XCUIApplication, form: XCUIElement,
-                           identifier: String, label: String, title: String) throws {
-        let picker = form.descendants(matching: .any).matching(identifier: identifier)
-        for step in 0...6 {
-            let count = picker.count
-            guard count <= 1 else { throw NSError(domain: "ConnectionUI", code: 12) }
-            if count == 1, picker.element(boundBy: 0).isHittable { break }
-            guard step < 6, form.isHittable else { throw NSError(domain: "ConnectionUI", code: 13) }
-            form.swipeUp()
-        }
-        let control = try unique(picker)
-        guard [.button, .popUpButton].contains(control.elementType) else {
-            throw NSError(domain: "ConnectionUI", code: 14)
-        }
-        try tapChecked(control)
-        try tapUnique(menuAction(app, label: title))
-        let selected = try unique(picker)
-        let reflected = XCTNSPredicateExpectation(
-            predicate: NSPredicate(format: "value == %@ OR label == %@", title, label + ", " + title),
-            object: selected)
-        guard XCTWaiter.wait(for: [reflected], timeout: 2) == .completed else {
-            captureMediaState(app, name: "unconfirmed-" + identifier)
-            throw NSError(domain: "ConnectionUI", code: 9,
-                          userInfo: [NSLocalizedDescriptionKey: "picker OFF 선택값 미확인. 적용하지 않습니다."])
-        }
-        captureMediaState(app, name: "selected-" + identifier)
-    }
-
-    func test04DisableIPadAudio() throws {
+    func test04DisableIPadAudio() async throws {
         let app = try existingMediaApp()
-        try requireAudioChooser(app)
-        let navigation = try unique(app.navigationBars.matching(identifier: "오디오 입력·출력"))
-        let form = try unique(app.descendants(matching: .any).matching(NSPredicate(
-            format: "elementType == %d OR elementType == %d",
-            Int(XCUIElement.ElementType.table.rawValue), Int(XCUIElement.ElementType.collectionView.rawValue))))
-        guard form.frame.contains(navigation.frame), form.isHittable else {
-            throw NSError(domain: "ConnectionUI", code: 15,
-                          userInfo: [NSLocalizedDescriptionKey: "현재 오디오 sheet의 유일한 native Form 미확인"])
-        }
-        captureMediaState(app, name: "before-disable-ipad-audio")
-        try selectOff(app, form: form, identifier: "audioRouteInput", label: "입력 소스", title: "전송 안 함")
-        try selectOff(app, form: form, identifier: "audioRouteOutput", label: "출력 대상", title: "재생 안 함")
-        let apply = form.buttons.matching(identifier: "applyAudioRoutes")
-        for step in 0...6 {
-            let count = apply.count
-            guard count <= 1 else { throw NSError(domain: "ConnectionUI", code: 12) }
-            if count == 1, apply.element(boundBy: 0).isHittable { break }
-            guard step < 6, form.isHittable else { throw NSError(domain: "ConnectionUI", code: 13) }
-            form.swipeUp()
-        }
-        try tapUnique(apply)
-        captureMediaState(app, name: "after-disable-ipad-audio")
+        try tapUnique(app.buttons.matching(NSPredicate(
+            format: "identifier == %@ AND label == %@", "stopIPadAudio", "iPad 입출력 중지")))
+        captureMediaState(app, name: "after-explicit-stop-ipad-audio")
+        try await Task.sleep(nanoseconds: 10_000_000_000)
+        captureMediaState(app, name: "ten-seconds-after-explicit-stop-ipad-audio")
     }
 }

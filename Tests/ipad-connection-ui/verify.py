@@ -13,7 +13,7 @@ swift = FILES['ConnectionUITests.swift']
 assert swift.count('.tap()') == 3
 assert swift.count('fullDuplex.tap()') == 1
 assert 'guard fullDuplex.isHittable, fullDuplex.isEnabled' in swift
-assert swift.count('try tapUnique(') == 6
+assert swift.count('try tapUnique(') == 5
 assert 'guard element.isHittable, element.isEnabled' in swift
 assert 'if let nativeAudio, nativeAudio.isHittable' in swift
 assert 'identifier: "workspaceOverflow"' in swift
@@ -44,9 +44,9 @@ assert 'func test01ReadDefaultMonitorAX()' in swift
 assert 'func test02OpenNativeAudioChooserOnly()' in swift
 assert swift.count('func test') == 4
 assert 'func test03EnableIPadFullDuplex() async throws' in swift
-assert 'func test04DisableIPadAudio() throws' in swift
+assert 'func test04DisableIPadAudio() async throws' in swift
 for token in ('.launch(', '.terminate(', 'launchArguments', 'launchEnvironment',
-              'coordinate(', 'typeText(', 'press(', 'adjust(', 'springboard'):
+              'coordinate(', 'typeText(', 'press(', 'swipe', 'adjust(', 'springboard'):
     assert token not in swift, token
 assert 'CCR_CONNECTION_UI_APPROVED' in swift
 import re
@@ -66,25 +66,19 @@ assert swift.count('try existingApp()') == 2 and swift.count('try existingMediaA
 assert 'XCTAttachment(string: app.debugDescription)' in swift
 assert 'Task.sleep(nanoseconds: 10_000_000_000)' in swift
 assert 'identifier: "useIPadFullDuplex"' in swift
-assert 'identifier: "audioRouteInput", label: "입력 소스", title: "전송 안 함"' in swift
-assert 'identifier: "audioRouteOutput", label: "출력 대상", title: "재생 안 함"' in swift
-assert 'identifier: "applyAudioRoutes"' in swift
-assert 'format: "value == %@ OR label == %@", title, label + ", " + title' in swift
-assert '[.button, .popUpButton].contains(control.elementType)' in swift
-assert swift.count('form.swipeUp()') == 2
-assert swift.count('for step in 0...6') == 2
-assert 'form.frame.contains(navigation.frame)' in swift
-assert '.swipe' not in swift.split('private func selectOff(', 1)[0]
-assert 'form.descendants(matching: .any).matching(identifier: identifier)' in swift
-enable = swift.split('func test03EnableIPadFullDuplex()', 1)[1].split('private func selectOff', 1)[0]
+enable = swift.split('func test03EnableIPadFullDuplex()', 1)[1].split('func test04DisableIPadAudio()', 1)[0]
 disable = swift.split('func test04DisableIPadAudio()', 1)[1]
 assert 'if !app.navigationBars["오디오 입력·출력"].exists' in enable
 assert enable.count('fullDuplex.tap()') == 1
 assert enable.index('fullDuplex.tap()') < enable.index('Task.sleep(') < enable.index('ten-seconds-after-enable-full-duplex')
-assert 'try requireAudioChooser(app)' in disable and 'openAudioChooser' not in disable
-assert disable.index('identifier: "audioRouteInput"') < disable.index('identifier: "audioRouteOutput"') < disable.index('try tapUnique(apply)')
-assert 'guard XCTWaiter.wait(for: [reflected], timeout: 2) == .completed else' in swift
-assert 'picker OFF 선택값 미확인. 적용하지 않습니다.' in swift
+assert '"stopIPadAudio", "iPad 입출력 중지"' in disable
+assert disable.count('try tapUnique(') == 1
+assert 'try existingMediaApp()' in disable
+assert disable.index('try tapUnique(') < disable.index('after-explicit-stop-ipad-audio') < disable.index('Task.sleep(') < disable.index('ten-seconds-after-explicit-stop-ipad-audio')
+assert 'selectOff' not in swift
+for forbidden in ('audioRouteInput', 'audioRouteOutput', 'applyAudioRoutes', 'swipe', 'requireAudioChooser', 'openAudioChooser'):
+    assert forbidden not in disable
+assert swift.count('Task.sleep(nanoseconds: 10_000_000_000)') == 2
 assert '.runningBackgroundSuspended' in swift
 assert 'app.menuBars.descendants' in swift
 assert 'identifier: "macDisplayChooser"' in swift
