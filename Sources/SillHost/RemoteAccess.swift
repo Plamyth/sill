@@ -923,8 +923,24 @@ package final class RemoteAccess {
             server?.closeSessions(Goodbye.removed, matching: { $0.fingerprint == key })
         }
         guard trust.snapshot.ownerCandidates[socket.binding.fingerprint] != nil else { return nil }
-        if socket.binding.usb != nil {
-            guard let registry = ownerRegistry else { return nil }
+        if let usb = socket.binding.usb {
+            guard let registry = ownerRegistry,
+                  let candidate = trust.snapshot.ownerCandidates[socket.binding.fingerprint],
+                  registry.observation(principal: candidate.principal,
+                    fingerprint: Base64URL.encode(socket.binding.fingerprint), paired: paired) == .active,
+                  let index = paired.firstIndex(where: { $0.fingerprintData == socket.binding.fingerprint }),
+                  paired[index].cableDevice == nil || paired[index].cableDevice == usb.deviceID else { return nil }
+            if paired[index].audioPairingGeneration == nil {
+                var prepared = paired
+                prepared[index].audioPairingGeneration = UUID()
+                do {
+                    try store.savePaired(prepared)
+                    guard try store.loadPaired() == prepared,
+                          try OwnerBootstrapRegistry.load(store: store, identity: identity) == registry,
+                          socket.isLive else { return nil }
+                    paired = prepared
+                } catch { return nil }
+            }
             return socket.registeredUSBEvidence(store: store, identity: identity, registry: registry, devices: paired)
         }
         let sensor = ownerSensor.independent()

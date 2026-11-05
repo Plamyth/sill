@@ -20,12 +20,15 @@ final class HandlerFixture {
     }
     final class Client {
         let connection = NWConnection()
+        var admissionCurrent: (() -> Bool)?
         var role = Role.viewer, route = ClientRoute(), forwardingObserved = true
         var providerExchange: ProviderExchange?
         var forwardingExchange: ForwardingExchange?
     }
     var clients: [ObjectIdentifier: Client] = [:]
     let queue = DispatchQueue(label: "provider-handler-fixture")
+    private let connectionQueueKey = DispatchSpecificKey<Bool>()
+    init() { queue.setSpecific(key: connectionQueueKey, value: true) }
     var sent: [Data] = []
     var onProviderControl: ((ProviderExchange, NWConnection, ClientRoute) -> Void)?
     var onForwardingControl: ((ForwardingExchange, NWConnection, ClientRoute, AudioForwardingCatalog.Role) -> Void)?
@@ -38,6 +41,7 @@ final class HandlerFixture {
     func drain() { queue.sync { } }
     // PRODUCTION_EXCHANGES
     // PRODUCTION_HANDLERS
+    // PRODUCTION_CONNECTION_CURRENT
 }
 
 typealias StreamServer = HandlerFixture
@@ -72,6 +76,13 @@ typealias StreamServer = HandlerFixture
     let r = try! ProviderCallRequest(requestId: UUID(), action: .start, expectedLeaseRevision: .init(7),
         pairedDeviceId: id, desiredInput: true, desiredOutput: true, callSessionId: nil)
     let payload = Wire.encode(ProviderCallControl(operation: .perform, request: r))
+    do {
+        let f = HandlerFixture(), c = f.add()
+        c.admissionCurrent = { true }
+        check("actual connection admission accepts current USB proof", f.connectionIsCurrent(c.connection))
+        c.admissionCurrent = { false }
+        check("actual connection admission cancels stale USB proof", !f.connectionIsCurrent(c.connection) && c.connection.state == .cancelled)
+    }
     for cause in ["unpaired", "plain", "unobserved", "control-only", "oversize", "duplicate-key", "unknown-key"] {
         let f = HandlerFixture(), c = f.add()
         var input = payload, called = 0

@@ -90,6 +90,8 @@ final class HostIdentity {
         selected('Sources/SillHost/StreamServer.swift', '    final class ForwardingExchange:', '    private var viewerCount:'))
         .replace('// PRODUCTION_HANDLERS', selected('Sources/SillHost/StreamServer.swift',
             '    private func receiveForwarding(', '    private func replayCatalog('))
+        .replace('// PRODUCTION_CONNECTION_CURRENT', selected('Sources/SillHost/StreamServer.swift',
+            '    private func admissionIsCurrent(', '    /// Each connection its own message'))
         .replace('// PRODUCTION_COORDINATOR', selected('Sources/SillHost/StreamCoordinator.swift',
             '    private func handleProvider(', '    private func handleForwarding(')))
     protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))

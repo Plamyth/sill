@@ -1537,7 +1537,47 @@ final class OwnerBootstrapChecks {
                 }
                 expectFalse(admit(socket, box: host.trust, evidence: valid))
             }
-            if mode < 10 { expectEqual(store.writes, writes); expectEqual(store.registryWrites, registryWrites) }
+            if mode < 10 {
+                expectEqual(store.writes, writes + ((mode == 1 || mode == 2) ? 0 : 1))
+                expectEqual(store.registryWrites, registryWrites)
+            }
+        }
+    }
+
+    @MainActor func testUSBAudioGenerationAndIndependentDevices() async throws {
+        for mode in 0...7 {
+            let (store, host) = try await sessionHost(), b = try require(usbBinding())
+            let socket = OwnerBootstrapSocket.fixture(binding: b, trust: host.trust, purpose: .session)
+            let before = try store.loadPaired()
+            expectNil(before.first?.audioPairingGeneration)
+            let evidence = try require(await host.ownerSessionEvidence(for: socket))
+            let prepared = try store.loadPaired()
+            let audio = try require(prepared.first?.audioPairingGeneration)
+            expectTrue(admit(socket, box: host.trust, evidence: evidence))
+            let writes = store.writes
+            expectEqual(host.forwardingPeer(fingerprint: b.fingerprint)?.pairingGeneration, audio)
+            expectEqual(store.writes, writes)
+            expectTrue(socket.usbSessionIsCurrent(in: host.trust, evidence: evidence))
+            var changed = try store.loadPaired()
+            switch mode {
+            case 0: changed[0].name = "이름 수정"; changed[0].model = "iPad99,1"
+            case 1: changed[0].cableDevice = b.usb!.deviceID
+            case 2:
+                changed.append(PairedDevice(fingerprint: Base64URL.encode(binding(2).fingerprint),
+                    name: "다른 기기", model: nil, pairedAt: 2, method: PairRequest.code))
+            case 3: changed[0].audioPairingGeneration = UUID()
+            case 4: changed[0].audioPairingGeneration = nil
+            case 5: changed[0].cableDevice = "다른 USB 기기"
+            case 6: changed[0].pairedAt += 1
+            default:
+                let identity = try require(host.identity)
+                var registry = try OwnerBootstrapRegistry.load(store: store, identity: identity)
+                registry.bindings.append(.init(principal: String(repeating: "b", count: 64),
+                    fingerprint: Base64URL.encode(binding(2).fingerprint), state: .active))
+                try registry.save(store: store, identity: identity)
+            }
+            try store.savePaired(changed)
+            expectEqual(socket.usbSessionIsCurrent(in: host.trust, evidence: evidence), mode <= 2 || mode == 7)
         }
     }
 
@@ -2023,6 +2063,7 @@ private struct OwnerHostBootstrapCheck {
         do { try await checks.testExplicitPairingRemainsIndependentOfAutomaticRevocation() } catch { fail("testExplicitPairingRemainsIndependentOfAutomaticRevocation 예외") }
         let usbBefore = CheckCounts.shared.result
         do { try await checks.testUSBSessionLifetimeAndAdmissionLog() } catch { fail("USB 수명·수용 로그 검사 예외: \(error)") }
+        do { try await checks.testUSBAudioGenerationAndIndependentDevices() } catch { fail("USB 음성 세대·다른 기기 회귀 예외: \(error)") }
         do { try await checks.testUSBInitialRegistryAndGateExpiry() } catch { fail("USB 최초등록·기한 검사 예외: \(error)") }
         do { try checks.testUSBRouteBinding() } catch { fail("USB 경로 검사 예외: \(error)") }
         do { try await checks.testUSBRegisteredSession() } catch { fail("USB 등록 세션 검사 예외: \(error)") }

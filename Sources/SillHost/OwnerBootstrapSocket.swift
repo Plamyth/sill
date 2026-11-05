@@ -64,12 +64,24 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
                                registry: OwnerBootstrapRegistry, devices: [PairedDevice]) -> Evidence? {
         guard purpose == .session, let usb = binding.usb, let candidate,
               let device = devices.first(where: { $0.fingerprintData == binding.fingerprint }),
+              device.audioPairingGeneration != nil,
               device.cableDevice == nil || device.cableDevice == usb.deviceID else { return nil }
         let fingerprint = Base64URL.encode(binding.fingerprint)
         let principal = candidate.principal
+        let registered = registry.bindings.first { $0.principal == principal || $0.fingerprint == fingerprint }
+        func securityState(_ values: [PairedDevice]) -> PairedDevice? {
+            let matches = values.filter { $0.fingerprint == fingerprint }
+            guard matches.count == 1, var value = matches.first,
+                  value.cableDevice == nil || value.cableDevice == usb.deviceID else { return nil }
+            value.name = ""; value.model = nil
+            value.cableDevice = usb.deviceID
+            return value
+        }
+        guard let expectedDevice = securityState(devices) else { return nil }
         let active = {
             guard let fresh = try? OwnerBootstrapRegistry.load(store: store, identity: identity),
-                  let saved = try? store.loadPaired(), fresh == registry, saved == devices,
+                  let saved = try? store.loadPaired(), securityState(saved) == expectedDevice,
+                  fresh.bindings.first(where: { $0.principal == principal || $0.fingerprint == fingerprint }) == registered,
                   fresh.observation(principal: principal, fingerprint: fingerprint, paired: saved) == .active,
                   let confirmation = try? OwnerBootstrapRegistry.load(store: store, identity: identity),
                   let confirmed = try? store.loadPaired() else { return false }
@@ -123,9 +135,10 @@ final class OwnerBootstrapSocket: @unchecked Sendable {
         let local = StreamServer.addressText(localHost)
         if let scope = source.scope {
             guard purpose == .session else { return nil }
+            let entries = InterfaceSnapshot.read()
             return usbRouteBinding(generation: generation, fingerprint: fingerprint, source: source.bytes,
                 scope: scope, local: local.text, localScope: local.scope,
-                entries: InterfaceSnapshot.read(), own: InterfaceSnapshot.ownAddresses(),
+                entries: entries, own: Set(entries.map(\.address)),
                 cable: InterfaceSnapshot.readCable(scope))
         }
         return routeBinding(generation: generation, fingerprint: fingerprint,
