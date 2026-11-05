@@ -159,6 +159,15 @@ struct IPadAudioRouteChooser: View {
             }
             .navigationTitle("오디오 입력·출력")
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("iPad 입출력 중지", role: .destructive) {
+                        selection = .init()
+                        problem = nil
+                        client.cancelDesiredAudioRequest()
+                    }
+                    .disabled(!client.connected)
+                    .accessibilityIdentifier("stopIPadAudio")
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("닫기", action: close)
                         .disabled(client.macAudioRoutes.pending != nil)
