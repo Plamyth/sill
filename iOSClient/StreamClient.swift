@@ -227,6 +227,7 @@ final class StreamClient: ObservableObject {
             capturePresent: microphoneCapture != nil, captureRunning: microphoneCapture?.diagnosticRunning,
             cachedAudioPrivacyProtected: audioPrivacyState?.protected,
             forwardingPhase: String(describing: audioForwarding.phase),
+            forwardingContextReadiness: forwardingContextReadiness,
             forwardingLastReceived: audioForwarding.receivedSummary(in: audioForwardingContext), sentryPhase: sentry?.phase.rawValue,
             sentryRequested: sentry?.requested, hostBootID: sentry?.hostBootID, hostSessionID: sentry?.sessionID),
             render: remoteAudio.diagnosticRender, playbackRunning: remoteAudio.diagnosticRunning,
@@ -253,6 +254,7 @@ final class StreamClient: ObservableObject {
     var audioForwardingLocalGeneration = UUID()
     var audioForwardingWake: DispatchWorkItem?
     var audioForwardingWire: ForwardingExchange?
+    var audioForwardingStopDiagnostic: (id: UUID, context: IPadAudioForwarding.Context?)?
     var audioForwardingWireTimeout: DispatchWorkItem?
     var audioForwardingDevice: AudioForwardingDeviceID?
     var audioForwardingCatalogAt: TimeInterval?

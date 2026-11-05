@@ -43,6 +43,8 @@ struct FixtureForwarding {
  mutating func block() { phase = .blocked }
 }
 final class StreamClient {
+ var audioForwardingStopDiagnostic: (id: UUID, context: IPadAudioForwarding.Context?)?
+ var forwardingContextReadiness: [String: Bool] { [:] }
  func observeAudioDiagnostics() {}
  var audioForwarding = FixtureForwarding()
  var audioForwardingDevice: AudioForwardingDeviceID?

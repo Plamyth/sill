@@ -68,6 +68,7 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         var captureRunning: Bool?
         var cachedAudioPrivacyProtected: Bool?
         var forwardingPhase: String
+        var forwardingContextReadiness: [String: Bool]? = nil
         var forwardingLastReceived: [String: String]? = nil
         var sentryPhase: String?
         var sentryRequested: Bool?
@@ -130,6 +131,7 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
         var scope = value.runtime
         // This received observation belongs only to the current runtime, not historical attempts.
         scope?.forwardingLastReceived = nil
+        scope?.forwardingContextReadiness = nil
         value.counters[id] = AttemptCounters(attempt: id, firstObservedAt: Date().timeIntervalSince1970,
             firstObservedUptime: DispatchTime.now().uptimeNanoseconds, connectionObservationID: value.connectionObservationID, scopeAtFirstObservation: scope,
             lastObservedAt: Date().timeIntervalSince1970)
@@ -172,6 +174,7 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
             "connectionObservationID": reception.id.uuidString, "receivedObservations": encode(reception.latest),
             "sentryAndAudioPrivacyScope": "cached received Host reports only; not current HAL observation or protection verification",
             "observationScope": "current app process metadata; no live acceptance claim",
+            "forwardingContextReadinessScope": "sampled client guard booleans only, including when contexts differ; not authentication, media authority, send or Host OFF evidence",
             "sampledUptimeNanoseconds": now, "observedAt": latest?.observedAt ?? (null as Any),
             "observedUptimeNanoseconds": latest?.observedUptimeNanoseconds ?? (null as Any),
             "receivedObservationsScope": "current peer envelopes observed by app; not payload acceptance or current HAL state",
