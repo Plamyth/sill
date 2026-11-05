@@ -10,10 +10,14 @@ if 'FILES' not in globals():
     FILES = {str(p.relative_to(root)): p.read_text() for p in root.rglob('*')
              if p.is_file() and p.suffix in {'.swift', '.py', '.pbxproj', '.xcscheme'}}
 swift = FILES['ConnectionUITests.swift']
-assert swift.count('.tap()') == 2
-assert swift.count('try tapUnique(') == 5
-assert 'guard element.isHittable' in swift
+assert swift.count('.tap()') == 3
+assert swift.count('fullDuplex.tap()') == 1
+assert 'guard fullDuplex.isHittable, fullDuplex.isEnabled' in swift
+assert swift.count('try tapUnique(') == 8
+assert 'guard element.isHittable, element.isEnabled' in swift
 assert 'if audio.count == 1, audio.firstMatch.isHittable' in swift
+assert swift.index('guard audio.count <= 1') < swift.index('if audio.count == 1')
+assert swift.index('guard monitor.count <= 1') < swift.index('toggle.tap()')
 assert 'identifier: "workspaceOverflow"' in swift
 assert 'menuAction(app, label: "설정")' in swift
 assert '"openAudioRoutes", "오디오 입력·출력 선택…"' in swift
@@ -26,7 +30,9 @@ assert 'XCTWaiter.wait(for: [reflected], timeout: 2)' in swift
 assert swift.count('.activate()') == 1
 assert 'func test01ReadDefaultMonitorAX()' in swift
 assert 'func test02OpenNativeAudioChooserOnly()' in swift
-assert swift.count('func test') == 2
+assert swift.count('func test') == 4
+assert 'func test03EnableIPadFullDuplex() async throws' in swift
+assert 'func test04DisableIPadAudio() throws' in swift
 for token in ('.launch(', '.terminate(', 'launchArguments', 'launchEnvironment',
               'coordinate(', 'typeText(', 'press(', 'swipe', 'adjust(', 'springboard'):
     assert token not in swift, token
@@ -35,7 +41,33 @@ import re
 audio_gate = re.search(
     r'guard ProcessInfo.processInfo.environment\["CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED"\] == "1" else \{\s*throw XCTSkip\([^\n]+\)\s*\}', swift)
 assert audio_gate is not None
-assert audio_gate.end() < swift.index('let app = XCUIApplication(') < swift.index('app.activate()')
+assert audio_gate.end() < swift.index('return try activateExistingApp()')
+read_helper = swift.split('private func existingApp()', 1)[1].split('private func existingMediaApp()', 1)[0]
+media_helper = swift.split('private func existingMediaApp()', 1)[1].split('private func activateExistingApp()', 1)[0]
+assert 'CCR_CONNECTION_UI_APPROVED' in read_helper and 'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED' in read_helper
+assert 'CCR_CONNECTION_UI_MEDIA_APPROVED' not in read_helper
+assert 'guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "1" else' in media_helper
+assert 'throw XCTSkip(' in media_helper
+assert 'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED' not in media_helper
+assert swift.count('return try activateExistingApp()') == 2
+assert swift.count('try existingApp()') == 2 and swift.count('try existingMediaApp()') == 2
+assert 'XCTAttachment(string: app.debugDescription)' in swift
+assert 'Task.sleep(nanoseconds: 10_000_000_000)' in swift
+assert 'identifier: "useIPadFullDuplex"' in swift
+assert 'identifier: "audioRouteInput", title: "전송 안 함"' in swift
+assert 'identifier: "audioRouteOutput", title: "재생 안 함"' in swift
+assert 'identifier: "applyAudioRoutes"' in swift
+assert 'format: "value == %@", title' in swift
+assert 'ElementType.popUpButton.rawValue' in swift
+enable = swift.split('func test03EnableIPadFullDuplex()', 1)[1].split('private func selectOff', 1)[0]
+disable = swift.split('func test04DisableIPadAudio()', 1)[1]
+assert 'if !app.navigationBars["오디오 입력·출력"].exists' in enable
+assert enable.count('fullDuplex.tap()') == 1
+assert enable.index('fullDuplex.tap()') < enable.index('Task.sleep(') < enable.index('ten-seconds-after-enable-full-duplex')
+assert 'try requireAudioChooser(app)' in disable and 'openAudioChooser' not in disable
+assert disable.index('identifier: "audioRouteInput"') < disable.index('identifier: "audioRouteOutput"') < disable.index('identifier: "applyAudioRoutes"')
+assert 'guard XCTWaiter.wait(for: [reflected], timeout: 2) == .completed else' in swift
+assert 'picker OFF 선택값 미확인. 적용하지 않습니다.' in swift
 assert '.runningBackgroundSuspended' in swift
 assert 'app.menuBars.descendants' in swift
 assert 'identifier: "macDisplayChooser"' in swift
@@ -61,7 +93,8 @@ seed = {'__xctestrun_metadata__': {'FormatVersion': 1}, 'ConnectionUITests': {
     'BlueprintName': 'ConnectionUITests', 'ProductModuleName': 'ConnectionUITests',
     'TestingEnvironmentVariables': {},
     'EnvironmentVariables': {'CCR_CONNECTION_UI_APPROVED': '1',
-                             'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED': '1'}}}
+                             'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED': '1',
+                             'CCR_CONNECTION_UI_MEDIA_APPROVED': '1'}}}
 result = namespace['prepare'](seed)['ConnectionUITests']
 assert result['UseDestinationArtifacts'] is True
 assert result['UseUITargetAppProvidedByTests'] is True
@@ -69,7 +102,10 @@ assert result['UITargetAppBundleIdentifier'] == 'com.ambrion.sillcanvas.ipad'
 assert result['EnvironmentVariables'] == {
     'CCR_CONNECTION_UI_APPROVED': '0',
     'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED': '0',
+    'CCR_CONNECTION_UI_MEDIA_APPROVED': '0',
 }
+assert result['OnlyTestIdentifiers'] == ['ConnectionUITests/test01ReadDefaultMonitorAX',
+                                         'ConnectionUITests/test02OpenNativeAudioChooserOnly']
 for key in ('TestHostPath', 'TestBundlePath', 'UITargetAppPath', 'DependentProductPaths',
             'UITargetAppCommandLineArguments', 'UITargetAppEnvironmentVariables'):
     assert key not in result
