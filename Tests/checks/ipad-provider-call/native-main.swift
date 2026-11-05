@@ -43,6 +43,7 @@ for invalid: String? in [nil, "not-a-uuid"] {
 }
 expect(model.pending?.id == slot, "invalid result retains physical slot")
 expect(model.receive(try state(start, .started, session: session), from: peer), "native direct started accepted")
+expect(model.message == "Mac이 순정 Codex 음성 대화 시작을 확인했습니다.", "native start reports Host confirmation without claiming screen observation")
 expect(model.activeCall?.callSessionId == session && !model.selectTarget(.chatGPTDots), "active session spelling and target lock retained")
 let overlappingStart = try request()
 let normalizedStop = try request(.stop, session: session.lowercased())
@@ -63,6 +64,7 @@ for invalid: String? in [nil, UUID().uuidString, session.lowercased()] {
 }
 expect(model.receive(try state(stop, .stopped, session: session), from: peer) && model.activeCall == nil,
        "confirmed matching stopped releases active call")
+expect(model.message == "Mac이 순정 Codex 음성 대화 종료를 확인했습니다.", "native stop reports Host confirmation without claiming screen observation")
 expect(model.selectTarget(.chatGPTDots), "confirmed stop permits explicit target switch")
 let dotsStart = try request()
 let dotsControl = model.perform(dotsStart)!
@@ -70,6 +72,7 @@ let dotsObject = try JSONSerialization.jsonObject(with: Wire.encode(dotsControl)
 expect(dotsControl.schemaVersion == 1 && dotsObject.count == 3 && dotsObject["expectedProviderKind"] == nil,
        "legacy Dots schema1 encoding is unchanged")
 expect(model.receive(try state(dotsStart, .started, session: "dots-session", provider: "chatgpt-dots-webguest"), from: peer), "Dots direct start")
+expect(model.message == "ChatGPT Dots 통화 화면에서 시작을 확인했습니다.", "Dots retains screen confirmation wording")
 let dotsStop = try request(.stop, session: "dots-session")
 _ = model.perform(dotsStop)
 expect(model.receive(try state(dotsStop, .stopped, provider: "chatgpt-dots-webguest"), from: peer) && model.activeCall == nil,
@@ -110,4 +113,14 @@ for version in [1, 2, 3] {
 }
 let list = WindowList(macName: "fixture", windows: [], active: .desktop, providerCalls: 1, providerCallKinds: ["codex-app-server"])
 expect(Wire.decode(WindowList.self, from: Wire.encode(list))?.providerCallKinds == ["codex-app-server"], "explicit provider list wire roundtrip")
+now = 300
+model = native()
+_ = model.perform(start)
+_ = model.receive(try state(start, .pending), from: peer)
+now += 0.5
+expect(model.query()?.operation == .query, "native history uses the existing query path")
+expect(model.receive(try state(start, .started, session: session), from: peer), "native historical started response accepted")
+expect(model.historicalMessage == "이전 Mac 응답 기록: 시작 확인. 현재 통화나 음성 입출력 상태는 미확인입니다.",
+       "native history identifies a past Host response without screen or current media claims")
+expect(model.activeCall == nil && !model.canPerform, "native history does not create an active call or restart authority")
 print("PASS \(checks) native selector/session/stop-recovery model checks; no Host/device/media effects")

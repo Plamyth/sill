@@ -217,9 +217,22 @@ struct IPadProviderCall {
         return true
     }
     var message: String {
-        let name = target == .nativeCodex ? "순정 Codex 음성 대화" : "ChatGPT Dots 통화"
         if timedOut { return "통화 응답 기한이 지나 연결을 닫습니다. 이전 요청은 자동으로 실행하지 않습니다." }
         if pending != nil { return "통화 상태를 확인하고 있습니다." }
+        if target == .nativeCodex {
+            guard let result = selectedResult else {
+                return targetSupported ? "통화와 음성 입출력 상태는 각각 확인합니다." : "이 Mac 연결은 순정 Codex 음성 대화 제어를 지원하지 않습니다."
+            }
+            switch result.status {
+            case .started: return "Mac이 순정 Codex 음성 대화 시작을 확인했습니다."
+            case .stopped: return "Mac이 순정 Codex 음성 대화 종료를 확인했습니다."
+            case .pending: return "순정 Codex 음성 대화 응답을 기다립니다."
+            case .unsupported: return "이 Mac은 순정 Codex 음성 대화 제어를 지원하지 않습니다."
+            case .failed: return "Mac이 순정 Codex 음성 대화 명령을 완료하지 못했습니다."
+            case .unknown: return "순정 Codex 음성 대화 결과를 확인하지 못했습니다."
+            }
+        }
+        let name = "ChatGPT Dots 통화"
         guard let result = selectedResult else { return targetSupported ? "통화와 음성 입출력 상태는 각각 확인합니다." : "이 Mac 연결은 \(name) 제어를 지원하지 않습니다." }
         switch result.status {
         case .started: return "\(name) 화면에서 시작을 확인했습니다."
@@ -233,7 +246,6 @@ struct IPadProviderCall {
 
     var historicalMessage: String? {
         guard let historicalResult, historicalResult.provider == target.providerKind?.rawValue else { return nil }
-        let name = target == .nativeCodex ? "순정 Codex 음성 대화" : "ChatGPT Dots 통화"
         let status: String
         switch historicalResult.status {
         case .started: status = "시작 확인"
@@ -243,6 +255,10 @@ struct IPadProviderCall {
         case .unsupported: status = "지원 안 함"
         case .unknown: status = "확인 불가"
         }
+        if target == .nativeCodex {
+            return "이전 Mac 응답 기록: \(status). 현재 통화나 음성 입출력 상태는 미확인입니다."
+        }
+        let name = "ChatGPT Dots 통화"
         return "이전 요청 기록: \(status). 현재 통화나 미디어 사용 권한을 확인한 결과가 아닙니다. \(name) 화면을 직접 확인하세요."
     }
 }
