@@ -334,6 +334,21 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
                 await a.fixture.finish()
             }
         }
+        for stage in ["provider.identity", "provider.dispatch", "provider.result"] {
+            let a = try await setup("native-generation-" + stage, nativeTarget: nativeTarget)
+            a.core.corruptStage = stage; a.core.corruptField = "coreGeneration"; a.core.corruptValue = UUID().uuidString.lowercased()
+            let result = await perform(a, kind: .nativeCodex)
+            check("native rejects changed Core generation at \(stage)", result?.result.status == (stage == "provider.identity" ? .failed : .unknown) &&
+                result?.result.provider == "codex-app-server" && a.core.effects == (stage == "provider.identity" ? 0 : 1))
+            await a.fixture.finish()
+        }
+        do {
+            let a = try await setup("native-reject-challenge-extra-owner", nativeTarget: nativeTarget)
+            a.core.corruptStage = "provider.challenge"; a.core.corruptField = "owner"; a.core.corruptValue = "invented"
+            check("native challenge remains exactly eight fields", (await perform(a, kind: .nativeCodex))?.result.status == .failed &&
+                a.core.calls == ["provider.challenge"] && count(a.fixture, "forwardingProviderAcquire") == 0)
+            await a.fixture.finish()
+        }
         for delivery in ["not_dispatched", "unknown"] {
             let a = try await setup("delivery-" + delivery)
             a.core.corruptStage = "provider.dispatch"; a.core.corruptField = "state"; a.core.corruptValue = delivery
@@ -341,8 +356,9 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
             check("delivery \(delivery) never reads result or starts", result?.result.status == .unknown && !a.core.calls.contains("provider.result") && count(a.fixture, "forwardingProviderRelease") == 1)
             await a.fixture.finish()
         }
-        do {
-            let a = try await setup("fresh-snapshot-revision")
+        for native in [false, true] {
+            let kind: ProviderCallKind = native ? .nativeCodex : .chatgptDots
+            let a = try await setup("fresh-snapshot-revision-\(native)", nativeTarget: native ? nativeTarget : nil)
             var reads = 0
             let session = ProviderCallSession(relay: a.session.relay, peer: a.session.peer,
                 credential: a.session.credential, snapshot: a.session.snapshot, admitted: a.session.admitted,
@@ -352,11 +368,13 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
                     return reads == 1 ? actual : try? AudioForwardingSnapshot(revision: .init(actual.revision.value + 1),
                         intent: actual.intent, binding: actual.binding)
                 })
-            check("changed fresh snapshot refuses started after Core result", (await perform(a, session: session))?.result.status == .unknown && reads == 2 && a.core.calls.last == "provider.result")
+            check("changed fresh snapshot refuses started after Core result", (await perform(a, session: session, kind: kind))?.result.status == .unknown && reads == 2 && a.core.calls.last == "provider.result")
             await a.fixture.finish()
         }
+        for native in [false, true] {
+        let kind: ProviderCallKind = native ? .nativeCodex : .chatgptDots
         for cause in ["revision", "actor", "target", "cancel", "late", "recovery"] {
-            let a = try await setup("before-approval-" + cause, ttl: cause == "late" ? 60 : 1500, recovery: cause != "recovery")
+            let a = try await setup("before-approval-\(native)-" + cause, ttl: cause == "late" ? 60 : 1500, recovery: cause != "recovery", nativeTarget: native ? nativeTarget : nil)
             var r = a.request
             if cause == "revision" || cause == "actor" {
                 r = try ProviderCallRequest(requestId: r.requestId, action: .start,
@@ -368,16 +386,17 @@ func selectorWireChecks(_ check: (String, Bool) -> Void) throws {
             if cause == "cancel" { a.core.onCall = { if $0 == "provider.identity" { a.peer.live = false } } }
             if cause == "late" {
                 a.core.hold = "provider.identity"
-                let task = Task { await perform(a) }
+                let task = Task { await perform(a, kind: kind) }
                 try await wait { a.core.waiting }
                 try await Task.sleep(for: .milliseconds(90)); a.core.resume = true
                 let result = await task.value
                 check("late identity approval/effect/started zero", result?.result.status == .failed && count(a.fixture, "forwardingProviderDispatch") == 0 && a.core.effects == 0)
             } else {
-                let result = await perform(a, request: r)
+                let result = await perform(a, request: r, kind: kind)
                 check("\(cause) approval/effect/started zero", result?.result.status != .started && count(a.fixture, "forwardingProviderDispatch") == 0 && a.core.effects == 0)
             }
             await a.fixture.finish()
+        }
         }
         for field in ["state", "requestId", "scopeId", "nodeGeneration", "remainingMilliseconds", "outcome"] {
             let a = try await setup("release-wrong-" + field)
