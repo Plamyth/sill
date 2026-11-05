@@ -26,5 +26,5 @@ paths = [root / "iOSClient/NativeRealtimePCMCodec.swift", Path(__file__).with_na
          Path(__file__).with_name("core-interop.js"), Path(__file__)]
 if len(sys.argv) > 2:
     paths.append(Path(sys.argv[2]).resolve())
-print(json.dumps({"received_sha256": {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+print(json.dumps({"received_sha256": {str(p.relative_to(root) if p.is_relative_to(root) else p): hashlib.sha256(p.read_bytes()).hexdigest()
                                      for p in paths}}, sort_keys=True))

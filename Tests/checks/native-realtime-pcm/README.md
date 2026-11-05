@@ -50,10 +50,10 @@ generation은 로컬 reset 경계일 뿐 Core binding이나 Host 권한의 증�
 - [x] Smallest safe decomposition. codec과 계약 검사가 한 묶음이므로 단일 writer다. 중복 resampler는 만들지 않는다.
 - [x] Delegate code-writing to a subagent. 이 작업 자체가 부모가 위임한 독립 하위작업이며 중첩 spawn 도구는 없다. 상속모델로 직접 구현한다.
 - [x] Verify on the matching surface. Mini의 실제 macOS AVAudioConverter와 Core 격리 producer로 아래 검사를 통과했다.
-- [x] Rebase into small, ordered commits. 지정 기준에서 추가 파일만 단일 검토 후보 커밋으로 반환한다. integration은 변경하지 않는다.
+- [x] Rebase into small, ordered commits. 지정 기준에서 추가 파일만 커밋한다. 구현 `b5eefa0bee92baa86ea5b521dce305194dd988f8` 뒤 runner의 경로 보고 수정과 최종 인계를 후속 커밋으로 보존한다. integration은 변경하지 않는다.
 - [x] If the design is contested, `interrogate` before shipping. 해당 없음. 계약과 범위가 지정됐다.
 - [x] Run **Opening a PR**. skip: 부모가 통합을 소유하며 이 하위작업은 commit 반환만 요청받았다.
-- [ ] BLOCKED: independent review. 이 런타임에는 spawn 도구가 없다. 부모의 별도 독립 검수 전 merge-ready로 표시하지 않는다.
+- [ ] 독립 검수. 이 런타임에는 spawn 도구가 없다. 부모가 Euclid의 읽기 검수 준비를 확인했다. 최종 commit/tree를 반환하고 실제 판정 전 merge-ready로 표시하지 않는다.
 
 Ponytail은 플랫폼 AVAudioConverter와 Foundation을 사용하고 기존 파일 수정·일반 추상화·새 의존성을 생략하는 데 적용했다.
 Model the Domain은 단일 phase와 local generation으로 reset 경계를 표현하는 데 적용했다.
@@ -77,7 +77,7 @@ Model the Domain은 단일 phase와 local generation으로 reset 경계를 표�
 이어진 실패는 Node의 잘못된 추정 경로였고, 기존 `/Users/sin-wonho/.local/bin/node`를 관측한 뒤 명시적으로 전달했다.
 두 장애는 다른 원인이며 같은 조건의 무변경 반복은 하지 않았다.
 
-최종 실행은 `2026-11-05T11:13:49.518608Z`부터 `11:14:30.459621Z`까지다.
+최종 실행은 `2026-11-05T11:17:08.137426Z`부터 `11:17:46.767927Z`까지다.
 Mini Swift 6.3.3, `arm64-apple-macosx26.0`, Swift 언어 모드 5를 사용했다.
 명령은 `mini-ephemeral-source run --source EXECUTION_INPUT --owner 01a1ab5f-635e-7501-856d-97caeac51d92 --job native-realtime-pcm -- python3 Tests/checks/native-realtime-pcm/run.py .scratch/native-realtime-pcm core/bridge/native-realtime-producer.js /Users/sin-wonho/.local/bin/node`다.
 `EXECUTION_INPUT`은 storage-route가 정한 `/Volumes/BT-Workspace/Development-Archives/ccr-ipad/native-realtime-pcm-20261105/execution-input`이다.
@@ -90,10 +90,17 @@ Core 소스는 지정 커밋의 Git blob과 대조한 격리 입력이며 원담
 - 1,500개 연속 960프레임 입력에서 720,000 출력 샘플, flush 두 번, 빈 flush, reset 후 무음, 이전 세대 append/flush 차단.
 - Swift 출력 DTO와 1초 입력·signed16LE sentinel을 실제 Core producer 후보에 메모리 pipe로 전달하고, append 수용 및 null sample-count 출력 callback의 바이트 일치를 확인했다. RPC는 메모리 stub이며 실제 app-server나 provider 연결은 없다.
 
-최종 영수증은 `/Users/ambrion/Library/Application Support/Mini Ephemeral Source/receipts/20261105T111430.461740Z-native-realtime-pcm.json`이다.
+최종 영수증은 `/Users/ambrion/Library/Application Support/Mini Ephemeral Source/receipts/20261105T111746.780128Z-native-realtime-pcm.json`이다.
 `status=completed`, `exit_code=0`, `cleanup_verified=true`이며 위 Mini 실행 경로의 부재를 확인했다.
 원격이 읽은 codec SHA256은 `a39e310cd750c5c3a02708a3f9c7e14aa42f004481d5334e84a3df25146db47e`다.
 Core JS SHA256은 `b45bcfa45031c087ceea529cfedbb26eed9bbec1f77ed42f669f7a79eaf34b38`다.
+main.swift SHA256은 `bba12660765a9a14b66c0f6183af73878c68303a9ffebf7a6f10a01d412c3b35`다.
+core-interop.js SHA256은 `081ad22eabf50a5ad59f1a98d2cbc667315ef693d184f14f79a8d5b011bb4f5b`다.
+run.py SHA256은 `97c08f967f75d05b307c5ea644cd680216ddd7f6d064ceee7bbe793d51c95941`다.
+실행 입력 전체 SHA256은 `d208c055580d8bc1faf50ff4a9b9c188052896be8172c38fc892e20cb767e3c7`이며 5파일, 35,169 bytes다.
+구현 커밋 이후 run.py 변경은 외부 Core 모듈 경로의 `relative_to(root)` 예외를 막는 한 줄이다.
+검사 로직과 codec은 변경하지 않았고, 최종 실행이 그 수정된 runner를 포함한다.
+중간 SSH 종료 코드 255 재발도 종료·삭제 확인한 뒤 정상 연결을 관측하고 같은 owner/job으로 한 번 재실행했다.
 검사 runner는 수신한 codec·검사·Core 파일 해시를 출력하며 최종 인계에서 맥북 파일과 다시 대조한다.
 이는 격리 파일 입력의 좁은 검증이다. Git checkout을 요구하는 codex-source-guard verify 통과나 원담당 통합·설치 수용으로 표시하지 않는다.
 
@@ -122,7 +129,10 @@ SDK 앱 빌드, 서명, 설치, 실제 입력·출력, Host/네트워크, 실기
 요구사항과 원본 계약은 위 Core 후보·Apple 문서·기존 변환기, 변경은 반환 commit/tree, 실행은 최종 Mini 영수증으로 연결한다.
 클론 UI 대조와 실제 설치는 범위 밖이다. 합성 PCM만 처리했으며 외부 효과는 0이다.
 제품 UI, 파일 원음, 로그 PCM, 인증·페어링·권한·라우팅·프로토콜, Host와 기기를 변경하지 않았다.
-현재 단계는 구현·자동검사 통과 및 부모 검수용 commit 반환이다. SDK·서명·설치·실기 수용은 미검증이다.
+현재 단계는 구현·자동검사 통과 및 부모 검수용 commit 반환이다. 이 codec의 iPad SDK·서명·설치·실기 수용은 미검증이다.
+부모의 85 설치·자동연결·OFF 확인과 Root 반환은 부모가 알려준 별도 결과이며 이 codec의 실제 음성 연결 수용을 뜻하지 않는다.
 다음 행동은 부모의 독립 검수와 별도 통합 판단이다. final Host envelope와 network bridge는 이 작업의 미완 구현으로 취급하지 않는다.
 Mini 사본은 반환됐고 공유 기기·Host·오디오 lease는 획득하지 않았다.
 오프라인 활성 소스는 분리 워크트리에 유지하고 외장 실행 입력의 중복 사본은 해시 대조 후 제거한다.
+최종 commit/tree, clean readback, 로컬 중복 입력 삭제 결과는 storage-route 경로
+`/Volumes/BT-Workspace/Development-Archives/ccr-ipad/native-realtime-pcm-20261105-handoff.json`에 기록한다.
