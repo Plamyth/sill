@@ -188,7 +188,6 @@ struct IPadMicrophonePolicy {
         return [.closeFrames, .stopCapture]
     }
 
-    /// Existing once-per-second observation calls this; no retry or additional timer is created.
     mutating func takeReceiptRequest(now: Double) -> MicrophoneControl? {
         guard phase == .live, !receiptRequested, let liveSince,
               now.isFinite, now >= liveSince, now - liveSince >= 5,
