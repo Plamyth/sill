@@ -563,7 +563,39 @@ final class ConnectionUITests: XCTestCase {
         let app = try existingMediaApp()
         try openSimpleCall(app)
         defer { captureMediaState(app, name: "simple09-final-observation") }
+        func mediaToggle(_ row: XCUIElement, name: String) throws -> (element: XCUIElement, value: String) {
+            let children = row.descendants(matching: .switch)
+            let count = children.count
+            func snapshot(_ element: XCUIElement) -> [String: Any] {
+                ["identifier": element.identifier, "label": element.label, "value": element.value ?? NSNull(),
+                 "enabled": element.isEnabled, "hittable": element.isHittable,
+                 "frame": String(describing: element.frame)]
+            }
+            let data = try JSONSerialization.data(withJSONObject: [
+                "parent": snapshot(row), "childCount": count,
+                "children": children.allElementsBoundByIndex.map { snapshot($0) },
+                "selectedTarget": count == 0 ? "row" : (count == 1 ? "child" : "none")
+            ], options: [.prettyPrinted, .sortedKeys])
+            let ax = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            ax.name = name + "-" + row.identifier + "-" + action + "-tap-target"
+            ax.lifetime = .keepAlways
+            add(ax)
+            guard count <= 1 else {
+                throw NSError(domain: "ConnectionUI", code: 63,
+                              userInfo: [NSLocalizedDescriptionKey: "행 내부 Switch가 여러 개입니다. 조작하지 않습니다."])
+            }
+            let leaf = count == 1 ? children.element(boundBy: 0) : row
+            guard let current = row.value as? String, ["0", "1"].contains(current),
+                  let leafValue = leaf.value as? String, ["0", "1"].contains(leafValue),
+                  current == leafValue, row.isEnabled, row.isHittable, leaf.isEnabled, leaf.isHittable else {
+                throw NSError(domain: "ConnectionUI", code: 64,
+                              userInfo: [NSLocalizedDescriptionKey: "부모·leaf의 0/1 값 일치 또는 활성·조작 가능 상태 미확인. 조작하지 않습니다."])
+            }
+            return (leaf, current)
+        }
         let controls = try simpleCallControls(app, name: "simple09-before-" + action)
+        _ = try mediaToggle(controls.microphone, name: "simple09-initial")
+        _ = try mediaToggle(controls.speaker, name: "simple09-initial")
         let target = action == "ON" ? "1" : "0"
         guard controls.microphone.isEnabled, controls.speaker.isEnabled,
               action == "OFF" || (controls.microphone.value as? String == "0" && controls.speaker.value as? String == "0") else {
@@ -572,29 +604,38 @@ final class ConnectionUITests: XCTestCase {
         }
         for control in [controls.microphone, controls.speaker] {
             let toggle = try unique(app.switches.matching(identifier: control.identifier))
+            let selected = try mediaToggle(toggle, name: "simple09-before-tap")
             guard let current = toggle.value as? String, ["0", "1"].contains(current),
-                  toggle.isEnabled, toggle.isHittable, action == "OFF" || current == "0" else {
+                  current == selected.value, toggle.isEnabled, toggle.isHittable, action == "OFF" || current == "0" else {
                 throw NSError(domain: "ConnectionUI", code: 60,
                               userInfo: [NSLocalizedDescriptionKey: "toggle의 현재 0/1 값 또는 활성 상태 미확인. 조작하지 않습니다."])
             }
             if current != target {
-                try tapChecked(toggle)
+                try tapChecked(selected.element)
                 captureMediaState(app, name: "simple09-after-" + toggle.identifier + "-" + action)
             }
             let settled = XCTNSPredicateExpectation(predicate: NSPredicate(
                 format: "value == %@ AND enabled == true AND hittable == true", target), object: toggle)
-            guard await XCTWaiter.fulfillment(of: [settled], timeout: 10) == .completed else {
+            let leafSettled = XCTNSPredicateExpectation(predicate: NSPredicate(
+                format: "value == %@ AND enabled == true AND hittable == true", target), object: selected.element)
+            let result = await XCTWaiter.fulfillment(of: [settled, leafSettled], timeout: 10)
+            _ = try mediaToggle(toggle, name: "simple09-settled")
+            guard result == .completed else {
                 throw NSError(domain: "ConnectionUI", code: 61,
                               userInfo: [NSLocalizedDescriptionKey: "toggle 반영·활성 복귀 미확인. 재탭·자동 원복하지 않습니다."])
             }
         }
         try await Task.sleep(nanoseconds: 10_000_000_000)
         let observed = try simpleCallControls(app, name: "simple09-ten-seconds-after-" + action)
+        let finalMicrophone = try mediaToggle(observed.microphone, name: "simple09-final")
+        let finalSpeaker = try mediaToggle(observed.speaker, name: "simple09-final")
         guard observed.microphone.isEnabled, observed.speaker.isEnabled else {
             throw NSError(domain: "ConnectionUI", code: 62,
                           userInfo: [NSLocalizedDescriptionKey: "최종 toggle 활성 상태 미확인"])
         }
         XCTAssertEqual(observed.microphone.value as? String, target)
         XCTAssertEqual(observed.speaker.value as? String, target)
+        XCTAssertEqual(finalMicrophone.value, target)
+        XCTAssertEqual(finalSpeaker.value, target)
     }
 }

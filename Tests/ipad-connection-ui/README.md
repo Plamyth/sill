@@ -274,3 +274,26 @@ Pstack Feature의 how는 기존 test09·unique·tapChecked·simpleCallControls·
 `verify.py`는 test09 이전 Swift 바이트를 SHA256으로 고정한다. 실제 새 test09 body의 조건·유일 조회·탭 범위·settled 및 최종 검사를 확인하고, ON 전제 약화·unknown 허용·enabled 삭제·중복 AX 조회 생략·무조건 탭·반대 조건 탭·재탭·최종 활성 검사 삭제의 여덟 변형을 거절한다. 이는 정적 계약 검사이며 XCTest 실행이나 실기 수용이 아니다. 독립 검수·SDK build·설치·실제 ON/OFF와 화면·가청 반환 수용은 부모의 후속이며 이 writer는 compile·실기 실행을 하지 않는다.
 
 소유 WT에서 `python3 -B Tests/ipad-connection-ui/verify.py`가 `staticAccepted=true`, `deviceExecuted=false`로 통과했다. `git diff --check`도 통과했으며 변경 세 파일·test09 이전 바이트 동일·미추적0을 별도로 확인했다. 최초 정적 검사에서 `continue` 금지 문자열이 기존 `continueAfterFailure`까지 잡은 오류는 Python 단어 경계 검사로 고쳐 재검증했다.
+
+## 2026-11-06 실제88 ON09 실패 후 native leaf 탭 대상 보정
+
+기준은 `445ab711a538fbc786401c39a385567abd0c0081`, branch는 `codex/ipad88-media09-leaf-20261106`, WT는 `/Users/ambrion/.codex/worktrees/ccr-ipad88-media09-leaf-20261106`이다. 소유 범위는 test09 내부 helper·본문과 이 README·verify.py 세 파일이다. test09 이전 바이트 SHA256 `880e2dc3c7c4712139912ff1d3aa4fb5463542f544eeb9c6d17c6f45e6676e56`과 prepare·기본 allowlist·gate·제품 코드는 유지한다. 기존 원장은 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/program/CURRENT-RESUME.md`이며 이 writer는 별도 원장을 만들거나 공유 원장에 쓰지 않는다.
+
+부모가 전달한 실제245/88 실행은 13:21:42경 microphone outer row Switch를 한 번 탭한 뒤 code61로 실패했다. speaker 탭과 ON 재실행은0이다. 전후 새 mic event0, metadata 다섯 건 both OFF·capture 없음, 해당 Host ON 분 audio 로그0, 최종 AX errorText 없음이라는 부모 관측을 앱 기능 실패로 확정하지 않는다. OFF09는 두 방향 현재0을 무탭 확인해 통과했고 Root original 세 default UID 복귀·자동 재접속·scene 보존 후 슬롯을 반납했다는 인계다. 이 writer는 실기기에서 재관측하지 않았다.
+
+직접 읽은 원본은 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/host245-ipad88-media-20261106/Enable245-attachments/75987DDF-1679-4A9F-8388-F161ED0C6684.txt`다. 두 방향 모두 identifier가 있는 폭548 Switch 아래에 identifier 없는 폭63 Switch가 정확히 하나 있고 값은 모두0이다. 이 차이만 근거로 탭 대상을 바꾼다. outer `.tap()`이 label 영역을 눌렀다는 원인은 아직 가설이며 새 후보의 실제 성공도 미검증이다.
+
+09 내부 `mediaToggle`은 기존 unique 조회로 찾은 행 안에서 `descendants(matching: .switch)`의 count를 읽는다. count1이면 그 자식 native control, count0이면 기존 행 자체를 선택한다. count가1을 넘거나 부모·leaf 값이 정확한 문자열0/1이 아니거나 서로 다르거나 어느 쪽이든 disabled/non-hittable이면 오류로 끝내고 해당 방향을 탭하지 않는다. 최초 두 방향 모두 이 검사를 통과해야 조작 루프에 들어가며 ON의 both0 전제도 유지한다. 각 방향 직전 행을 유일하게 재조회하고 검증한 selected element만 기존 `tapChecked`로 최대 한 번 누른다. OFF는 현재0이면 탭0, 현재1이면 탭1이다.
+
+부모와 선택 leaf의 settled 기대를 같은 기존10초 안에서 함께 확인한다. 실패 때도 settled 뒤 관측 첨부를 먼저 남기고 재탭·자동 OFF·새 ON을 실행하지 않는다. 기존 마지막10초 대기와 부모 값 확인에 leaf 일치·활성·hittable·목표값 확인을 더한다. 최초·조작 직전·settled 뒤·최종의 JSON은 부모와 내부 Switch들의 identifier·label·raw value·enabled·hittable·frame, childCount와 선택 대상 row/child/none을 보존한다. frame은 첨부용 관측이며 좌표 탭에 사용하지 않는다. 기존 전체 AX·캡처도 유지한다.
+
+앞 절의 Pstack Feature 절차를 같은 범위에서 이어간다. how는 실제 AX·09·unique·tapChecked·simpleCallControls·verify 계약의 직접 대조다. architect/ARENA·추가 agent는 사용자 금지에 따라 실행하지 않는다. 위임받은 단일 writer가 구현하며 `BLOCKED: independent review`는 부모의 비작성 검수로 반환한다. 검증한 세 파일을 한 커밋으로 반환하고 PR·push·통합·SDK build·sign·Root 조율·설치·실물 시험은 부모 소유로 남긴다. Ponytail full은 기존 XCTest helper와 Python 표준 도구를 재사용하며 framework·가짜 UI 복각 suite·제품 추상화를 추가하지 않는다.
+
+- Blocking first steps. 지정 clean branch/base, 최신 결정, 기존 원장과 실패 AX를 재사용했다. 재조사는 행 내부 native Switch 선택 차이에 한정한다.
+- Independent workstreams. 이 writer의 소유 세 파일과 로컬 정적 검사는 부모의 제품·계약 작업과 독립이다. 네트워크 없이 수행한다.
+- Shared mutable state. 기기·Host·키·오디오·공유 원장·prepare·gate는 쓰지 않는다. 소유 WT의 세 파일만 한 writer가 변경한다.
+- Smallest safe decomposition. 선택·관측과 그 정적 반례가 결합된 작은 QA 단위여서 추가 분해나 agent 없이 구현한다.
+
+검사는 기존 verify의 실제 Swift 본문 계약·변형 거절 방식을 확장한다. 중복 자식 허용·전역 검색·행으로 강제 대체·자식 수 분기 약화·값 불일치 허용·null 기본0 처리·unknown 허용·부모/leaf enabled/hittable 삭제·초기 검사 삭제·관측 누락·부모만 settled·최종 leaf 목표 검사 삭제·행 탭·재탭 등을 거절한다. 새 UI 모의 실행으로 효과를 주장하지 않는다. 첫 검증에서는 초기 검사 제거 반례가 assertion 전에 substring 조회의 ValueError를 일으켰다. 존재 assertion을 먼저 수행하도록 검증기를 수정한 뒤 통과했다.
+
+로컬 `python3 -B Tests/ipad-connection-ui/verify.py`는 `staticAccepted=true`, `deviceExecuted=false`로 통과했고 `swiftc -frontend -parse Tests/ipad-connection-ui/ConnectionUITests.swift`와 Python compile·`git diff --check`도 통과했다. 기준 커밋과 test09 이전 바이트·prepare 동일을 별도로 확인했다. 이는 정적 QA 결과이며 SDK typecheck·서명·설치·실제 leaf 탭·미디어 효과·가청 수용은 미검증이다. 다음 단계는 부모의 exact commit/tree 독립 검수와 SDK/sign이며, 새 ON 호출은 이 작업에서 승인하거나 실행하지 않는다. ARENA·Goal·추가 agent·실기기·키·오디오·네트워크 작업은0이다.
