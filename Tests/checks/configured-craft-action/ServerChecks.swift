@@ -30,6 +30,68 @@ private final class CraftServerFixture: @unchecked Sendable {
     // PRODUCTION_HANDLERS
 }
 
+@MainActor private final class CraftCoordinatorReplyFixture {
+    struct Peer { let id: AudioForwardingDeviceID }
+    let server: CraftServerFixture
+    var configuredCraftRuntime: HostConfiguredCraftRuntime?
+    init(server: CraftServerFixture, runtime: HostConfiguredCraftRuntime?) {
+        self.server = server; configuredCraftRuntime = runtime
+    }
+    func forward(_ exchange: CraftServerFixture.ConfiguredCraftExchange, connection: NWConnection,
+                 peer: Peer, craftSession: HostConfiguredCraftSession, current: () -> Bool) async {
+        // PRODUCTION_COORDINATOR_REPLY
+    }
+}
+
+@MainActor func craftCoordinatorReplyChecks(_ check: (String, Bool) -> Void) async throws {
+    let peer = AudioForwardingDeviceID(hex: Checks.device)!
+    let catalog = try ConfiguredCraftActionCatalog(expectedProfileId: UUID(uuidString: Checks.profile)!, expectedAssignmentSha256: Checks.hash)
+    let off = try Checks.snapshot(input: false, output: false, phase: .off)
+    for mode in ["wrong_request", "malformed", "timeout", "explicit_rejected", "explicit_unknown", "missing_runtime", "stale"] {
+        let server = CraftServerFixture(), client = server.add(), other = server.add()
+        other.route.fingerprint = Data(repeating: 0xcd, count: 32)
+        let request = try ConfiguredCraftActionRequest(operationId: UUID(), deviceId: peer, catalog: catalog, issuedAt: 1793910000000)
+        let control = ConfiguredCraftActionControl(requestId: UUID(), client: request)
+        server.onConfiguredCraftControl = { _, _, _ in }
+        server.receive(Wire.encode(control), client)
+        let ticket = client.configuredCraftExchange!
+        var current = true, dispatches = 0
+        let transport = CraftFixtureTransport { data in
+            dispatches += 1
+            if mode == "timeout" { throw ProviderCallFailure.unavailable }
+            if mode == "malformed" { return Data("{".utf8) }
+            let command = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            var reply: [String: Any] = ["op":"configuredCraftAction.reply", "schemaVersion":1,
+                "requestId": mode == "wrong_request" ? UUID().uuidString.lowercased() : command["requestId"]!,
+                "outcome":"rejected", "notSent":true, "reason":"unsupported"]
+            if mode == "explicit_unknown" {
+                reply["outcome"] = "ok"; reply.removeValue(forKey: "notSent"); reply.removeValue(forKey: "reason")
+                let result = try ConfiguredCraftActionResult(outcome: .unknown, operationId: request.operationId,
+                    deviceId: peer, bindingSha256: nil, invoked: false, reason: "executor-submitted-result-unknown")
+                reply["actionResult"] = try JSONSerialization.jsonObject(with: Wire.encode(result))
+            }
+            if mode == "stale" { current = false }
+            return try JSONSerialization.data(withJSONObject: reply)
+        }
+        let runtime = mode == "missing_runtime" ? nil : HostConfiguredCraftRuntime(open: { _ in transport })
+        let coordinator = CraftCoordinatorReplyFixture(server: server, runtime: runtime)
+        let session = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: UUID(), pairingGeneration: UUID(),
+            sentryProtected: { false }, isCurrent: { current }, readSnapshot: { off })
+        await coordinator.forward(ticket, connection: client.connection, peer: .init(id: peer), craftSession: session, current: { current })
+        server.drain()
+        if ["wrong_request", "malformed", "stale", "missing_runtime"].contains(mode) {
+            check("ambiguous \(mode) closes request TLS without fallback error", server.sent.isEmpty && client.connection.state == .cancelled)
+        } else {
+            check("explicit response \(mode) preserved", server.sent.count == 1 && client.connection.state == .ready)
+            let state = try ConfiguredCraftActionState.decode(Data(server.sent[0].dropFirst(StreamMessage.headerLength)))
+            if mode == "explicit_rejected" { check("Core notSent rejected remains distinct", state.error == "unsupported" && state.result == nil) }
+            if mode == "timeout" || mode == "explicit_unknown" { check("post-send uncertainty stays typed unknown", state.result?.outcome == .unknown && state.error == nil) }
+        }
+        check("other TLS connection remains ready", other.connection.state == .ready)
+        check("no automatic reinvoke", dispatches == (mode == "missing_runtime" ? 0 : 1))
+    }
+}
+
 @MainActor func craftServerChecks(_ check: (String, Bool) -> Void) async throws {
     let peer = AudioForwardingDeviceID(hex: String(repeating: "ab", count: 32))!
     let control = ConfiguredCraftActionControl(requestId: UUID())

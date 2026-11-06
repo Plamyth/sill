@@ -4195,8 +4195,7 @@ extension StreamCoordinator {
             isCurrent: { current() && (audio?.admitted() ?? true) },
             readSnapshot: { await audio?.readSnapshot() })
         let reply = await configuredCraftRuntime?.exchange(exchange.control, session: craftSession)
-        let fallback = try? ConfiguredCraftActionState(control: exchange.control, deviceId: peer.id, error: "unavailable")
-        server.sendConfiguredCraftState(current() ? reply ?? fallback : nil, to: connection, ticket: exchange.ticket)
+        server.sendConfiguredCraftState(current() ? reply : nil, to: connection, ticket: exchange.ticket)
     }
 
     private func handleProvider(_ exchange: StreamServer.ProviderExchange, connection: NWConnection,

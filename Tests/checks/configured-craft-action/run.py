@@ -17,9 +17,15 @@ with tempfile.TemporaryDirectory(prefix='configured-craft-') as temporary:
     server = (root / 'Sources/SillHost/StreamServer.swift').read_text()
     ticket = server[server.index('    final class ConfiguredCraftExchange:'):server.index('    private var viewerCount:')]
     handlers = server[server.index('    private func receiveConfiguredCraft('):server.index('    private func replayCatalog(')]
+    coordinator = (root / 'Sources/SillHost/StreamCoordinator.swift').read_text()
+    reply_markers = ['        guard let configuredCraftRuntime else {',
+                     '        let reply = await configuredCraftRuntime?.exchange(exchange.control, session: craftSession)']
+    reply_start = next(coordinator.index(marker) for marker in reply_markers if marker in coordinator)
+    reply = coordinator[reply_start:coordinator.index('\n    }\n\n    private func handleProvider(', reply_start)]
     fixture = out / 'ServerChecks.swift'
     fixture.write_text((here / 'ServerChecks.swift').read_text().replace('// PRODUCTION_TICKET', ticket)
-                       .replace('// PRODUCTION_HANDLERS', handlers))
+                       .replace('// PRODUCTION_HANDLERS', handlers)
+                       .replace('// PRODUCTION_COORDINATOR_REPLY', reply))
     socket_source = (root / 'Sources/SillHost/ProviderCallSocket.swift').read_text()
     bridge = (root / 'Sources/SillHost/ProviderCallBridge.swift').read_text()
     support = out / 'ProviderSupport.swift'

@@ -79,6 +79,8 @@ Core 응답 공통 필드는 `op:"configuredCraftAction.reply"`, `schemaVersion:
 
 Core local rejected는 외부 error union의 reason으로 매핑한다. Core local unknown과 송신 후 transport timeout은 외부 result unknown으로 매핑하며 bindingSha256은 null, invoked는 false, effectConfirmed는 false다. catalog의 unknown은 외부 error다. Core ok actionResult는 상관 device/operation을 확인한 뒤 그대로 운반한다.
 
+runtime이 잘못된 Core 응답·상관 실패·현재성 상실 등으로 nil을 반환하면 Coordinator는 unavailable error로 치환하지 않고 해당 요청의 TLS 연결만 닫는다. 다른 연결은 유지한다. 외부 error에는 Core local의 notSent 필드가 없으므로 외부 error만으로 미송신·미실행을 증명할 수 없다. invoke 송신 뒤 결과가 모호하면 기기는 UNKNOWN을 보존하고 원 operationId의 query로 확인한다. 새 ID 발급이나 자동 재invoke를 하지 않는다. Core의 명확한 local rejected/notSent:true와 송신 후 모호한 결과는 구분한다.
+
 Host의 결과 캐시는 최대 128개이며 오래된 항목부터 회수한다. terminal 결과는 같은 client9/pairing generation의 재요청에 재사용한다. 캐시에 남아 있는 unknown의 명시적 재요청은 같은 operationId의 Core query로 보낸다. Host가 timeout 뒤 자동 재시도하거나 새 ID를 생성하지 않는다. 캐시에서 회수된 ID의 명시적 invoke 재요청은 Core의 durable once journal이 원래 결과를 재사용해야 한다. 캐시는 durable once의 대체물이 아니다. Core 재시작/Host 재시작 및 캐시 회수 후 중복 효과 방지는 Core 원담당의 필수 계약이다.
 
 같은 인증 deviceId와 pairing identity의 reconnect는 새 Host session generation으로 원래 operationId를 query할 수 있다. Host의 이전 session ID를 echo하거나 새 invoke를 보내지 않는다. 캐시에 원래 operation이 있으면 소유 deviceId/pairing generation도 확인하며, 오래된 session만을 이유로 조회를 거절하지 않는다. Host 캐시가 없으면 현재 TLS/session 외피로 Core durable query를 수행한다. Core는 원 operation 소유 deviceId를 검증하며 다른 device 또는 재페어링으로 바뀐 identity를 거절한다. query는 durable journal을 쓰거나 원 invoke를 재전송하지 않는다.

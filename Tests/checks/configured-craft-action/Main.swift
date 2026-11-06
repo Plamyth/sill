@@ -238,6 +238,7 @@ import StreamProtocol
         _ = await first.value
     }
     @MainActor static func main() async throws {
+        try await craftCoordinatorReplyChecks(check)
         try await reasonChecks()
         try wireChecks()
         try await runtimeChecks()
