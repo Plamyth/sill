@@ -353,17 +353,53 @@ assert 'sheetBar.waitForNonExistence(timeout: 5)' in simple08
 assert 'XCTAssertEqual' not in simple08 and '.value as? String' not in simple08
 assert simple08.count('try simpleCallControls(') == 2
 simple09 = simple88.split('func test09SetSimpleCallMediaToggles()', 1)[1]
+assert hashlib.sha256(candidate_swift.split('    func test09SetSimpleCallMediaToggles()', 1)[0].encode()).hexdigest() == '880e2dc3c7c4712139912ff1d3aa4fb5463542f544eeb9c6d17c6f45e6676e56'
 for expected in ('environment["CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED"] == "1"',
                  'environment["CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION"]', '["ON", "OFF"].contains(action)'):
     assert simple09.index(expected) < simple09.index('try existingMediaApp()')
 assert 'throw XCTSkip(' in simple09
 assert 'existingApp()' not in simple09 and simple09.count('try existingMediaApp()') == 1
 assert simple09.count('try tapChecked(') == 1 and 'try tapUnique(' not in simple09
-assert 'for toggle in [controls.microphone, controls.speaker]' in simple09
 assert 'let target = action == "ON" ? "1" : "0"' in simple09
-assert 'let initial = action == "ON" ? "0" : "1"' in simple09
-assert simple09.index('controls.microphone.value as? String == initial, controls.speaker.value as? String == initial') < simple09.index('try tapChecked(toggle)')
-assert 'guard toggle.value as? String == initial' in simple09
+
+def verify_simple09_cleanup(body):
+    preflight = ('guard controls.microphone.isEnabled, controls.speaker.isEnabled,\n'
+                 '              action == "OFF" || (controls.microphone.value as? String == "0" && controls.speaker.value as? String == "0") else {')
+    loop = 'for control in [controls.microphone, controls.speaker] {'
+    lookup = 'let toggle = try unique(app.switches.matching(identifier: control.identifier))'
+    current_guard = ('guard let current = toggle.value as? String, ["0", "1"].contains(current),\n'
+                     '                  toggle.isEnabled, toggle.isHittable, action == "OFF" || current == "0" else {')
+    tap = ('if current != target {\n'
+           '                try tapChecked(toggle)\n'
+           '                captureMediaState(app, name: "simple09-after-" + toggle.identifier + "-" + action)\n'
+           '            }')
+    final_guard = 'guard observed.microphone.isEnabled, observed.speaker.isEnabled else {'
+    for expected in (preflight, loop, lookup, current_guard, tap, final_guard):
+        assert expected in body, expected
+    assert body.index(preflight) < body.index(loop) < body.index(lookup) < body.index(current_guard) < body.index(tap)
+    assert body.index(tap) < body.index('let settled =') < body.index('Task.sleep(') < body.index(final_guard)
+    assert body.count('try tapChecked(') == 1 and body.count('for ') == 1
+    assert re.search(r'\b(continue|catch|while)\b', body) is None
+    for forbidden in ('let initial =', 'else {\n                try tap', '.tap()'):
+        assert forbidden not in body, forbidden
+
+verify_simple09_cleanup(simple09)
+for old, new in (
+        ('action == "OFF" || (controls.microphone.value', 'action == "ON" || (controls.microphone.value'),
+        ('["0", "1"].contains(current)', '["0", "1", "unknown"].contains(current)'),
+        ('toggle.isEnabled, toggle.isHittable,', 'toggle.isHittable,'),
+        ('try unique(app.switches.matching(identifier: control.identifier))', 'control'),
+        ('if current != target {', 'if true {'),
+        ('if current != target {', 'if current == target {'),
+        ('try tapChecked(toggle)', 'try tapChecked(toggle)\n                try tapChecked(toggle)'),
+        ('guard observed.microphone.isEnabled, observed.speaker.isEnabled else {', 'guard true else {')):
+    assert old in simple09
+    try:
+        verify_simple09_cleanup(simple09.replace(old, new, 1))
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(f'unsafe test09 body accepted: {new}')
 assert 'defer { captureMediaState(app, name: "simple09-final-observation") }' in simple09
 assert 'await XCTWaiter.fulfillment(of: [settled], timeout: 10) == .completed' in simple09
 assert 'value == %@ AND enabled == true AND hittable == true' in simple09

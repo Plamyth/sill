@@ -239,7 +239,9 @@ Pstack Feature의 blocking 단계는 부모의 남은 popup 상태와06 진입 �
 
 `prepare_destination.py GENERATED OUTPUT --test09-media-only`는 `test09SetSimpleCallMediaToggles`만 선택한다. 기존 gate 모두0에 `CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED=0`, `CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION` 빈 문자열을 추가한다. 원본 xctestrun의 승인값은 물려받지 않는다. 부모는 기존 media 승인1에 더해 전용 승인1과 정확한 `ON` 또는 `OFF`를 별도 실행 복사본에 설정해야 한다. 선택 옵션 다섯 개는 CLI와 함수에서 상호 배타적이다. 09는 기본 allowlist에 포함되지 않는다.
 
-09의 `ON`은 두 toggle 값0, `OFF`는 두 값1을 요구한다. 한쪽만 켜져 있거나 현재 상태가 다르면 조작하지 않는다. 기존 `tapChecked`로 마이크, 스피커를 각각 최대 한 번 누르고 각 AX 값과 enabled/hittable 복귀를 최대10초 확인한다. 반영 실패 시 재탭·자동 원복·반대 action은 수행하지 않는다. 최종 조작 뒤10초의 screenshot/AX와 두 값도 기록한다. 이 값은 selection 관측이며 capture/engine·Host intent·실제 전달·재생 성공의 증거가 아니다. 실패·부분 변경이 남으면 부모가 정확한 metadata와 기존 승인 범위에서 후속 조치를 결정한다. 시작·종료 native 버튼이나 원격 Mac 영상은 어떤 분기에서도 누르지 않으며, Codex 직접 제어 거절을 우회하지 않는다.
+09의 `ON`은 fresh 두 toggle 값0과 enabled를 요구한다. `OFF`는 각 방향의 현재 값이 정확한 문자열0 또는1이어야 하며 enabled/hittable도 확인한다. 각 방향을 조작하기 직전에 유일한 switch를 다시 조회한다. ON은 각 방향을 한 번, OFF는 현재1인 방향만 한 번 `tapChecked`로 누른다. OFF에서 현재0인 방향은 탭하지 않으며 둘 다0이어도 읽기 확인만으로 성공한다. 각 방향의 목표 AX 값과 enabled/hittable을 최대10초 확인하고 마지막10초 뒤 두 값과 활성 상태를 다시 확인한다. unknown·비문자열·비활성·중복 AX는 실패하며 재탭하지 않는다.
+
+ON 실패 시 같은 검사에서 자동 OFF·원복·반대 action을 실행하지 않는다. 부분 ON 뒤에는 부모가 현재 metadata와 Root 승인을 확인한 별도 명시적 `OFF` 실행만 사용한다. 기존 media 승인1·전용 승인1·정확한 action gate와 기본 allowlist는 유지한다. AX 값은 selection 관측이며 capture/engine·Host intent·실제 전달·재생·화면 복귀·가청 반환 수용의 증거가 아니다. 시작·종료 native 버튼과 원격 영상 gesture는 어떤 분기에서도 누르지 않으며 Codex 직접 제어 거절을 우회하지 않는다.
 
 Pstack Feature 진행은 다음과 같다.
 
@@ -257,3 +259,18 @@ Pstack Feature 진행은 다음과 같다.
 8. Run Opening a PR. skip. push·PR·통합·빌드·서명·설치·실행은 부모 소유다.
 
 Ponytail full은 기존 구조와 XCTest·Python 표준 도구만 사용했다. ARENA·순정 Goal·source-guard 이전 수용·실기 성공을 생성하거나 주장하지 않는다. 부모의 exact88 설치 readback, 독립 검수, 실제 AX 형식·값·sheet 닫힘·전후 metadata 확인과 별도09 승인 아래 실제 media 검증이 남는다.
+
+## 2026-11-06 test09의 명시적 OFF 보정
+
+기준은 `70b56793816165b4d54849aef76acb2b0860278d`, 소유 WT는 `ccr-ipad88-media09-cleanup-20261106`이다. 실제 앱88/source7c와 설치 runner572는 부모 제공 근거로 재사용하며 이 writer가 재관측하지 않는다. 기존 원장은 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/rea-completion-20261028/program/CURRENT-RESUME.md`를 이어 쓰고 별도 원장은 만들지 않는다.
+
+Pstack Feature의 how는 기존 test09·unique·tapChecked·simpleCallControls·prepare 계약을 대조했다. architect는 사용자 ARENA·추가 agent 금지에 따라 생략했다. Model the Domain과 Ponytail full에 따라 기존 두 방향 tuple·정확한0/1 문자열·ON/OFF action을 재사용하며 새 framework·제품 모델·공용 helper를 추가하지 않는다.
+
+- Blocking first steps. 지정 branch/base·clean·최신 결정·기존 원장을 확인했다. 두 값1을 강제하던 OFF 전제가 부분 ON 복구를 막는 차이를 수정한다.
+- Independent workstreams. 이 writer는 test09·정적 검사·이 README만 소유한다. 부모가 독립 검수와 같은 runner bundle의 SDK build·설치·실기 시험을 맡는다.
+- Shared mutable state. integration·제품·다른 Tests·기기·Host·오디오·네트워크는 조작하지 않는다. 원장 갱신과 source-guard 결과 수용도 부모 소유다.
+- Smallest safe decomposition. 결합된 세 파일을 이 writer 하나가 수정하고 정적 검사 후 한 커밋으로 반환한다. 추가 agent·Goal·PR·push·배포는 없다.
+
+`verify.py`는 test09 이전 Swift 바이트를 SHA256으로 고정한다. 실제 새 test09 body의 조건·유일 조회·탭 범위·settled 및 최종 검사를 확인하고, ON 전제 약화·unknown 허용·enabled 삭제·중복 AX 조회 생략·무조건 탭·반대 조건 탭·재탭·최종 활성 검사 삭제의 여덟 변형을 거절한다. 이는 정적 계약 검사이며 XCTest 실행이나 실기 수용이 아니다. 독립 검수·SDK build·설치·실제 ON/OFF와 화면·가청 반환 수용은 부모의 후속이며 이 writer는 compile·실기 실행을 하지 않는다.
+
+소유 WT에서 `python3 -B Tests/ipad-connection-ui/verify.py`가 `staticAccepted=true`, `deviceExecuted=false`로 통과했다. `git diff --check`도 통과했으며 변경 세 파일·test09 이전 바이트 동일·미추적0을 별도로 확인했다. 최초 정적 검사에서 `continue` 금지 문자열이 기존 `continueAfterFailure`까지 잡은 오류는 Python 단어 경계 검사로 고쳐 재검증했다.

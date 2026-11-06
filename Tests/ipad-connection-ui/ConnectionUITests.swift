@@ -565,16 +565,22 @@ final class ConnectionUITests: XCTestCase {
         defer { captureMediaState(app, name: "simple09-final-observation") }
         let controls = try simpleCallControls(app, name: "simple09-before-" + action)
         let target = action == "ON" ? "1" : "0"
-        let initial = action == "ON" ? "0" : "1"
-        guard controls.microphone.value as? String == initial, controls.speaker.value as? String == initial,
-              controls.microphone.isEnabled, controls.speaker.isEnabled else {
+        guard controls.microphone.isEnabled, controls.speaker.isEnabled,
+              action == "OFF" || (controls.microphone.value as? String == "0" && controls.speaker.value as? String == "0") else {
             throw NSError(domain: "ConnectionUI", code: 59,
                           userInfo: [NSLocalizedDescriptionKey: "부모가 승인한 ON/OFF의 초기 toggle 값 또는 활성 상태와 다릅니다."])
         }
-        for toggle in [controls.microphone, controls.speaker] {
-            guard toggle.value as? String == initial else { throw NSError(domain: "ConnectionUI", code: 60) }
-            try tapChecked(toggle)
-            captureMediaState(app, name: "simple09-after-" + toggle.identifier + "-" + action)
+        for control in [controls.microphone, controls.speaker] {
+            let toggle = try unique(app.switches.matching(identifier: control.identifier))
+            guard let current = toggle.value as? String, ["0", "1"].contains(current),
+                  toggle.isEnabled, toggle.isHittable, action == "OFF" || current == "0" else {
+                throw NSError(domain: "ConnectionUI", code: 60,
+                              userInfo: [NSLocalizedDescriptionKey: "toggle의 현재 0/1 값 또는 활성 상태 미확인. 조작하지 않습니다."])
+            }
+            if current != target {
+                try tapChecked(toggle)
+                captureMediaState(app, name: "simple09-after-" + toggle.identifier + "-" + action)
+            }
             let settled = XCTNSPredicateExpectation(predicate: NSPredicate(
                 format: "value == %@ AND enabled == true AND hittable == true", target), object: toggle)
             guard await XCTWaiter.fulfillment(of: [settled], timeout: 10) == .completed else {
@@ -584,6 +590,10 @@ final class ConnectionUITests: XCTestCase {
         }
         try await Task.sleep(nanoseconds: 10_000_000_000)
         let observed = try simpleCallControls(app, name: "simple09-ten-seconds-after-" + action)
+        guard observed.microphone.isEnabled, observed.speaker.isEnabled else {
+            throw NSError(domain: "ConnectionUI", code: 62,
+                          userInfo: [NSLocalizedDescriptionKey: "최종 toggle 활성 상태 미확인"])
+        }
         XCTAssertEqual(observed.microphone.value as? String, target)
         XCTAssertEqual(observed.speaker.value as? String, target)
     }
