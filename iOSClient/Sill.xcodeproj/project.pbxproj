@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        FCCB0001000000000000A001 /* IPadCraftConnectedControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCB0001000000000000F001 /* IPadCraftConnectedControl.swift */; };
+        FCCB0001000000000000B001 /* IPadCraftConnectedControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCB0001000000000000F001 /* IPadCraftConnectedControl.swift */; };
+        FCCB0001000000000000A002 /* StreamClient+ConfiguredCraftAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCB0001000000000000F002 /* StreamClient+ConfiguredCraftAction.swift */; };
+        FCCB0001000000000000B002 /* StreamClient+ConfiguredCraftAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCB0001000000000000F002 /* StreamClient+ConfiguredCraftAction.swift */; };
 		E9AB20261029000000000021 /* VaultEPUBReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000020 /* VaultEPUBReader.swift */; };
 		E9AB20261029000000000022 /* VaultEPUBReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000020 /* VaultEPUBReader.swift */; };
 		E9AB20261029000000000011 /* VaultEPUBExcerpt.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9AB20261029000000000010 /* VaultEPUBExcerpt.swift */; };
@@ -256,6 +260,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        FCCB0001000000000000F001 /* IPadCraftConnectedControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadCraftConnectedControl.swift"; sourceTree = "<group>"; };
+        FCCB0001000000000000F002 /* StreamClient+ConfiguredCraftAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+ConfiguredCraftAction.swift"; sourceTree = "<group>"; };
 		E9AB20261029000000000020 /* VaultEPUBReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultEPUBReader.swift; sourceTree = "<group>"; };
 		E9AB20261029000000000010 /* VaultEPUBExcerpt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultEPUBExcerpt.swift; sourceTree = "<group>"; };
 		E9AB20261029000000000000 /* VaultEPUB.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultEPUB.swift; sourceTree = "<group>"; };
@@ -447,6 +453,8 @@
 				F2210001000000000000F002 /* StreamClient+ProviderCall.swift */,
 				F2210001000000000000F001 /* IPadProviderCall.swift */,
 				FCCA0001000000000000F001 /* IPadConfiguredCraftAction.swift */,
+                FCCB0001000000000000F001 /* IPadCraftConnectedControl.swift */,
+                FCCB0001000000000000F002 /* StreamClient+ConfiguredCraftAction.swift */,
 				C3000001000000000000F001 /* RemoteAudioPlayer.swift */,
 				C3000001000000000000F004 /* IPadAudioSession.swift */,
 				D4000001000000000000F001 /* IPadAudioRoutePolicy.swift */,
@@ -810,6 +818,8 @@
 				F2210001000000000000A002 /* StreamClient+ProviderCall.swift in Sources */,
 				F2210001000000000000A001 /* IPadProviderCall.swift in Sources */,
 				FCCA0001000000000000A001 /* IPadConfiguredCraftAction.swift in Sources */,
+                FCCB0001000000000000A001 /* IPadCraftConnectedControl.swift in Sources */,
+                FCCB0001000000000000A002 /* StreamClient+ConfiguredCraftAction.swift in Sources */,
 				D5000001000000000000A002 /* StreamClient+DesiredAudio.swift in Sources */,
 				D4000001000000000000A007 /* IPadToolbarVisibility.swift in Sources */,
 				D4000001000000000000A002 /* IPadAudioRouteChooser.swift in Sources */,
@@ -935,6 +945,8 @@
 				F2210001000000000000B002 /* StreamClient+ProviderCall.swift in Sources */,
 				F2210001000000000000B001 /* IPadProviderCall.swift in Sources */,
 				FCCA0001000000000000B001 /* IPadConfiguredCraftAction.swift in Sources */,
+                FCCB0001000000000000B001 /* IPadCraftConnectedControl.swift in Sources */,
+                FCCB0001000000000000B002 /* StreamClient+ConfiguredCraftAction.swift in Sources */,
 				5A8A07B2D5BFF28BDA22E29B /* StreamClient+DesiredAudio.swift in Sources */,
 				F68DBB46179583E6A988EA6A /* IPadToolbarVisibility.swift in Sources */,
 				95EA8E74BE7D69CD717101D1 /* IPadAudioRouteChooser.swift in Sources */,

@@ -297,6 +297,30 @@ struct IPadConfiguredCraftAction {
         return true
     }
 
+    /// The transport has already correlated the read-only query to its durable owner.
+    mutating func restoreUnresolved(_ request: Request, in context: Context) throws {
+        guard request.deviceId == context.deviceID else { throw Failure.invalidContext }
+        let catalog = try Catalog(context: context, profileID: request.expectedProfileId,
+                                  assignmentSha256: request.expectedAssignmentSha256)
+        let now = clock()
+        let pending = Pending(request: request, catalog: catalog, userActionID: request.operationId,
+                              sentAt: now, expiresAt: now)
+        state = .resolved(Resolution(pending: pending, response: nil, localUnknownReason: .contextChanged))
+    }
+
+    @discardableResult
+    mutating func resolveOriginal(_ data: Data) throws -> Bool {
+        let original = pending ?? resolution?.pending
+        guard let original, pending != nil || resolution?.outcome == .unknown else { return false }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        guard response.operationId == original.request.operationId,
+              response.deviceId == original.request.deviceId else { return false }
+        if response.outcome != .rejected, let hash = response.bindingSha256,
+           hash != original.request.expectedAssignmentSha256 { return false }
+        state = .resolved(Resolution(pending: original, response: response, localUnknownReason: nil))
+        return true
+    }
+
     private mutating func resolveUnknown(_ reason: UnknownReason) {
         guard let pending else { return }
         state = .resolved(Resolution(pending: pending, response: nil, localUnknownReason: reason))

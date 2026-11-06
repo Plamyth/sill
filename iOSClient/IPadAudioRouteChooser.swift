@@ -16,6 +16,7 @@ struct IPadAudioRouteChooser: View {
     @State private var operation: Task<Void, Never>?
     @State private var operationID: UUID?
     @State private var preparingCall = false
+    @State private var preparingCraft = false
     @State private var devicesPresented = false
     @State private var macProblem: String?
     @State private var macCatalogWaitExpired = false
@@ -25,6 +26,7 @@ struct IPadAudioRouteChooser: View {
     private var callTarget: IPadCallTarget { client.providerCall.target }
     private var busy: Bool {
         operationID != nil || client.audioRouteAuthorization != nil || client.providerCall.pending != nil ||
+        client.configuredCraftAction.exchange != nil ||
         client.macAudioRoutes.pending != nil || [.submitting, .quiescing].contains(client.audioForwardingPhase)
     }
 
@@ -33,10 +35,33 @@ struct IPadAudioRouteChooser: View {
             Form {
                 Section {
                     if preparingCall {
-                        ProgressView("통화 준비 중…")
+                        ProgressView("음성 연결 준비 중…")
                         Button("준비 취소", role: .cancel) { cancelOperation(stopPreparingAudio: true) }
                             .frame(minHeight: 44)
                             .accessibilityIdentifier("iPadProviderCallCancelPreparation")
+                    } else if client.usesConfiguredCraftAction {
+                        Button(action: {}) {
+                            Label("음성 대화", systemImage: "waveform")
+                                .font(.title2).frame(maxWidth: .infinity, minHeight: 64)
+                                .contentShape(Rectangle())
+                        }
+                        .onLongPressGesture(minimumDuration: 0.5, perform: startConfiguredCraftAction)
+                        .disabled(busy || !client.configuredCraftCanPrepare)
+                        .accessibilityLabel("음성 대화")
+                        .accessibilityHint("길게 눌러 설정된 음성 대화 동작을 실행합니다.")
+                        .accessibilityIdentifier("iPadConfiguredCraftAction")
+                        if !client.configuredCraftAction.message.isEmpty {
+                            Text(client.configuredCraftAction.message)
+                                .accessibilityIdentifier("iPadConfiguredCraftActionStatus")
+                        }
+                        if client.configuredCraftAction.unresolved != nil {
+                            Button("이전 요청 확인") { client.checkPreviousConfiguredCraftAction() }
+                                .disabled(busy || !client.configuredCraftAction.canQuery)
+                                .accessibilityIdentifier("iPadConfiguredCraftActionQuery")
+                        } else if client.configuredCraftAction.catalog == nil {
+                            Button("음성 대화 동작 다시 확인") { client.refreshConfiguredCraftCatalog() }
+                                .disabled(busy)
+                        }
                     } else if client.providerCall.selectedActiveCall != nil {
                         Button(role: .destructive) {
                             client.performIPadProviderCall(.stop, target: callTarget)
@@ -54,16 +79,16 @@ struct IPadAudioRouteChooser: View {
                         .disabled(busy || !client.iPadProviderCanPrepareCall)
                         .accessibilityIdentifier("iPadProviderCallStart")
                     }
-                    if callTarget == .grokBot {
+                    if !client.usesConfiguredCraftAction && callTarget == .grokBot {
                         Text("Grok Bot 통화 시작·종료는 아직 지원하지 않습니다.")
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("iPadGrokBotCallUnsupported")
-                    } else if client.providerCall.pending != nil || client.providerCall.selectedResult != nil ||
-                                !client.providerCall.targetSupported {
+                    } else if !client.usesConfiguredCraftAction && (client.providerCall.pending != nil || client.providerCall.selectedResult != nil ||
+                                !client.providerCall.targetSupported) {
                         Text(client.providerCall.message)
                             .accessibilityIdentifier("iPadProviderCallStatus")
                     }
-                    if client.providerCall.request != nil && client.providerCall.pending == nil &&
+                    if !client.usesConfiguredCraftAction && client.providerCall.request != nil && client.providerCall.pending == nil &&
                         (client.providerCall.selectedResult?.status == .unknown || client.providerCall.canManuallyQuery) {
                         Button("이전 통화 요청 확인") { client.checkPreviousIPadProviderCall(target: callTarget) }
                             .disabled(busy || !client.iPadProviderCanCheckPrevious)
@@ -108,7 +133,7 @@ struct IPadAudioRouteChooser: View {
             context = client.audioRouteContext
             acknowledgedMac = client.audioRoutePresentation?.identity
             selection = client.audioRouteSelection
-            selectionEdited = selection != .init() || client.providerCall.activeCall != nil
+            selectionEdited = client.desiredAudioIdentity.map { client.desiredAudioStore.hasConfirmedSelection(for: $0) } ?? false
             readPorts()
         }
         .onDisappear {
@@ -117,6 +142,7 @@ struct IPadAudioRouteChooser: View {
         .onChange(of: client.audioRouteContext) { _, next in handleRouteContext(next) }
         .onChange(of: client.providerCall.target) { _, _ in cancelOperation(stopPreparingAudio: true) }
         .onChange(of: client.providerCallConnection) { _, _ in cancelOperation(stopPreparingAudio: true) }
+        .onChange(of: client.desiredAudioSelectionGeneration) { _, _ in selection = client.audioRouteSelection }
         .onChange(of: scenePhase) { _, next in handleScenePhase(next) }
         .onChange(of: client.audioForwardingPhase) { _, next in
             if next == .blocked && preparingCall {
@@ -273,6 +299,23 @@ struct IPadAudioRouteChooser: View {
         }
     }
 
+    private func startConfiguredCraftAction() {
+        guard !busy, client.configuredCraftCanPrepare else { return }
+        let displayed = context, id = UUID()
+        operationID = id; preparingCall = true; preparingCraft = true; problem = nil
+        operation = Task { @MainActor in
+            defer {
+                if operationID == id { operationID = nil; operation = nil; preparingCall = false; preparingCraft = false }
+            }
+            do { try await client.prepareConfiguredCraftAction(userAction: id, context: displayed) }
+            catch {
+                guard operationID == id, !Task.isCancelled else { return }
+                problem = error.localizedDescription
+            }
+            selection = client.audioRouteSelection
+        }
+    }
+
     private func applySelection() {
         guard !busy else { return }
         let chosen = selection, displayed = context
@@ -303,7 +346,7 @@ struct IPadAudioRouteChooser: View {
         context = next
         acknowledgedMac = client.audioRouteTrustedMac
         selection = client.audioRouteSelection
-        selectionEdited = selection != .init() || client.providerCall.activeCall != nil
+        selectionEdited = client.desiredAudioIdentity.map { client.desiredAudioStore.hasConfirmedSelection(for: $0) } ?? false
         problem = "연결이나 화면이 바뀌었습니다. 현재 연결에서 다시 시작하세요."
     }
 
@@ -315,12 +358,14 @@ struct IPadAudioRouteChooser: View {
 
     private func cancelOperation(stopPreparingAudio: Bool) {
         let wasPreparing = preparingCall
+        let wasCraft = preparingCraft
         operation?.cancel()
         operation = nil
         operationID = nil
         preparingCall = false
+        preparingCraft = false
         if client.audioRouteAuthorization?.context == context { client.audioRouteAuthorization = nil }
-        if stopPreparingAudio && wasPreparing && context == client.audioRouteContext {
+        if stopPreparingAudio && wasPreparing && !wasCraft && context == client.audioRouteContext {
             client.cancelDesiredAudioRequest()
         }
         selection = client.audioRouteSelection
