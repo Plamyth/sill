@@ -3254,9 +3254,11 @@ package final class StreamCoordinator {
                 microphoneReceiver.revoke(peer: peer, reason: "cancellation queue exhausted")
             }
             for control in controls {
-                guard microphoneIngress.peer(control.peer.connection)?.id == control.peer.id else { continue }
-                if control.request.operation == .start && !microphoneScopeIsCurrent(control.request.scope, fingerprint: control.peer.fingerprint) { continue }
-                microphoneReceiver.control(control.request, fingerprint: control.peer.fingerprint)
+                if microphoneIngress.peer(control.peer.connection)?.id == control.peer.id,
+                   control.request.operation != .start || microphoneScopeIsCurrent(control.request.scope, fingerprint: control.peer.fingerprint) {
+                    microphoneReceiver.control(control.request, fingerprint: control.peer.fingerprint)
+                }
+                await Task.yield()
             }
             for frame in frames {
                 // frame() performs the fresh scope/privacy check immediately before admission.
@@ -3266,6 +3268,8 @@ package final class StreamCoordinator {
                 // The single consumer keeps older retained frames ahead of the next ingress batch.
                 await Task.yield()
             }
+            // Closed-peer-only batches must also give pending control/RPC tasks a turn.
+            await Task.yield()
         }
     }
 

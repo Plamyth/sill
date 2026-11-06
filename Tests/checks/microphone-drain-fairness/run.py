@@ -60,6 +60,8 @@ struct Frame { let peer: Peer; let frame: Payload; let arrived: UInt64 = 1 }
 @MainActor final class Receiver {
     var current: (Int, Int) -> Bool = { _, _ in true }
     var onFrame: (Int) -> Void = { _ in }
+    var onControl: (Request.Operation) -> Void = { _ in }
+    var onForget: (Int) -> Void = { _ in }
     var attempted: [Int] = [], admitted: [Int] = [], controls: [Request.Operation] = []
     var events: [String] = []
     var retirementComplete = true
@@ -73,8 +75,10 @@ struct Frame { let peer: Peer; let frame: Payload; let arrived: UInt64 = 1 }
         onFrame(value.sequence)
         return allowed
     }
-    func control(_ value: Request, fingerprint: Int) { controls.append(value.operation); events.append("control") }
-    func forgetCapabilities(peer: Int) { events.append("forget") }
+    func control(_ value: Request, fingerprint: Int) {
+        controls.append(value.operation); events.append("control"); onControl(value.operation)
+    }
+    func forgetCapabilities(peer: Int) { events.append("forget"); onForget(peer) }
     func revoke(peer: Int, reason: String) { events.append("revoke") }
 }
 struct LocalAudioParticipantFacts {
@@ -214,7 +218,34 @@ struct Privacy { var participants = Participants() }
                    "local-return-joins-consumer-before-quiescence")
             expect(h.microphoneReceiver.admitted.count < 6, "local-return-fence-rechecked-between-held-frames")
         }
-        print("RESULT_SCENARIOS 9")
+        do {
+            let h = Harness(), peer = Peer(id: 1, connection: 1, fingerprint: 1)
+            let controls = (0..<8).map { _ in Control(peer: peer, request: Request(operation: .start, scope: 1)) }
+            h.microphoneIngress.batches = [(controls, [], []), (controls, [], [])]
+            var responseAt = 0
+            h.microphoneReceiver.onControl = { _ in
+                if h.microphoneReceiver.controls.count == 1 {
+                    Task { @MainActor in responseAt = h.microphoneReceiver.controls.count }
+                }
+            }
+            await h.drainMicrophoneIngress(); await settle()
+            expect(h.microphoneReceiver.controls.count == 16 && h.outerChecks == 16,
+                   "control-only-batches-retain-each-fresh-start-check")
+            expect(responseAt > 0 && responseAt < 8, "ready-response-runs-between-controls")
+        }
+        do {
+            let h = Harness()
+            h.microphoneIngress.batches = [([], [], Array(1...8)), ([], [], Array(9...16))]
+            var forgotten = 0, responseAt = 0
+            h.microphoneReceiver.onForget = { _ in
+                forgotten += 1
+                if forgotten == 1 { Task { @MainActor in responseAt = forgotten } }
+            }
+            await h.drainMicrophoneIngress(); await settle()
+            expect(forgotten == 16 && responseAt > 0 && responseAt < 16,
+                   "closed-peer-only-batches-do-not-starve-ready-response")
+        }
+        print("RESULT_SCENARIOS 11")
         print("RESULT_ASSERTIONS \(assertions)")
     }
 }
