@@ -149,6 +149,7 @@ public struct WindowList: Codable {
     public var sentry: SentryState?
     public var audioForwarding: AudioForwardingCatalog?
     public var providerCalls: Int?
+    public var configuredCraftActions: Int?
     public var audioPrivacy: AudioPrivacyState?
 
     /// Changes whenever the active source changes, including A → B → A. Echoed in SourceInput;
@@ -181,7 +182,7 @@ public struct WindowList: Codable {
                 remoteAudio: Int? = nil, audioPrivacy: AudioPrivacyState? = nil, selectionRevision: String? = nil, automaticDisplaySelection: Int? = nil, inputGeneration: String? = nil, presentationInput: Int? = nil, videoEpoch: VideoEpoch? = nil, microphone: MicrophoneCapability? = nil,
                 displaySelection: Int? = nil, displays: [DisplayInfo]? = nil, displayInventoryID: UUID? = nil,
                 activeDisplayID: UInt32? = nil, desktopSelectionRequired: Bool? = nil,
-                dockApps: [AppInfo]? = nil, providerCalls: Int? = nil,
+                dockApps: [AppInfo]? = nil, providerCalls: Int? = nil, configuredCraftActions: Int? = nil,
                 sourceSelectionAdmission: SourceSelectionAdmission? = nil, extendedDesktopControl: Int? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
@@ -201,6 +202,7 @@ public struct WindowList: Codable {
         self.desktopSelectionRequired = desktopSelectionRequired
         self.dockApps = dockApps
         self.providerCalls = providerCalls
+        self.configuredCraftActions = configuredCraftActions
         self.sourceSelectionAdmission = sourceSelectionAdmission
     }
 }

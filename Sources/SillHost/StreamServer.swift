@@ -164,6 +164,7 @@ final class StreamServer {
         var role = StreamPeerRole.viewer
         var forwardingExchange: ForwardingExchange?
         var providerExchange: ProviderExchange?
+        var configuredCraftExchange: ConfiguredCraftExchange?
         var forwardingObserved = false
         var presentationInput = false
         /// The input messages (kind 8) read from it. Every kind 26 sent to it carries the count, so the
@@ -221,6 +222,30 @@ final class StreamServer {
             return valid && DispatchTime.now().uptimeNanoseconds < deadline
         }
         func invalidate() { lock.lock(); defer { lock.unlock() }; valid = false }
+    }
+    final class ConfiguredCraftExchange: @unchecked Sendable {
+        let control: ConfiguredCraftActionControl
+        let ticket = UUID()
+        private let lock = NSLock()
+        private var valid = true
+        private var task: Task<Void, Never>?
+        private let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+        init(control: ConfiguredCraftActionControl) { self.control = control }
+        var isCurrent: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return valid && DispatchTime.now().uptimeNanoseconds < deadline
+        }
+        func attach(_ task: Task<Void, Never>) {
+            lock.lock()
+            let current = valid && DispatchTime.now().uptimeNanoseconds < deadline
+            if current { self.task = task }
+            lock.unlock()
+            if !current { task.cancel() }
+        }
+        func invalidate() {
+            lock.lock(); valid = false; let task = task; self.task = nil; lock.unlock()
+            task?.cancel()
+        }
     }
     private var viewerCount: Int { clients.values.filter { $0.role.isViewer }.count }
     let sentryAdmission = SentryAdmission()
@@ -293,6 +318,7 @@ final class StreamServer {
     var onControlClientDisconnected: ((NWConnection) -> Void)?
     var onForwardingControl: ((ForwardingExchange, NWConnection, ClientRoute, AudioForwardingCatalog.Role) -> Void)?
     var onProviderControl: ((ProviderExchange, NWConnection, ClientRoute) -> Void)?
+    var onConfiguredCraftControl: ((ConfiguredCraftExchange, NWConnection, ClientRoute) -> Void)?
     /// A connected home client's link changed with its connection's path. Only reported, never
     /// acted on: the menu card shows it. Called on the network queue.
     var onClientRouteChanged: ((NWConnection, ClientLink.Route?) -> Void)?
@@ -1604,6 +1630,7 @@ final class StreamServer {
         sentryAdmission.remove(id)
         client.forwardingExchange?.invalidate()
         client.providerExchange?.invalidate()
+        client.configuredCraftExchange?.invalidate()
         if client.role.isViewer { pointerWatch?.clientLeft(id) }
         print("Client left: \(client.connection.endpoint)")
         if client.role.isViewer {
@@ -2011,6 +2038,11 @@ final class StreamServer {
             }
             let deliver = { (payload: Data) in
                 guard self.admissionIsCurrent(client) else { return }
+                if header.kind == .configuredCraftActionControl {
+                    self.receiveConfiguredCraft(payload, from: client)
+                    self.receiveLoop(client)
+                    return
+                }
                 if header.kind == .providerCallControl {
                     self.receiveProvider(payload, from: client)
                     self.receiveLoop(client)
@@ -2180,6 +2212,46 @@ final class StreamServer {
             client.providerExchange = nil
             exchange.invalidate()
             send(StreamMessage(kind: .providerCallState, timestamp: Date().timeIntervalSince1970,
+                               isKeyframe: false, payload: payload).serialized(), to: client)
+        }
+    }
+
+    private func receiveConfiguredCraft(_ payload: Data, from client: Client) {
+        let connection = client.connection
+        guard clients[ObjectIdentifier(connection)] === client, admissionIsCurrent(client),
+              connection.state == .ready, client.role.isViewer, client.route.encrypted,
+              client.route.pairedName != nil, client.route.fingerprint != nil, client.configuredCraftExchange == nil,
+              let control = try? ConfiguredCraftActionControl.decode(payload), let onConfiguredCraftControl else {
+            connection.cancel(); return
+        }
+        let exchange = ConfiguredCraftExchange(control: control)
+        client.configuredCraftExchange = exchange
+        onConfiguredCraftControl(exchange, connection, client.route)
+        queue.asyncAfter(deadline: .now() + 10) { [weak self, weak client] in
+            guard let self, let client, self.clients[ObjectIdentifier(connection)] === client,
+                  client.configuredCraftExchange?.ticket == exchange.ticket else { return }
+            exchange.invalidate(); connection.cancel()
+        }
+    }
+
+    func sendConfiguredCraftState(_ state: ConfiguredCraftActionState?, to connection: NWConnection, ticket: UUID) {
+        queue.async { [self] in
+            guard let client = clients[ObjectIdentifier(connection)],
+                  let exchange = client.configuredCraftExchange, exchange.ticket == ticket else { return }
+            guard admissionIsCurrent(client), connection.state == .ready, client.role.isViewer,
+                  client.route.encrypted, client.route.pairedName != nil, exchange.isCurrent,
+                  let state, state.matches(exchange.control),
+                  let fingerprint = client.route.fingerprint,
+                  AudioForwardingDeviceID(fingerprint: fingerprint) == state.deviceId else {
+                exchange.invalidate(); connection.cancel(); return
+            }
+            let payload = Wire.encode(state)
+            guard !payload.isEmpty, payload.count <= StreamMessage.hostPayloadLimit(for: .configuredCraftActionState) else {
+                exchange.invalidate(); connection.cancel(); return
+            }
+            client.configuredCraftExchange = nil
+            exchange.invalidate()
+            send(StreamMessage(kind: .configuredCraftActionState, timestamp: Date().timeIntervalSince1970,
                                isKeyframe: false, payload: payload).serialized(), to: client)
         }
     }

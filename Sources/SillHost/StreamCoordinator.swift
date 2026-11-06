@@ -51,6 +51,7 @@ package final class StreamCoordinator {
     private let audioPrivacy: HostAudioPrivacy?
     private var forwardingRuntime: HostAudioForwardingRuntime?
     private var providerRuntime: ProviderCallRuntime?
+    private var configuredCraftRuntime: HostConfiguredCraftRuntime?
     private struct ForwardingClient {
         let connection: NWConnection
         let route: ClientRoute
@@ -602,6 +603,13 @@ package final class StreamCoordinator {
                 guard let self else { connection.cancel(); return }
                 await self.handleProvider(exchange, connection: connection, route: route)
             }
+        }
+        server.onConfiguredCraftControl = { [weak self] exchange, connection, route in
+            let task = Task { @MainActor in
+                guard let self else { connection.cancel(); return }
+                await self.handleConfiguredCraft(exchange, connection: connection, route: route)
+            }
+            exchange.attach(task)
         }
         server.onClientConnected = { [weak self] connection, route, link in
             Task { @MainActor in
@@ -3132,6 +3140,7 @@ package final class StreamCoordinator {
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
                                                       desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
                                                       dockApps: synthetic ? nil : dockApps(), providerCalls: synthetic ? nil : 1,
+                                                      configuredCraftActions: synthetic || configuredCraftRuntime == nil ? nil : 1,
                                                       extendedDesktopControl: synthetic ? nil : 1)))
     }
 
@@ -4091,6 +4100,11 @@ extension StreamCoordinator {
             forwardingRuntime = runtime
             configureNormalDisconnectReturn(runtime)
             if let identity = remote?.identity { providerRuntime = ProviderCallRuntime(identity: identity) }
+            let craftCommandPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support/CodexControlRoom/command.sock").path
+            configuredCraftRuntime = HostConfiguredCraftRuntime(open: {
+                try await ProviderCallSocket.open(path: craftCommandPath, until: $0, frameLimit: 16_385)
+            })
             nativeAudioBindingAuthorized = { [weak runtime] fingerprint, direction in
                 runtime?.allows(fingerprint, direction: direction) == true
             }
@@ -4129,6 +4143,60 @@ extension StreamCoordinator {
                     self.server.sentryAdmission.normalOffMatches(proof)
             }
         }
+    }
+
+    private func handleConfiguredCraft(_ exchange: StreamServer.ConfiguredCraftExchange, connection: NWConnection,
+                                       route: ClientRoute) async {
+        let id = ObjectIdentifier(connection)
+        guard !synthetic, !shuttingDown, exchange.isCurrent, server.connectionIsCurrent(connection),
+              connection.state == .ready, route.encrypted, let fingerprint = route.fingerprint,
+              remote?.isPaired(fingerprint) == true,
+              let peer = remote?.forwardingPeer(fingerprint: fingerprint) else {
+            server.sendConfiguredCraftState(nil, to: connection, ticket: exchange.ticket); return
+        }
+        if forwardingClients[id] == nil { forwardingClients[id] = ForwardingClient(connection: connection, route: route) }
+        guard let session = forwardingClients[id], session.connection === connection, session.route == route else {
+            server.sendConfiguredCraftState(nil, to: connection, ticket: exchange.ticket); return
+        }
+        let kind: AudioForwardingCatalog.Principal.Kind
+        if route.cableDevice != nil { kind = .cable }
+        else if route.origin == .vpn { kind = .tailnet }
+        else if route.origin != .internet { kind = .localNetwork }
+        else { server.sendConfiguredCraftState(nil, to: connection, ticket: exchange.ticket); return }
+        let sentryState = server.sentryAdmission.status(for: id)
+        let sentryRequested = server.sentryAdmission.isRequested
+        let current = { [weak self, weak connection] in
+            guard let self, let connection, !self.shuttingDown, exchange.isCurrent,
+                  self.server.connectionIsCurrent(connection), connection.state == .ready,
+                  self.forwardingClients[id]?.generation == session.generation,
+                  self.server.sentryAdmission.status(for: id) == sentryState,
+                  self.server.sentryAdmission.isRequested == sentryRequested,
+                  self.remote?.isPaired(fingerprint) == true,
+                  let latest = self.remote?.forwardingPeer(fingerprint: fingerprint) else { return false }
+            return latest.id == peer.id && latest.pairingGeneration == peer.pairingGeneration
+        }
+        let context = AudioForwardingConnectionContext(peer: peer,
+            principal: .init(kind: kind, id: peer.id, authorizationGeneration: peer.pairingGeneration), role: .viewer,
+            connectionID: session.generation, connectionIsCurrent: current, isCurrent: current)
+        let protected = sentryRequested || sentryState?.phase != .inactive
+        if exchange.control.operation == .invoke, protected {
+            let refused = try? ConfiguredCraftActionState(control: exchange.control, deviceId: peer.id, error: "sentry_protected")
+            server.sendConfiguredCraftState(current() ? refused : nil, to: connection, ticket: exchange.ticket)
+            return
+        }
+        let audio = exchange.control.operation == .invoke ? await forwardingRuntime?.providerSession(context) : nil
+        guard current() else { server.sendConfiguredCraftState(nil, to: connection, ticket: exchange.ticket); return }
+        let craftSession = HostConfiguredCraftSession(deviceId: peer.id, deviceSessionId: session.generation,
+            pairingGeneration: peer.pairingGeneration,
+            sentryProtected: { [weak self] in
+                guard let self else { return true }
+                return self.server.sentryAdmission.isRequested || self.server.sentryAdmission.status(for: id)?.phase != .inactive
+            },
+            isCurrent: { current() && (audio?.admitted() ?? true) },
+            readSnapshot: { await audio?.readSnapshot() })
+        let reply = await configuredCraftRuntime?.exchange(exchange.control, session: craftSession)
+        let fallback = try? ConfiguredCraftActionState(control: exchange.control, deviceId: peer.id, error: "unavailable")
+        server.sendConfiguredCraftState(current() ? reply ?? fallback : nil, to: connection, ticket: exchange.ticket)
     }
 
     private func handleProvider(_ exchange: StreamServer.ProviderExchange, connection: NWConnection,
