@@ -3148,7 +3148,7 @@ package final class StreamCoordinator {
                                                       activeDisplayID: active == .desktop ? catalog.display?.displayID : nil,
                                                       desktopSelectionRequired: synthetic ? nil : catalog.displayInventory.requiresSelection,
                                                       dockApps: synthetic ? nil : dockApps(), providerCalls: synthetic ? nil : 1,
-                                                      configuredCraftActions: synthetic || configuredCraftRuntime == nil ? nil : 1,
+                                                      configuredCraftActions: synthetic || configuredCraftRuntime == nil ? nil : (injector.configuredCraftReady ? 2 : 1),
                                                       extendedDesktopControl: synthetic ? nil : 1)))
     }
 
@@ -3954,6 +3954,7 @@ extension StreamCoordinator {
     private func configureSentry() {
         guard !synthetic, appKitLoop else { return }
         let platform = HostSentryPlatform()
+        injector.configureCraftEgress(focus: { [weak self] target in self?.activate(pid: target.pid) == true })
         injector.protectedPointerEgress = { [weak platform] event, scope in
             platform?.protectedPointerEgress(event, scope: scope) == true
         }
@@ -4196,6 +4197,8 @@ extension StreamCoordinator {
         else { server.sendConfiguredCraftState(nil, to: connection, ticket: exchange.ticket); return }
         let sentryState = server.sentryAdmission.status(for: id)
         let sentryRequested = server.sentryAdmission.isRequested
+        let craftLane = peerStreams[id]
+        let craftEpoch = craftLane?.epoch
         let current = { [weak self, weak connection] in
             guard let self, let connection, !self.shuttingDown, exchange.isCurrent,
                   self.server.connectionIsCurrent(connection), connection.state == .ready,
@@ -4211,7 +4214,7 @@ extension StreamCoordinator {
             connectionID: session.generation, connectionIsCurrent: current, isCurrent: current)
         let audio = exchange.control.operation == .invoke ? await forwardingRuntime?.providerSession(context) : nil
         guard current() else { server.sendConfiguredCraftState(nil, to: connection, ticket: exchange.ticket); return }
-        let craftSession = HostConfiguredCraftSession(deviceId: peer.id, deviceSessionId: session.generation,
+        var craftSession = HostConfiguredCraftSession(deviceId: peer.id, deviceSessionId: session.generation,
             pairingGeneration: peer.pairingGeneration,
             sentryProtected: { [weak self] in
                 guard let self else { return true }
@@ -4230,6 +4233,33 @@ extension StreamCoordinator {
                     throw ProviderCallFailure.superseded
                 }
             })
+        func preparedCurrent() -> Bool {
+            guard current(), injector.configuredCraftReady, sentryState?.phase == .userSessionProtected,
+                  sentryState?.control != nil, let craftLane, let craftEpoch,
+                  peerStreams[id] === craftLane, craftLane.epoch == craftEpoch,
+                  craftLane.inputRect(generation: craftEpoch.generation, epoch: craftEpoch.id) != nil else { return false }
+            return true
+        }
+        func preparedAdmission(_ write: () throws -> Void) throws {
+            guard preparedCurrent(), audio?.admitted() == true,
+                  try server.withConfiguredCraftWrite(to: connection, ticket: exchange.ticket,
+                    deviceId: peer.id, inactive: sentryState, requiresInactive: false, requiresProtected: true, write) else {
+                throw ProviderCallFailure.superseded
+            }
+        }
+        craftSession.canPrepareHost = preparedCurrent
+        craftSession.withPreparedHostAdmission = preparedAdmission
+        craftSession.executeHost = { [weak self] plan, selection in
+            guard let self else { return false }
+            @MainActor func selected() -> Bool {
+                guard preparedCurrent(), let latest = self.forwardingRuntime?.snapshot else { return false }
+                return HostConfiguredCraftRuntime.same(selection, latest)
+            }
+            return await self.injector.executeConfiguredCraft(plan, current: selected, admission: { write in
+                guard selected() else { throw ProviderCallFailure.superseded }
+                try preparedAdmission(write)
+            })
+        }
         let reply = await configuredCraftRuntime?.exchange(exchange.control, session: craftSession)
         server.sendConfiguredCraftState(current() ? reply : nil, to: connection, ticket: exchange.ticket)
     }

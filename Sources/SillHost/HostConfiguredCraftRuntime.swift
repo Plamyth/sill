@@ -11,6 +11,9 @@ struct HostConfiguredCraftSession {
     let currentSelection: @MainActor () -> AudioForwardingSnapshot?
     let readSnapshot: @MainActor () async -> AudioForwardingSnapshot?
     let withSendAdmission: @MainActor (_ requiresInactive: Bool, _ write: () throws -> Void) throws -> Void
+    var canPrepareHost: @MainActor () -> Bool = { false }
+    var withPreparedHostAdmission: @MainActor (_ write: () throws -> Void) throws -> Void = { _ in throw ProviderCallFailure.superseded }
+    var executeHost: @MainActor (HostConfiguredCraftExecution, AudioForwardingSnapshot) async -> Bool = { _, _ in false }
 }
 
 @MainActor
@@ -45,7 +48,7 @@ final class HostConfiguredCraftRuntime {
         }
     }
 
-    private static func same(_ first: AudioForwardingSnapshot, _ second: AudioForwardingSnapshot) -> Bool {
+    static func same(_ first: AudioForwardingSnapshot, _ second: AudioForwardingSnapshot) -> Bool {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         guard let left = try? encoder.encode(first), let right = try? encoder.encode(second) else { return false }
         return left == right
@@ -97,6 +100,12 @@ final class HostConfiguredCraftRuntime {
         let priorRecord = control.targetOperationId.flatMap { records[$0] }
         let prior = priorRecord?.result
         let dispatching = localOperation == .invoke
+        let preparingHost = dispatching && session.sentryProtected()
+        func writeStateCurrent() -> Bool { preparingHost ? session.canPrepareHost() : !session.sentryProtected() }
+        func hostUnknown(_ result: ConfiguredCraftActionResult, _ reason: String) -> ConfiguredCraftActionResult {
+            (try? ConfiguredCraftActionResult(outcome: .unknown, operationId: result.operationId,
+                deviceId: result.deviceId, bindingSha256: result.bindingSha256, invoked: result.invoked, reason: reason)) ?? result
+        }
         func knownResult() -> ConfiguredCraftActionResult? {
             if let id = control.targetOperationId, let record = records[id],
                record.request.deviceId == session.deviceId, record.pairingGeneration == session.pairingGeneration,
@@ -116,7 +125,7 @@ final class HostConfiguredCraftRuntime {
             knownResult().flatMap(state) ?? failure(reason)
         }
         if dispatching {
-            guard !session.sentryProtected() else { return rejected("sentry_protected") }
+            guard writeStateCurrent() else { return rejected("sentry_protected") }
             guard invoking == nil else { return rejected("busy") }
             invoking = control.client!.operationId
             guard let uncertain = action(.unknown, "invocation_uncertain") else { invoking = nil; return nil }
@@ -125,7 +134,7 @@ final class HostConfiguredCraftRuntime {
         defer { if dispatching { invoking = nil } }
         var initial: AudioForwardingSnapshot?
         if dispatching {
-            guard let snapshot = await session.readSnapshot(), current(), !session.sentryProtected(),
+            guard let snapshot = await session.readSnapshot(), current(), writeStateCurrent(),
                   Self.eligible(snapshot, deviceId: session.deviceId) else {
                 return rejected("audio_selection_unavailable")
             }
@@ -138,7 +147,7 @@ final class HostConfiguredCraftRuntime {
             defer { socket.invalidate() }
             guard current() else { return dispatching ? rejected("superseded") : nil }
             if let initial {
-                guard let latest = await session.readSnapshot(), current(), !session.sentryProtected(),
+                guard let latest = await session.readSnapshot(), current(), writeStateCurrent(),
                       Self.eligible(latest, deviceId: session.deviceId), Self.same(initial, latest) else {
                     return rejected("audio_selection_unavailable")
                 }
@@ -146,8 +155,8 @@ final class HostConfiguredCraftRuntime {
             guard current() else { return dispatching ? rejected("superseded") : nil }
             let clock = now, deviceId = session.deviceId, sessionId = session.deviceSessionId
             let reply = try await socket.exchange(admittedSend: { (write: (HostConfiguredCraftCommand) throws -> Void) in
-                guard current(), !dispatching || !session.sentryProtected() else { throw ProviderCallFailure.superseded }
-                try session.withSendAdmission(dispatching) {
+                guard current(), !dispatching || writeStateCurrent() else { throw ProviderCallFailure.superseded }
+                let writeCommand = {
                     // No await from this selection proof through the first nonblocking send.
                     // Host audio selection updates share MainActor with this transaction.
                     if let initial {
@@ -157,11 +166,19 @@ final class HostConfiguredCraftRuntime {
                     let acceptedAt = clock()
                     guard acceptedAt > 0, acceptedAt <= 9_007_199_254_740_991 else { throw ProviderCallFailure.invalidFields }
                     try write(HostConfiguredCraftCommand(control: control, operation: localOperation,
-                        deviceId: deviceId, deviceSessionId: sessionId, acceptedAt: acceptedAt))
+                        deviceId: deviceId, deviceSessionId: sessionId, acceptedAt: acceptedAt, preparingHost: preparingHost))
                     // write returns only after a positive first send. EAGAIN/EINTR do not mark dispatch.
                     sentInvoke = dispatching
                 }
-            }, as: HostConfiguredCraftReply.self, until: deadline, decode: { try HostConfiguredCraftReply.decode($0) })
+                if preparingHost { try session.withPreparedHostAdmission(writeCommand) }
+                else { try session.withSendAdmission(dispatching, writeCommand) }
+            }, as: HostConfiguredCraftReply.self, until: deadline, decode: { try HostConfiguredCraftReply.decode($0, preparingHost: preparingHost) })
+            if preparingHost, reply.requestId == control.requestId, let request = control.client,
+               let result = reply.actionResult, result.operationId == request.operationId,
+               result.deviceId == session.deviceId, result.invoked {
+                // Craft handed off once even if TLS expired while the reply was in flight.
+                remember(request, generation: session.pairingGeneration, result: hostUnknown(result, "host_effect_unconfirmed"))
+            }
             guard current() else { return nil }
             guard reply.requestId == control.requestId else { return localOperation == .query ? knownResult().flatMap(state) : nil }
             let response: ConfiguredCraftActionState?
@@ -175,7 +192,14 @@ final class HostConfiguredCraftRuntime {
                           result.deviceId == session.deviceId, result.operationId == control.targetOperationId else {
                         return localOperation == .query ? knownResult().flatMap(state) : nil
                     }
-                    if let known = knownResult(), known.invoked, !result.invoked {
+                    if preparingHost, result.invoked {
+                        let uncertain = hostUnknown(result, "host_effect_unconfirmed")
+                        if let request = control.client, let initial, let plan = reply.hostExecution,
+                           plan.matches(request, session: session.deviceSessionId, result: result), plan.fresh(at: now()),
+                           await session.executeHost(plan, initial) {
+                            response = state(result)
+                        } else { response = state(uncertain) }
+                    } else if let known = knownResult(), known.invoked, !result.invoked {
                         response = state(known)
                     } else { response = state(result) }
                 }
@@ -206,7 +230,7 @@ final class HostConfiguredCraftRuntime {
                 }
             }
             if let initial {
-                guard let latest = await session.readSnapshot(), current(), !session.sentryProtected(),
+                guard let latest = await session.readSnapshot(), current(), writeStateCurrent(),
                       Self.same(initial, latest) else { return nil }
             }
             return current() ? response : nil
@@ -218,7 +242,7 @@ final class HostConfiguredCraftRuntime {
             if case ProviderCallFailure.invalidFields = error { return nil }
             if sentInvoke {
                 if let initial {
-                    guard let latest = await session.readSnapshot(), current(), !session.sentryProtected(),
+                    guard let latest = await session.readSnapshot(), current(), writeStateCurrent(),
                           Self.same(initial, latest) else { return nil }
                 }
                 return (knownResult() ?? action(.unknown, "invocation_uncertain")).flatMap(state)
@@ -239,12 +263,12 @@ struct HostConfiguredCraftCommand: Encodable {
     let sentryState: String?
     let operationId: String?
     init(control: ConfiguredCraftActionControl, operation: ConfiguredCraftActionControl.Operation,
-         deviceId: AudioForwardingDeviceID, deviceSessionId: UUID, acceptedAt: Int64) {
-        op = "configuredCraftAction." + operation.rawValue
+         deviceId: AudioForwardingDeviceID, deviceSessionId: UUID, acceptedAt: Int64, preparingHost: Bool = false) {
+        op = "configuredCraftAction." + (preparingHost ? "prepareHost" : operation.rawValue)
         requestId = control.requestId.uuidString.lowercased(); self.deviceId = deviceId
         self.deviceSessionId = deviceSessionId.uuidString.lowercased(); self.acceptedAt = acceptedAt
         client = operation == .invoke ? control.client : nil
-        sentryState = operation == .invoke ? "inactive" : nil
+        sentryState = operation == .invoke ? (preparingHost ? "userSessionProtected" : "inactive") : nil
         operationId = operation == .query ? control.targetOperationId?.uuidString.lowercased() : nil
     }
 }
@@ -256,9 +280,15 @@ struct HostConfiguredCraftReply: Decodable {
     let catalog: ConfiguredCraftActionCatalog?
     let actionResult: ConfiguredCraftActionResult?
     let reason: String?
-    private enum CodingKeys: String, CodingKey { case op, schemaVersion, requestId, outcome, catalog, actionResult, notSent, reason }
-    static func decode(_ data: Data) throws -> Self {
-        try ConfiguredCraftActionJSON.decode(Self.self, from: data)
+    let hostExecution: HostConfiguredCraftExecution?
+    private let hasHostExecution: Bool
+    private enum CodingKeys: String, CodingKey { case op, schemaVersion, requestId, outcome, catalog, actionResult, notSent, reason, hostExecution }
+    static func decode(_ data: Data, preparingHost: Bool = false) throws -> Self {
+        let reply = try ConfiguredCraftActionJSON.decode(Self.self, from: data)
+        guard preparingHost ? (reply.outcome != .ok || reply.actionResult != nil && reply.hasHostExecution) : !reply.hasHostExecution else {
+            throw ProviderCallFailure.invalidFields
+        }
+        return reply
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -267,6 +297,7 @@ struct HostConfiguredCraftReply: Decodable {
         if outcome == .ok {
             guard c.contains(.catalog) != c.contains(.actionResult) else { throw ProviderCallFailure.invalidFields }
             keys.insert(c.contains(.catalog) ? "catalog" : "actionResult")
+            if c.contains(.hostExecution) { keys.insert("hostExecution") }
         } else { keys.formUnion(["notSent", "reason"]) }
         try providerExactKeys(decoder, required: keys)
         let raw = try c.decode(String.self, forKey: .requestId)
@@ -277,6 +308,9 @@ struct HostConfiguredCraftReply: Decodable {
         catalog = try c.decodeIfPresent(ConfiguredCraftActionCatalog.self, forKey: .catalog)
         actionResult = try c.decodeIfPresent(ConfiguredCraftActionResult.self, forKey: .actionResult)
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        hasHostExecution = c.contains(.hostExecution)
+        hostExecution = try c.decodeIfPresent(HostConfiguredCraftExecution.self, forKey: .hostExecution)
+        guard !hasHostExecution || actionResult != nil else { throw ProviderCallFailure.invalidFields }
         if outcome != .ok {
             guard let reason, reason.range(of: "^[a-z][a-z0-9_]{0,79}$", options: .regularExpression) != nil,
                   try c.decode(Bool.self, forKey: .notSent) == (outcome == .rejected) else { throw ProviderCallFailure.invalidFields }

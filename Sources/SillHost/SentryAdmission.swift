@@ -360,6 +360,16 @@ final class SentryAdmission: @unchecked Sendable {
         return true
     }
 
+    func withPreparedHostCraftWrite(for peer: ObjectIdentifier, deviceID: String, expected: SentryState,
+                                    _ write: () throws -> Void) rethrows -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard expected.phase == .userSessionProtected, expected.requested,
+              statusLocked(for: peer) == expected, sessions[peer]?.selectionReady == true,
+              controlIdentityLocked(peer)?.deviceID == deviceID else { return false }
+        try write()
+        return true
+    }
+
     private func statusLocked(for peer: ObjectIdentifier) -> SentryState? {
         guard enabled, let session = sessions[peer] else { return nil }
         let phase: SentryState.Phase

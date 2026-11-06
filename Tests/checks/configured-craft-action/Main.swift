@@ -248,10 +248,15 @@ import StreamProtocol
         _ = await first.value
     }
     @MainActor static func main() async throws {
+        if let index = CommandLine.arguments.firstIndex(of: "--cohort-fixture") {
+            try await craftProducerCohortChecks(path: CommandLine.arguments[index + 1]); return
+        }
         if CommandLine.arguments.contains("--cache-cas-only") { try await craftCacheCASChecks(); return }
         try await craftCacheCASChecks()
+        try await craftProtectedEgressChecks(check)
         try await craftOutcomeChecks(check)
         try craftFirstWriteAdmissionChecks(check)
+        craftProtectedWriteAdmissionChecks(check)
         try await craftCoordinatorReplyChecks(check)
         try await reasonChecks()
         try wireChecks()

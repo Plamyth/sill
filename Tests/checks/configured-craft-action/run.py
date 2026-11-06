@@ -37,11 +37,23 @@ with tempfile.TemporaryDirectory(prefix='configured-craft-') as temporary:
     subprocess.run(swift + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol',
         '-Xlinker', '-rpath', '-Xlinker', str(out),
         str(root / 'Sources/SillHost/HostConfiguredCraftRuntime.swift'),
+        str(root / 'Sources/SillHost/HostConfiguredCraftEgress.swift'),
+        str(root / 'Sources/SillHost/KeyStrokes.swift'),
         str(root / 'Sources/SillHost/SentryAdmission.swift'),
-        str(support), str(here / 'Main.swift'), str(here / 'OutcomeChecks.swift'), str(fixture), '-o', str(out / 'checks')], check=True)
-    outcomes = subprocess.run([str(out / 'checks')] + (['--cache-cas-only'] if '--cache-cas-only' in sys.argv else []), check=False, timeout=40,
+        str(support), str(here / 'Main.swift'), str(here / 'OutcomeChecks.swift'), str(here / 'EgressChecks.swift'),
+        str(here / 'CohortChecks.swift'), str(fixture), '-o', str(out / 'checks')], check=True)
+    if '--compile-only' in sys.argv:
+        raise SystemExit(0)
+    arguments = ['--cache-cas-only'] if '--cache-cas-only' in sys.argv else []
+    if '--cohort-fixture' in sys.argv:
+        index = sys.argv.index('--cohort-fixture')
+        path = Path(sys.argv[index + 1])
+        import hashlib
+        print('COHORT_FIXTURE_SHA256', hashlib.sha256(path.read_bytes()).hexdigest(), flush=True)
+        arguments = ['--cohort-fixture', str(path)]
+    outcomes = subprocess.run([str(out / 'checks')] + arguments, check=False, timeout=40,
                    env={**os.environ, 'DYLD_LIBRARY_PATH': str(out)})
-    if '--runtime-only' in sys.argv or '--cache-cas-only' in sys.argv:
+    if '--runtime-only' in sys.argv or '--cache-cas-only' in sys.argv or '--cohort-fixture' in sys.argv:
         raise SystemExit(outcomes.returncode)
     relay = (root / 'Sources/SillHost/LocalAudioRelay.swift').read_text()
     socket_support = out / 'SocketSupport.swift'
@@ -51,6 +63,8 @@ with tempfile.TemporaryDirectory(prefix='configured-craft-') as temporary:
         '-Xlinker', '-rpath', '-Xlinker', str(out), str(socket_support),
         str(root / 'Sources/SillHost/ProviderCallSocket.swift'),
         str(root / 'Sources/SillHost/HostConfiguredCraftRuntime.swift'),
+        str(root / 'Sources/SillHost/HostConfiguredCraftEgress.swift'),
+        str(root / 'Sources/SillHost/KeyStrokes.swift'),
         str(here / 'SocketChecks.swift'), '-o', str(out / 'socket-checks')], check=True)
     with tempfile.TemporaryDirectory(prefix='.ccr-craft-', dir=Path.home()) as socket_directory:
         subprocess.run([str(out / 'socket-checks'), socket_directory], check=True, timeout=20)
@@ -76,6 +90,8 @@ import Darwin
         '-Xlinker', '-rpath', '-Xlinker', str(out), str(socket_support),
         str(root / 'Sources/SillHost/ProviderCallSocket.swift'),
         str(root / 'Sources/SillHost/HostConfiguredCraftRuntime.swift'),
+        str(root / 'Sources/SillHost/HostConfiguredCraftEgress.swift'),
+        str(root / 'Sources/SillHost/KeyStrokes.swift'),
         str(here / 'TransportChecks.swift'), '-o', str(out / 'transport-checks')], check=True)
     with tempfile.TemporaryDirectory(prefix='.ccr-craft-transport-', dir=Path.home()) as socket_directory:
         transport = subprocess.run([str(out / 'transport-checks'), socket_directory], check=False, timeout=30)

@@ -4,6 +4,7 @@ import CoreGraphics
 import ApplicationServices
 import Darwin
 import StreamProtocol
+import AppKit
 
 /// Turns client input into CGEvents aimed at the streamed source.
 ///
@@ -565,6 +566,61 @@ final class InputInjector {
     /// pure): a key's up leaves only what modifier keys still hold, so no chord leaves its modifiers
     /// in the HID state table that the next click and scroll start from.
     private var keys = KeyStrokes()
+    private var configuredCraftEgress: HostConfiguredCraftEgress?
+    var configuredCraftReady: Bool { configuredCraftEgress != nil }
+
+    func configureCraftEgress(focus: @escaping @MainActor (HostConfiguredCraftTarget) -> Bool) {
+        configuredCraftEgress = HostConfiguredCraftEgress(resolve: { [weak self] in self?.configuredCraftTarget() },
+            foreground: { [weak self] target in self?.configuredCraftForeground(target) == true }, focus: focus,
+            prepare: { [weak self] target, strokes in self?.prepareConfiguredCraft(target, strokes: strokes) },
+            beforeFlags: { [weak self] in self?.lastKeyFlags ?? 0 })
+    }
+
+    func executeConfiguredCraft(_ plan: HostConfiguredCraftExecution, current: @escaping @MainActor () -> Bool,
+                                admission: HostConfiguredCraftEgress.Admission) async -> Bool {
+        await configuredCraftEgress?.execute(plan, current: current, admission: admission) == true
+    }
+
+    private func configuredCraftTarget() -> HostConfiguredCraftTarget? {
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: "com.openai.codex")
+        guard apps.count == 1, let app = apps.first, !app.isTerminated, app.activationPolicy == .regular else { return nil }
+        let pid = app.processIdentifier
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard pid > 0, proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.pbi_pid == UInt32(pid), info.pbi_uid == getuid(), info.pbi_status != 5,
+              info.pbi_start_tvsec > 0 else { return nil }
+        return HostConfiguredCraftTarget(pid: pid, startSeconds: info.pbi_start_tvsec,
+                                         startMicroseconds: info.pbi_start_tvusec)
+    }
+
+    private func configuredCraftForeground(_ target: HostConfiguredCraftTarget) -> Bool {
+        configuredCraftTarget() == target && NSWorkspace.shared.frontmostApplication?.processIdentifier == target.pid
+    }
+
+    private func prepareConfiguredCraft(_ target: HostConfiguredCraftTarget, strokes: [KeyStroke]) -> HostConfiguredCraftEgress.Sink? {
+        guard !dryRun, isolatesPhysicalInput, keys.down.isEmpty, keyReleaseDebts.isEmpty,
+              configuredCraftForeground(target), strokes.count == 2 else { return nil }
+        let events = strokes.compactMap { CGEvent(keyboardEventSource: source, virtualKey: $0.virtualKey, keyDown: $0.down) }
+        guard events.count == strokes.count else { return nil }
+        for (event, stroke) in zip(events, strokes) {
+            event.flags = CGEventFlags(rawValue: stroke.flags)
+            guard event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()),
+                  HostSentryPlatform.stampEventSource(event, source: source, tag: HostSentryPlatform.remoteEventTag) else { return nil }
+            event.setIntegerValueField(.eventTargetUnixProcessID, value: Int64(target.pid))
+        }
+        return { [weak self] stroke in
+            guard let self, !self.dryRun, self.configuredCraftTarget() == target,
+                  !stroke.down || (self.isolatesPhysicalInput && self.configuredCraftForeground(target)) else { return false }
+            let event = events[stroke.down ? 0 : 1]
+            guard event.getIntegerValueField(.eventSourceUserData) == HostSentryPlatform.remoteEventTag,
+                  event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(getpid()) else { return false }
+            if stroke.down && Task.isCancelled { return false }
+            event.postToPid(target.pid)
+            self.lastKeyFlags = stroke.flags & (KeyStrokes.capsLock | Self.modifierBits)
+            return true
+        }
+    }
     private var keyReleaseDebts: [UInt16: (owner: KeyStrokes.Device, stroke: KeyStroke)] = [:]
     private var keyOwners: [UInt16: KeyStrokes.Device] {
         Dictionary(uniqueKeysWithValues: keys.down.compactMap { usage, owner in
@@ -627,6 +683,7 @@ final class InputInjector {
     /// The host is going: every key any device holds down goes up (KeyStrokes.releaseAll), then a
     /// button still down, where the pointer is, so nothing a device pressed outlives Sill on the Mac.
     func releaseAll() {
+        configuredCraftEgress?.releaseOwnedDebts()
         if scrollScope != nil { closeScroll(at: lastScrollLocation) }
         post(keyReleaseDebts.values.map {
             KeyStroke(virtualKey: $0.stroke.virtualKey, down: false, flags: keys.heldFlags)
@@ -643,7 +700,7 @@ final class InputInjector {
     }
 
     var hasPendingInput: Bool {
-        !keys.down.isEmpty || !keyReleaseDebts.isEmpty || left.isDown || right.isDown || protectedScrollPending
+        !keys.down.isEmpty || !keyReleaseDebts.isEmpty || left.isDown || right.isDown || protectedScrollPending || configuredCraftEgress?.hasDebt == true
     }
 
     /// Shift, control, option and command: the modifiers that change a click or a scroll.

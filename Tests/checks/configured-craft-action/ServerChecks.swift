@@ -71,6 +71,46 @@ private final class CraftServerFixture: @unchecked Sendable {
     }
 }
 
+@MainActor func craftProtectedWriteAdmissionChecks(_ check: (String, Bool) -> Void) {
+    let device = AudioForwardingDeviceID(hex: Checks.device)!
+    for mode in ["current", "stale", "wrong_ticket", "wrong_device", "ungranted", "concurrent"] {
+        let server = CraftServerFixture(), client = server.add(), peer = ObjectIdentifier(client.connection)
+        server.sentryAdmission.configure(latched: true, persistenceHealthy: true)
+        server.sentryAdmission.register(peer, externalRoute: false); server.sentryAdmission.admit(peer)
+        if mode != "ungranted" {
+            _ = server.sentryAdmission.grantControl(to: peer, verifiedOwner: .init(deviceID: device.hex,
+                encryptedTLS: true, currentPairedOwner: true)!)
+        }
+        server.sentryAdmission.update(verified: true, persistenceHealthy: true, reason: nil)
+        server.sentryAdmission.capture(UUID())
+        let protected = server.sentryAdmission.status(for: peer)!
+        server.onConfiguredCraftControl = { _, _, _ in }
+        server.receive(Wire.encode(ConfiguredCraftActionControl(requestId: UUID())), client)
+        let ticket = client.configuredCraftExchange!.ticket
+        if mode == "stale" { server.sentryAdmission.setLocalReturnRequestActive(true) }
+        var wrote = false, waited = false
+        let attempting = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+        let allowed = server.withConfiguredCraftWrite(to: client.connection,
+            ticket: mode == "wrong_ticket" ? UUID() : ticket,
+            deviceId: mode == "wrong_device" ? AudioForwardingDeviceID(hex: String(repeating: "c", count: 64))! : device,
+            inactive: protected, requiresInactive: false, requiresProtected: true) {
+                if mode == "concurrent" {
+                    DispatchQueue.global().async {
+                        attempting.signal(); server.sentryAdmission.setLocalReturnRequestActive(true); finished.signal()
+                    }
+                    precondition(attempting.wait(timeout: .now() + 1) == .success)
+                    waited = finished.wait(timeout: .now() + 0.01) == .timedOut
+                }
+                wrote = true
+            }
+        let expected = mode == "current" || mode == "concurrent"
+        check("prepared write current owner/ticket/state \(mode)", allowed == expected && wrote == expected)
+        if mode == "concurrent" {
+            check("prepared write serializes local-return mutation", waited && finished.wait(timeout: .now() + 1) == .success)
+        }
+    }
+}
+
 @MainActor private final class CraftCoordinatorReplyFixture {
     struct Peer { let id: AudioForwardingDeviceID }
     let server: CraftServerFixture

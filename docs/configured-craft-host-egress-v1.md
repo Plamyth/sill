@@ -88,6 +88,10 @@ Host 전 경로가 구현된 경우에만 configuredCraftActions=2를 광고한�
 버전1/미지원/불명 상태는 기존 거절을 유지한다. iPad/Android 소비 변경은 각 원담당에게
 같은 계약으로 전달한다. 이번 소스 시험을 기기 수용으로 대신하지 않는다.
 
+공통 허용표는 cap1이면 `inactive && !requested`의 기존 invoke만 허용하고, cap2이면
+동일한 inactive 기존 invoke 또는 `userSessionProtected && requested`이며 현재 ownerControl과
+known state가 확인된 보호 경로만 허용한다. pending/blocked/unknown 상태는 두 버전 모두 거절한다.
+
 Craft: 임시 journal과 fake executor/clock으로 local/Host 교차 중복, 저장 hash/target 변조,
 구형 요청 보존, stale 및 journal 실패, 재시작 query에서 재발급0을 시험한다.
 Host: 실제 프로토콜·admission과 fake target/sink로 같은 state만 허용, 마지막 post 전
