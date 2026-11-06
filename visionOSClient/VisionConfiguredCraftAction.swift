@@ -391,15 +391,18 @@ final class VisionConfiguredCraftActionExecutor: ObservableObject {
               clock().isFinite, clock() < pending.until,
               let state = try? ConfiguredCraftActionState.decode(data), state.deviceId == incoming.device,
               state.matches(pending.control) else { return false }
+        if let result = state.result {
+            let accepted = pending.control.operation == .query ?
+                model.receiveReadback(result, hostKey: incoming.hostKey, device: incoming.device) :
+                model.receive(result, context: context, now: clock())
+            guard accepted else { return false }
+        }
         submitted(state.requestId)
         clearPending()
         if let catalog = state.catalog {
             if self.catalog != catalog { catalogRevision = UUID() }
             self.catalog = catalog; problem = nil
-        } else if let result = state.result {
-            if pending.control.operation == .query {
-                _ = model.receiveReadback(result, hostKey: incoming.hostKey, device: incoming.device)
-            } else { _ = model.receive(result, context: context, now: clock()) }
+        } else if state.result != nil {
             problem = nil
         } else if let error = state.error {
             problem = "음성 명령 결과 미확인 (" + error + ")"

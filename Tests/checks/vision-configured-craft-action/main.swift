@@ -538,4 +538,69 @@ for (outcome, invoked) in [(Action.Result.Outcome.invoked, false), (.rejected, t
     }
 }
 
+
+for query in [false, true] {
+    var now = 100.0
+    var control: ConfiguredCraftActionControl?
+    var invokes = 0, removals = 0
+    let c = Action.Context(hostKey: "trusted-host", scope: scope, admitted: true,
+        selection: .init(), readback: readyReadback(.init()))
+    let readScope = VisionConfiguredCraftActionExecutor.ReadScope(hostKey: "trusted-host",
+        connection: scope.connection, window: scope.window, admission: scope.admission,
+        foreground: scope.foreground, video: scope.video, device: AudioForwardingDeviceID(hex: binding.deviceId)!)
+    let receiver = VisionConfiguredCraftActionExecutor(context: { c }, readScope: { readScope },
+        prepare: { _ in fatalError("confirmed OFF requires no preparation") }, cancelPreparation: { _ in },
+        finishPreparation: { _ in }, send: { value, _, _ in control = value; if value.operation == .invoke { invokes += 1 }; return true },
+        cancelSend: { _ in removals += 1 }, clock: { now })
+    receiver.observe(capability: 1)
+    let catalog = try ConfiguredCraftActionState(control: control!, deviceId: readScope.device,
+        catalog: .init(expectedProfileId: profile, expectedAssignmentSha256: assignment))
+    _ = receiver.receive(try JSONEncoder().encode(catalog), in: readScope)
+    receiver.begin(heldFor: 0.5, issuedAt: date)
+    let id = control!.client!.operationId
+    if query { now = 110; receiver.refresh(); receiver.query() }
+    let request = control!, originalDeadline = query ? 120.0 : 110.0
+    let bad = try ConfiguredCraftActionState(control: request, deviceId: readScope.device,
+        result: .init(outcome: .invoked, operationId: id, deviceId: readScope.device, bindingSha256: nil, invoked: false))
+    now = originalDeadline - 0.1
+    expect(!receiver.receive(try JSONEncoder().encode(bad), in: readScope), "기한 직전 모순 응답을 거절함")
+    let beforeExpiry = removals
+    let good = try ConfiguredCraftActionState(control: request, deviceId: readScope.device,
+        result: .init(outcome: .invoked, operationId: id, deviceId: readScope.device, bindingSha256: assignment, invoked: true))
+    now = originalDeadline
+    expect(!receiver.receive(try JSONEncoder().encode(good), in: readScope), "모순 응답 뒤에도 원 기한에 도달한 정상 결과는 수용하지 않음")
+    receiver.refresh()
+    expect(removals == beforeExpiry + 1 && invokes == 1 && receiver.canQuery,
+           "원 deadline에서 pending 한 번 정리·UNKNOWN 유지·자동 invoke0")
+}
+
+let reasonBase = try ConfiguredCraftActionState(control: originalQuery, deviceId: fixtureReadScope()!.device,
+    result: .init(outcome: .unknown, operationId: originalQuery.operationId!, deviceId: fixtureReadScope()!.device,
+                  bindingSha256: nil, invoked: false))
+let reasonObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(reasonBase)) as! [String: Any]
+func rawReason(_ text: String) throws -> Data {
+    var object = reasonObject
+    var result = object["result"] as! [String: Any]; result["reason"] = text; object["result"] = result
+    return try JSONSerialization.data(withJSONObject: object)
+}
+for text in ["action-executor-failed", " \t권한-거절\n", String(repeating: "가", count: 85) + "a", String(repeating: "🙂", count: 64)] {
+    let decoded = try ConfiguredCraftActionState.decode(rawReason(text))
+    expect(decoded.result?.reason == text && Array(decoded.result!.reason!.utf8) == Array(text.utf8),
+           "nested reason은 하이픈·공백 포함 원문과 UTF8 256bytes 경계를 보존함")
+}
+for text in ["", " \t\n", String(repeating: "가", count: 85) + "ab", String(repeating: "🙂", count: 65)] {
+    expect((try? ConfiguredCraftActionState.decode(rawReason(text))) == nil,
+           "nested reason은 빈 값·공백뿐인 값·UTF8 256bytes 초과를 거절함")
+}
+for error in ["action-executor-failed", "상태_미확인", "  unavailable  "] {
+    expect((try? ConfiguredCraftActionState(control: originalQuery, deviceId: fixtureReadScope()!.device, error: error)) == nil,
+           "outer error의 stable underscore 규칙은 확장하지 않음")
+}
+let rawNumeric = String(data: try JSONEncoder().encode(reasonBase), encoding: .utf8)!
+for replacement in ["1.0", "1e0", "true"] {
+    let malformed = rawNumeric.replacingOccurrences(of: "\"schemaVersion\":1", with: "\"schemaVersion\":" + replacement)
+    expect((try? ConfiguredCraftActionState.decode(Data(malformed.utf8))) == nil,
+           "실제 state raw decoder는 분수·지수·boolean 숫자 별칭을 거절함")
+}
+
 print("PASS \(checks) configured Craft action checks; actual Host/Core/device/media/input actions 0")

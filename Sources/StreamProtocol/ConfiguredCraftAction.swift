@@ -2,6 +2,12 @@ import Foundation
 
 public enum ConfiguredCraftActionFailure: Error { case invalidFields, invalidValue, invalidCorrelation }
 
+public enum ConfiguredCraftActionJSON {
+    public static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        try CraftJSON.decode(type, data, limit: 16384)
+    }
+}
+
 private struct CraftKey: CodingKey {
     let stringValue: String
     var intValue: Int? { nil }
@@ -27,6 +33,9 @@ private func craftHash(_ value: String) -> Bool {
 }
 private func craftReason(_ value: String) -> Bool {
     value.range(of: "^[a-z][a-z0-9_]{0,79}$", options: .regularExpression) != nil
+}
+private func craftResultReason(_ value: String) -> Bool {
+    !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && value.utf8.count <= 256
 }
 
 public struct ConfiguredCraftActionCatalog: Codable, Equatable, Sendable {
@@ -120,7 +129,7 @@ public struct ConfiguredCraftActionResult: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey { case outcome, operationId, deviceId, bindingSha256, invoked, effectConfirmed, reason }
     public init(outcome: Outcome, operationId: UUID, deviceId: AudioForwardingDeviceID,
                 bindingSha256: String?, invoked: Bool, reason: String? = nil) throws {
-        guard bindingSha256.map(craftHash) ?? true, reason.map(craftReason) ?? true else {
+        guard bindingSha256.map(craftHash) ?? true, reason.map(craftResultReason) ?? true else {
             throw ConfiguredCraftActionFailure.invalidValue
         }
         self.outcome = outcome; self.operationId = operationId; self.deviceId = deviceId
@@ -135,7 +144,7 @@ public struct ConfiguredCraftActionResult: Codable, Equatable, Sendable {
         bindingSha256 = try c.decodeIfPresent(String.self, forKey: .bindingSha256)
         invoked = try c.decode(Bool.self, forKey: .invoked); effectConfirmed = try c.decode(Bool.self, forKey: .effectConfirmed)
         reason = try c.decodeIfPresent(String.self, forKey: .reason)
-        guard !effectConfirmed, bindingSha256.map(craftHash) ?? true, reason.map(craftReason) ?? true,
+        guard !effectConfirmed, bindingSha256.map(craftHash) ?? true, reason.map(craftResultReason) ?? true,
               !c.contains(.reason) || reason != nil else { throw ConfiguredCraftActionFailure.invalidValue }
     }
     public func encode(to encoder: Encoder) throws {
