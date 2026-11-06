@@ -488,4 +488,54 @@ if case .unknown(let saved) = pendingLoss.phase { expect(saved == liveOperation,
 else { fatalError("pending media loss unknown missing") }
 expect(pendingLoss.advance(context: context, now: 102) == nil, "늦은 mediaReady 복귀는 자동 invoke를 만들지 않음")
 
+
+for (outcome, invoked) in [(Action.Result.Outcome.invoked, false), (.rejected, true)] {
+    for query in [false, true] {
+        var now = 100.0
+        var localContext = Action.Context(hostKey: "trusted-host", scope: scope,
+            selection: .init(), readback: readyReadback(.init()))
+        let readScope = VisionConfiguredCraftActionExecutor.ReadScope(hostKey: "trusted-host",
+            connection: scope.connection, window: scope.window, admission: scope.admission,
+            foreground: scope.foreground, video: scope.video,
+            device: AudioForwardingDeviceID(hex: binding.deviceId)!)
+        var control: ConfiguredCraftActionControl?
+        var invokeCount = 0, finishes = 0, pendingRemovals = 0
+        localContext.admitted = true
+        let receiver = VisionConfiguredCraftActionExecutor(context: { localContext }, readScope: { readScope },
+            prepare: { _ in fatalError("confirmed OFF requires no preparation") },
+            cancelPreparation: { _ in }, finishPreparation: { _ in finishes += 1 },
+            send: { value, _, _ in control = value; if value.operation == .invoke { invokeCount += 1 }; return true },
+            cancelSend: { _ in pendingRemovals += 1 }, clock: { now })
+        receiver.observe(capability: 1)
+        let catalogState = try ConfiguredCraftActionState(control: control!, deviceId: readScope.device,
+            catalog: .init(expectedProfileId: profile, expectedAssignmentSha256: assignment))
+        expect(receiver.receive(try JSONEncoder().encode(catalogState), in: readScope), "반례 fixture의 현재 catalog를 수용함")
+        receiver.begin(heldFor: 0.5, issuedAt: date)
+        let operationId = control!.client!.operationId
+        if query { now = 110; receiver.refresh(); receiver.query() }
+        let pendingControl = control!, originalPhase = receiver.model.phase
+        let beforeRemovals = pendingRemovals, beforeFinishes = finishes
+        now = query ? 119.8 : 109.8
+        let contradiction = try ConfiguredCraftActionState(control: pendingControl, deviceId: readScope.device,
+            result: .init(outcome: outcome, operationId: operationId, deviceId: readScope.device,
+                          bindingSha256: nil, invoked: invoked))
+        let malformed = try JSONEncoder().encode(contradiction)
+        expect((try? ConfiguredCraftActionState.decode(malformed)) != nil, "현재 raw codec가 허용하는 의미 모순을 모델 경계에서 검사함")
+        let accepted = receiver.receive(malformed, in: readScope)
+        expect(!accepted, "\(query ? "query" : "invoke") \(outcome)/\(invoked) 모순 응답을 거절함; 관측=\(accepted)")
+        expect(receiver.model.phase == originalPhase && pendingRemovals == beforeRemovals && finishes == beforeFinishes,
+               "모델 거절은 원 pending·기한·준비 소유권을 바꾸지 않음")
+        now += 0.1
+        let normal = try ConfiguredCraftActionState(control: pendingControl, deviceId: readScope.device,
+            result: .init(outcome: .invoked, operationId: operationId, deviceId: readScope.device,
+                          bindingSha256: assignment, invoked: true))
+        expect(receiver.receive(try JSONEncoder().encode(normal), in: readScope), "같은 요청의 원기한 내 정상 결과를 뒤이어 수용함")
+        if case .completed(_, let saved) = receiver.model.phase {
+            expect(saved.outcome == .invoked && saved.invoked, "정상 결과를 보존함")
+        } else { fatalError("correct response discarded after contradiction") }
+        now += 20; receiver.refresh()
+        expect(invokeCount == 1 && !receiver.canQuery, "모순 뒤 정상 수용은 UNKNOWN·자동 재호출로 바뀌지 않음")
+    }
+}
+
 print("PASS \(checks) configured Craft action checks; actual Host/Core/device/media/input actions 0")
