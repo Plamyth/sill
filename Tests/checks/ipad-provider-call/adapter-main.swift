@@ -8,7 +8,7 @@ struct ProviderAdapterChecks {
     @MainActor static func flush() async {
         await withCheckedContinuation { c in DispatchQueue.main.async { c.resume() } }
     }
-    @MainActor static func ready() async throws -> StreamClient {
+    @MainActor static func ready(activate: Bool = true) async throws -> StreamClient {
         let client = StreamClient(), generation = UUID(), peer = client.connection!
         let epoch = VideoEpoch(generation: generation.uuidString, source: .desktop,
             geometry: .init(x: 0, y: 0, width: 800, height: 600), width: 800, height: 600)
@@ -35,8 +35,15 @@ struct ProviderAdapterChecks {
         client.clock.now = 0.1
         client.receive(try .init(requestID: observe.requestID, operation: .observe, catalog: catalog(empty, intent: 0, binding: 0), result: nil))
         expect(!client.iPadProviderCanStart, "217 registration alone without ownbinding cannot perform")
+        if !activate { return client }
         client.clock.now = 0.2
         try await client.applyAudioRoutes(.init(input: .iPadMicrophone, output: .iPadPlayback), context: client.audioRouteContext)
+        try acceptPreparation(client)
+        expect(client.iPadProviderCanStart && client.providerCall.supported, "authenticated viewer active own binding enables Dots only")
+        return client
+    }
+    @MainActor static func acceptPreparation(_ client: StreamClient) throws {
+        let device = client.audioForwardingDevice!
         let submit = client.command(), r = submit.intent!
         let configuration = try AudioForwardingConfiguration(controllerBootId: UUID(), privacyGeneration: UUID(), registryRevision: .init(1),
             members: [.init(participantId: "native.sill", bootId: UUID()), .init(participantId: "s23.audio.relay", bootId: UUID())])
@@ -47,8 +54,6 @@ struct ProviderAdapterChecks {
         let live = try AudioForwardingSnapshot(revision: .init(10), intent: intent, binding: binding)
         client.clock.now = 0.3
         client.receive(try .init(requestID: submit.requestID, operation: .submit, catalog: nil, result: .accepted(live)))
-        expect(client.iPadProviderCanStart && client.providerCall.supported, "authenticated viewer active own binding enables Dots only")
-        return client
     }
     @MainActor static func controls(_ peer: NWConnection) -> [ProviderCallControl] {
         peer.messages.filter { $0.first == 221 }.compactMap { Wire.decode(ProviderCallControl.self, from: Data($0.dropFirst(StreamMessage.headerLength))) }
@@ -85,6 +90,7 @@ struct ProviderAdapterChecks {
         client.receive(try .init(requestID: resume.requestID, operation: .submit, catalog: nil, result: .accepted(active)))
     }
     @MainActor static func main() async throws {
+        try await preparationChecks()
         let client = try await ready(), peer = client.connection!
         client.performIPadProviderCall(.start, target: .nativeCodex)
         client.performIPadProviderCall(.start, target: .grokBot)
@@ -224,5 +230,73 @@ struct ProviderAdapterChecks {
         try await deliver(native, .stopped, request: finalStop.request, peer: nativePeer, session: exactSession, provider: "codex-app-server")
         expect(native.providerCall.activeCall == nil && native.iPadProviderCanStart, "matching native stopped releases current session")
         print("PASS \(checks) actual iPad adapter checks; device/host/audio/network effects0")
+    }
+
+    @MainActor static func preparationChecks() async throws {
+        let selection = IPadAudioRoutePolicy.Selection(input: .iPadMicrophone, output: .iPadPlayback)
+        let prepared = try await ready(activate: false), peer = prepared.connection!
+        expect(prepared.iPadProviderCanPrepareCall && !prepared.iPadProviderCanStart, "one tap may prepare but cannot bypass binding")
+        let start = Task { @MainActor in
+            try await prepared.prepareAndStartIPadProviderCall(selection, context: prepared.audioRouteContext, target: .chatGPTDots)
+        }
+        await flush()
+        expect(controls(peer).isEmpty && prepared.audioRouteSelection == selection, "route preparation is not call success and sends no early 221")
+        try acceptPreparation(prepared)
+        try await start.value
+        expect(controls(peer).count == 1 && controls(peer).first?.operation == .perform &&
+               prepared.providerCall.result == nil && prepared.providerCall.pending != nil,
+               "one prepared start remains pending until actual provider acknowledgment")
+        do {
+            try await prepared.prepareAndStartIPadProviderCall(selection, context: prepared.audioRouteContext, target: .chatGPTDots)
+            expect(false, "duplicate preparation must fail")
+        } catch { expect(controls(peer).count == 1, "pending provider request blocks duplicate one tap") }
+
+        for change in ["cancel", "stop", "target", "peer", "source", "background", "provider-generation", "trust", "blocked", "superseded", "timeout"] {
+            let client = try await ready(activate: false), original = client.connection!
+            let context = client.audioRouteContext
+            let task = Task { @MainActor in
+                try await client.prepareAndStartIPadProviderCall(selection, context: context, target: .chatGPTDots)
+            }
+            await flush()
+            expect(client.audioRouteSelection == selection && controls(original).isEmpty, "\(change): awaiting binding")
+            switch change {
+            case "cancel": task.cancel()
+            case "stop": client.cancelDesiredAudioRequest()
+            case "target": _ = client.selectIPadProviderCallTarget(.nativeCodex)
+            case "peer": client.connection = NWConnection()
+            case "source": client.active = .none
+            case "background": client.appInForeground = false
+            case "provider-generation": client.providerCallConnection = UUID()
+            case "trust": client.authenticated = false
+            case "blocked": client.audioForwarding.block()
+            case "superseded":
+                task.cancel()
+                client.cancelDesiredAudioRequest()
+                try await client.applyAudioRoutes(selection, context: context)
+            default: break
+            }
+            do {
+                try await task.value
+                expect(false, "\(change): preparation must not start")
+            } catch {
+                expect(controls(original).isEmpty && controls(client.connection!).isEmpty,
+                       "\(change): no provider start after invalidation")
+            }
+            if change == "cancel" || change == "timeout" || change == "blocked" {
+                expect(client.audioRouteSelection == .init(), "\(change): unfinished own preparation stops its audio intent")
+            }
+            if change == "peer" || change == "source" || change == "provider-generation" || change == "superseded" {
+                expect(client.audioRouteSelection == selection, "\(change): stale preparation cannot alter replacement scope")
+            }
+        }
+        let unsupported = try await ready(activate: false), unsupportedPeer = unsupported.connection!
+        _ = unsupported.selectIPadProviderCallTarget(.nativeCodex)
+        do {
+            try await unsupported.prepareAndStartIPadProviderCall(selection, context: unsupported.audioRouteContext, target: .nativeCodex)
+            expect(false, "unsupported native must fail")
+        } catch {
+            expect(controls(unsupportedPeer).isEmpty && unsupported.audioRouteSelection == .init(),
+                   "unsupported native neither prepares audio nor falls back to Dots")
+        }
     }
 }

@@ -51,6 +51,75 @@ extension StreamClient {
     }
     var iPadProviderCanCheckPrevious: Bool { providerCallRegistered && providerCall.canManuallyQuery }
 
+    var iPadProviderCanPrepareCall: Bool {
+        providerCall.canPerform && providerCall.activeCall == nil && !inputPaused && connected &&
+        appInForeground && UIApplication.shared.applicationState == .active && audioRouteContext != nil && audioForwardingContext != nil &&
+        authenticatedMacAudioRoutePeer == providerCallPeer && providerCallPeer != nil &&
+        providerCall.connection == providerCallConnection && providerCall.hostKey == providerCallTrustedHostKey
+    }
+
+    @MainActor func prepareAndStartIPadProviderCall(_ selection: IPadAudioRoutePolicy.Selection,
+                                                   context: IPadAudioRoutePolicy.Context?,
+                                                   target: IPadCallTarget) async throws {
+        guard iPadProviderCanPrepareCall, let peer = connection, let context,
+              context == audioRouteContext, target == providerCall.target,
+              let forwarding = audioForwardingContext, let hostKey = providerCallTrustedHostKey else {
+            throw IPadAudioRoutePolicy.Problem.changedConnection
+        }
+        let generation = providerCallConnection
+        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+        var submitted = false
+        var preparedRevisions: [UUID]?
+        defer {
+            if !submitted, connection === peer, context == audioRouteContext,
+               forwarding == audioForwardingContext, providerCallConnection == generation,
+               providerCallTrustedHostKey == hostKey, target == providerCall.target,
+               preparedRevisions == IPadDesiredAudio.Direction.allCases.map({ desiredAudio.revision(for: $0) }),
+               selection == audioRouteSelection {
+                cancelDesiredAudioRequest()
+            }
+        }
+        func validate() throws {
+            try Task.checkCancellation()
+            guard connection === peer, context == audioRouteContext, forwarding == audioForwardingContext,
+                  providerCallConnection == generation, providerCallTrustedHostKey == hostKey,
+                  target == providerCall.target, iPadProviderCanPrepareCall else {
+                throw IPadAudioRoutePolicy.Problem.changedConnection
+            }
+            if let preparedRevisions,
+               preparedRevisions != IPadDesiredAudio.Direction.allCases.map({ desiredAudio.revision(for: $0) }) {
+                throw IPadAudioRoutePolicy.Problem.changedConnection
+            }
+            guard ContinuousClock.now < deadline else {
+                throw NSError(domain: "IPadProviderCall", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "음성 입출력 준비 시간이 지났습니다. 통화는 시작하지 않았습니다."])
+            }
+        }
+        try validate()
+        if selection != audioRouteSelection || !iPadProviderCanStart {
+            try await applyAudioRoutes(selection, context: context)
+        }
+        preparedRevisions = IPadDesiredAudio.Direction.allCases.map { desiredAudio.revision(for: $0) }
+        while true {
+            try validate()
+            guard selection == audioRouteSelection, audioForwarding.phase != .blocked,
+                  microphoneCleanupProblem == nil else { throw IPadAudioRoutePolicy.Problem.changedConnection }
+            if case .failed(let reason) = microphonePhase {
+                throw NSError(domain: "IPadProviderCall", code: 2, userInfo: [NSLocalizedDescriptionKey: reason])
+            }
+            if case .failed(let reason) = remoteAudioStatus {
+                throw NSError(domain: "IPadProviderCall", code: 3, userInfo: [NSLocalizedDescriptionKey: reason])
+            }
+            if iPadProviderCanStart {
+                performIPadProviderCall(.start, target: target)
+                guard providerCall.pending != nil else { throw IPadAudioRoutePolicy.Problem.changedConnection }
+                submitted = true
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
     @discardableResult
     func selectIPadProviderCallTarget(_ target: IPadCallTarget) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))

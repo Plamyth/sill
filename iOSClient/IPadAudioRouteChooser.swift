@@ -7,323 +7,314 @@ import StreamProtocol
 struct IPadAudioRouteChooser: View {
     @ObservedObject var client: StreamClient
     @Environment(\.dismiss) private var dismiss
-    private var callTarget: IPadCallTarget { client.providerCall.target }
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selection = IPadAudioRoutePolicy.Selection()
+    @State private var selectionEdited = false
     @State private var context: IPadAudioRoutePolicy.Context?
     @State private var acknowledgedMac: IPadAudioRouteAcknowledgments.Identity?
     @State private var problem: String?
+    @State private var operation: Task<Void, Never>?
+    @State private var operationID: UUID?
+    @State private var preparingCall = false
+    @State private var devicesPresented = false
     @State private var macProblem: String?
-    @State private var macInputUID = ""
-    @State private var macOutputUID = ""
-    @State private var macCatalogToken: MacAudioRouteSession.CatalogToken?
     @State private var macCatalogWaitExpired = false
     @State private var inputPorts = "입력 경로 미확인"
     @State private var outputPorts = "출력 경로 미확인"
 
-    private var mac: String { client.macName.isEmpty ? "연결된 Mac" : client.macName }
+    private var callTarget: IPadCallTarget { client.providerCall.target }
+    private var busy: Bool {
+        operationID != nil || client.audioRouteAuthorization != nil || client.providerCall.pending != nil ||
+        client.macAudioRoutes.pending != nil || [.submitting, .quiescing].contains(client.audioForwardingPhase)
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Picker("통화 대상", selection: Binding(get: { client.providerCall.target },
-                        set: { _ = client.selectIPadProviderCallTarget($0) })) {
-                        ForEach(IPadCallTarget.allCases) { target in
-                            Text(target.title).tag(target)
+                    if preparingCall {
+                        ProgressView("통화 준비 중…")
+                        Button("준비 취소", role: .cancel) { cancelOperation(stopPreparingAudio: true) }
+                            .frame(minHeight: 44)
+                            .accessibilityIdentifier("iPadProviderCallCancelPreparation")
+                    } else if client.providerCall.selectedActiveCall != nil {
+                        Button(role: .destructive) {
+                            client.performIPadProviderCall(.stop, target: callTarget)
+                        } label: {
+                            Label("통화 종료", systemImage: "phone.down.fill")
+                                .font(.title2).frame(maxWidth: .infinity, minHeight: 64)
                         }
+                        .disabled(busy || !client.iPadProviderCanStop)
+                        .accessibilityIdentifier("iPadProviderCallStop")
+                    } else {
+                        Button(action: startCall) {
+                            Label("통화 시작", systemImage: "phone.fill")
+                                .font(.title2).frame(maxWidth: .infinity, minHeight: 64)
+                        }
+                        .disabled(busy || !client.iPadProviderCanPrepareCall)
+                        .accessibilityIdentifier("iPadProviderCallStart")
                     }
-                    .accessibilityIdentifier("iPadCallTarget")
-                    .disabled(!client.providerCall.canChangeTarget)
-                    switch callTarget {
-                    case .grokBot:
-                        Text("Grok Bot 통화 시작·종료는 아직 지원하지 않습니다. 다른 대상의 통화 명령으로 대신 실행하지 않습니다.")
+                    if callTarget == .grokBot {
+                        Text("Grok Bot 통화 시작·종료는 아직 지원하지 않습니다.")
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("iPadGrokBotCallUnsupported")
-                    case .nativeCodex, .chatGPTDots:
-                        Button(callTarget == .nativeCodex ? "음성 대화 시작" : "ChatGPT Dots 통화 시작") { client.performIPadProviderCall(.start, target: callTarget) }
-                            .disabled(!client.iPadProviderCanStart)
-                            .accessibilityIdentifier("iPadProviderCallStart")
-                        Button(callTarget == .nativeCodex ? "음성 대화 종료" : "ChatGPT Dots 통화 종료", role: .destructive) { client.performIPadProviderCall(.stop, target: callTarget) }
-                            .disabled(!client.iPadProviderCanStop)
-                            .accessibilityIdentifier("iPadProviderCallStop")
+                    } else if client.providerCall.pending != nil || client.providerCall.selectedResult != nil ||
+                                !client.providerCall.targetSupported {
                         Text(client.providerCall.message)
                             .accessibilityIdentifier("iPadProviderCallStatus")
-                        if client.providerCall.request != nil {
-                            Button(callTarget == .nativeCodex ? "이전 음성 요청 결과 확인" : "이전 Dots 요청 결과 확인") { client.checkPreviousIPadProviderCall(target: callTarget) }
-                                .disabled(!client.iPadProviderCanCheckPrevious)
-                                .accessibilityIdentifier("iPadProviderCallCheckPrevious")
-                        }
-                        if let history = client.providerCall.historicalMessage {
-                            Text(history).foregroundStyle(.secondary)
-                                .accessibilityIdentifier("iPadProviderCallHistoricalResult")
-                        }
                     }
-                } header: { Text("통화 대상과 제어") } footer: {
-                    Text("입력·출력 선택은 통화를 시작하지 않습니다. 이전 요청 기록과 현재 통화 상태는 별도로 확인합니다.")
+                    if client.providerCall.request != nil && client.providerCall.pending == nil &&
+                        (client.providerCall.selectedResult?.status == .unknown || client.providerCall.canManuallyQuery) {
+                        Button("이전 통화 요청 확인") { client.checkPreviousIPadProviderCall(target: callTarget) }
+                            .disabled(busy || !client.iPadProviderCanCheckPrevious)
+                            .accessibilityIdentifier("iPadProviderCallCheckPrevious")
+                    }
+                    if let history = client.providerCall.historicalMessage {
+                        Text(history).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("iPadProviderCallHistoricalResult")
+                    }
                 }
-
                 Section {
-                    Button("iPad 입력·출력 함께 사용") {
-                        selection = .init(input: .iPadMicrophone, output: .iPadPlayback)
+                    Toggle(isOn: Binding(get: { selection.input != .off }, set: {
+                        selectionEdited = true
+                        selection.input = $0 ? .iPadMicrophone : .off
                         applySelection()
-                    }
-                    .disabled(context == nil || !client.audioRouteCapabilities.microphone ||
-                              !client.audioRouteCapabilities.playback || client.audioRouteAuthorization != nil)
-                    .accessibilityIdentifier("useIPadFullDuplex")
-                    LabeledContent("iPad 마이크", value: microphoneStatus)
-                    LabeledContent("iPad 스피커·연결된 출력", value: playbackStatus)
-                    if let reason = client.audioRoutePlaybackUnavailableReason { Text(reason).foregroundStyle(.secondary) }
-                } header: { Text("이 iPad의 입력·출력") }
-
-                Section {
-                    Text("iPad 마이크 전송과 Mac 소리 재생은 이 iPad의 별도 동의입니다. Mac 시스템 기본 장치 선택과 관계없이 각각 적용합니다.")
-                }
-                Section {
-                    Picker("입력 소스", selection: $selection.input) {
-                        ForEach(client.audioRouteCapabilities.inputs) { input in
-                            Text(input.title).tag(input)
-                        }
-                    }
-                    .accessibilityIdentifier("audioRouteInput")
-                    LabeledContent("전달 대상", value: mac)
-                    LabeledContent("현재 iPad 입력", value: inputPorts)
-                    LabeledContent("iPad 마이크 상태", value: microphoneStatus)
-                    if client.microphonePhase == .live {
-                        Button("Mac 수신 상태 확인") { client.requestMicrophoneReceipt() }
-                        if let receipt = client.microphoneReceipt {
-                            LabeledContent("Mac 수신 패킷", value: receipt.admittedPackets.formatted())
-                            LabeledContent("가상 마이크 출력 샘플", value: receipt.renderedFrames.formatted())
-                        }
-                    }
-                    if !client.audioRouteCapabilities.microphone {
-                        Text("현재 연결에서는 iPad 마이크 전송을 지원하지 않습니다.")
-                            .foregroundStyle(.secondary)
-                    }
-                    if let cleanup = client.microphoneCleanupProblem {
-                        Text(cleanup).foregroundStyle(.red)
-                    }
-                } header: { Text("iPad 마이크 전송") }
-                Section {
-                    LabeledContent("소리 소스", value: mac)
-                    Picker("출력 대상", selection: $selection.output) {
-                        ForEach(IPadAudioRoutePolicy.Output.allCases) { output in
-                            Text(output.title).tag(output)
-                                .disabled(output != .off && !client.audioRouteCapabilities.playback)
-                        }
-                    }
-                    .accessibilityIdentifier("audioRouteOutput")
-                    LabeledContent("현재 iPad 출력", value: outputPorts)
-                    LabeledContent("Mac 소리 재생 상태", value: playbackStatus)
-                    if client.audioRouteCapabilities.playback {
-                        HStack {
-                            Text("시스템 출력 장치 선택")
-                            Spacer()
-                            IPadSystemOutputPicker()
-                                .frame(width: 44, height: 44)
-                        }
-                    } else if let reason = client.audioRoutePlaybackUnavailableReason {
-                        Text(reason)
-                            .foregroundStyle(.secondary)
-                    }
-                } header: { Text("iPad 오디오 재생") }
-                Section {
-                    Text("실제 마이크와 출력 장치는 iPad의 현재 오디오 경로를 사용합니다. 일부 Bluetooth 장치는 입력을 바꾸면 출력도 함께 바뀝니다.")
-                        .foregroundStyle(.secondary)
-                    Text("선택은 인증된 Mac별로 기억합니다. Mac의 오디오 보호와 새 연결 승인을 확인하면 다시 사용합니다. 그림판을 열어도 사용할 수 있으며 마이크 권한은 자동으로 요청하지 않습니다.")
-                        .foregroundStyle(.secondary)
-                    Text(client.audioPrivacyState?.version == 2 && client.audioPrivacyState?.protected == true
-                         ? "Mac이 현재 오디오 보호 상태를 보고했습니다. 연결이 끊겨도 Mac 음소거를 해제하지 않습니다."
-                         : "Mac 오디오 보호가 확인되지 않아 iPad 입출력을 시작할 수 없습니다. Mac 앱의 보호 상태와 버전을 확인하세요.")
-                        .foregroundStyle(.secondary)
-                    LabeledContent("다시 연결할 때 마이크", value: client.desiredAudioSelection.microphone ? "사용 기억됨" : "사용 안 함")
-                    LabeledContent("다시 연결할 때 재생", value: client.desiredAudioSelection.playback ? "사용 기억됨" : "사용 안 함")
-                    if let problem { Text(problem).foregroundStyle(.red).accessibilityIdentifier("audioRouteProblem") }
-                }
-                Section {
-                    Button("iPad 전송·재생 동의 적용") {
+                    })) { Label("마이크 사용", systemImage: selection.input == .off ? "mic.slash" : "mic") }
+                        .disabled(busy || context == nil || (selection.input == .off && !client.audioRouteCapabilities.microphone))
+                        .accessibilityIdentifier("iPadCallMicrophone")
+                    Toggle(isOn: Binding(get: { selection.output != .off }, set: {
+                        selectionEdited = true
+                        selection.output = $0 ? .iPadPlayback : .off
                         applySelection()
+                    })) { Label("스피커 사용", systemImage: selection.output == .off ? "speaker.slash" : "speaker.wave.2") }
+                        .disabled(busy || context == nil || (selection.output == .off && !client.audioRouteCapabilities.playback))
+                        .accessibilityIdentifier("iPadCallSpeaker")
+                    routeStatus
+                    Button { devicesPresented = true } label: {
+                        Label("기기", systemImage: "hifispeaker")
                     }
-                    .disabled(context == nil || client.audioRouteAuthorization != nil)
-                    .accessibilityIdentifier("applyAudioRoutes")
-                    if client.audioRouteAuthorization != nil {
-                        ProgressView("iPad 마이크 권한 확인 중")
-                        Button("입력·출력 요청 취소") { client.cancelDesiredAudioRequest() }
-                    }
-                    Button("닫기", action: close)
-                        .disabled(client.macAudioRoutes.pending != nil)
+                    .disabled(busy)
+                    .accessibilityIdentifier("iPadCallDevices")
                 }
-                macRoutes
             }
-            .navigationTitle("오디오 입력·출력")
+            .navigationTitle("통화")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("iPad 입출력 중지", role: .destructive) {
-                        selection = .init()
-                        problem = nil
-                        client.cancelDesiredAudioRequest()
-                    }
-                    .disabled(!client.connected)
-                    .accessibilityIdentifier("stopIPadAudio")
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("닫기", action: close)
-                        .disabled(client.macAudioRoutes.pending != nil)
-                }
+                ToolbarItem(placement: .cancellationAction) { Button("닫기", action: close) }
             }
+            .sheet(isPresented: $devicesPresented) { deviceSheet }
         }
-        .interactiveDismissDisabled(client.macAudioRoutes.pending != nil)
         .preferredColorScheme(.dark)
         .onAppear {
             context = client.audioRouteContext
             acknowledgedMac = client.audioRoutePresentation?.identity
             selection = client.audioRouteSelection
-            macCatalogToken = client.macAudioRoutes.catalogToken
+            selectionEdited = selection != .init() || client.providerCall.activeCall != nil
             readPorts()
-            client.fetchMacAudioRoutes()
         }
-        .onDisappear { client.audioRouteAuthorization = nil }
+        .onDisappear {
+            cancelOperation(stopPreparingAudio: true)
+        }
         .onChange(of: client.audioRouteContext) { _, next in
+            cancelOperation(stopPreparingAudio: false)
             context = next
-            selection = IPadAudioRoutePolicy.Selection()
-            problem = "연결이나 화면이 바뀌어 선택을 초기화했습니다. 다시 선택하세요."
+            acknowledgedMac = client.audioRouteTrustedMac
+            selection = client.audioRouteSelection
+            selectionEdited = selection != .init() || client.providerCall.activeCall != nil
+            problem = "연결이나 화면이 바뀌었습니다. 현재 연결에서 다시 시작하세요."
         }
-        .onChange(of: client.audioRouteCapabilities) { _, next in
-            if !next.microphone { selection.input = .off }
-            if !next.playback { selection.output = .off }
+        .onChange(of: client.providerCall.target) { _, _ in cancelOperation(stopPreparingAudio: true) }
+        .onChange(of: client.providerCallConnection) { _, _ in cancelOperation(stopPreparingAudio: true) }
+        .onChange(of: scenePhase) { _, next in
+            if next != .active { cancelOperation(stopPreparingAudio: true) }
+        }
+        .onChange(of: client.audioForwardingPhase) { _, next in
+            if next == .blocked && preparingCall {
+                cancelOperation(stopPreparingAudio: true)
+                problem = "음성 연결 준비가 중단되어 통화를 시작하지 않았습니다."
+            }
         }
         .onChange(of: client.macAudioRoutes.peer) { _, _ in
-            macInputUID = ""
-            macOutputUID = ""
-            macCatalogToken = nil
             macProblem = nil
             macCatalogWaitExpired = false
         }
-        .onChange(of: client.macAudioRoutes.catalogToken) { _, next in
-            macInputUID = ""
-            macOutputUID = ""
-            macCatalogToken = next
-        }
-        .onChange(of: client.macAudioRoutes.pending?.requestID) { previous, current in
-            if previous != nil && current == nil {
-                macInputUID = ""
-                macOutputUID = ""
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: AVAudioSession.routeChangeNotification)
             .receive(on: RunLoop.main)) { _ in readPorts() }
-        .task(id: client.macAudioRoutes.peer) {
-            macCatalogWaitExpired = false
-            guard client.macAudioRoutes.peer != nil else { return }
-            try? await Task.sleep(for: .seconds(5))
-            if !Task.isCancelled && client.macAudioRoutes.state == nil { macCatalogWaitExpired = true }
+    }
+
+    @ViewBuilder private var routeStatus: some View {
+        if operationID != nil && !preparingCall { ProgressView("입출력 변경 중…") }
+        if client.audioRouteAuthorization != nil { ProgressView("마이크 권한 확인 중…") }
+        switch client.microphonePhase {
+        case .authorizing, .requesting, .capturing, .stopping:
+            Text("마이크 연결 처리 중…").foregroundStyle(.secondary)
+        case .failed(let reason): Text(reason).foregroundStyle(.red)
+        default: EmptyView()
         }
+        switch client.remoteAudioStatus {
+        case .requesting, .starting: Text("스피커 연결 처리 중…").foregroundStyle(.secondary)
+        case .failed(let reason): Text(reason).foregroundStyle(.red)
+        default: EmptyView()
+        }
+        if let cleanup = client.microphoneCleanupProblem { Text(cleanup).foregroundStyle(.red) }
+        if let problem { Text(problem).foregroundStyle(.red).accessibilityIdentifier("audioRouteProblem") }
+        if !client.connected {
+            Text("Mac 연결이 끊어졌습니다.").foregroundStyle(.secondary)
+        } else if !client.audioRouteCapabilities.microphone || !client.audioRouteCapabilities.playback ||
+                    client.audioForwardingPhase == .blocked {
+            if let reason = client.audioRoutePlaybackUnavailableReason { Text(reason).foregroundStyle(.secondary) }
+        }
+    }
+
+    private var deviceSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Picker("통화 대상", selection: Binding(get: { callTarget },
+                        set: { _ = client.selectIPadProviderCallTarget($0) })) {
+                        ForEach(IPadCallTarget.allCases) { target in Text(target.title).tag(target) }
+                    }
+                    .disabled(busy || !client.providerCall.canChangeTarget)
+                    .accessibilityIdentifier("iPadCallTarget")
+                }
+                Section("이 iPad") {
+                    LabeledContent("마이크", value: inputPorts)
+                    LabeledContent("스피커·연결된 출력", value: outputPorts)
+                    HStack {
+                        Text("출력 기기")
+                        Spacer()
+                        IPadSystemOutputPicker().frame(width: 44, height: 44)
+                    }
+                    .disabled(busy)
+                }
+                macRoutes
+            }
+            .navigationTitle("기기")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("완료") { devicesPresented = false } }
+            }
+            .onAppear { client.fetchMacAudioRoutes() }
+            .task(id: client.macAudioRoutes.peer) {
+                macCatalogWaitExpired = false
+                guard client.macAudioRoutes.peer != nil else { return }
+                try? await Task.sleep(for: .seconds(5))
+                if !Task.isCancelled && client.macAudioRoutes.state == nil { macCatalogWaitExpired = true }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private var macRoutes: some View {
         Section {
-            Text("Mac 전체의 기본 입력과 출력을 각각 바꿉니다. 목록에는 Mac의 물리 장치만 표시됩니다.")
-                .foregroundStyle(.secondary)
             if client.authenticatedMacAudioRoutePeer == nil {
-                Text("이 연결에서는 인증된 Mac 오디오 장치 목록을 사용할 수 없습니다.")
-                    .foregroundStyle(.secondary)
+                Text("이 연결에서는 Mac 장치 목록을 사용할 수 없습니다.").foregroundStyle(.secondary)
             } else if let state = client.macAudioRoutes.state, state.available {
-                LabeledContent("현재 Mac 기본 입력", value: defaultLabel(state.defaults.inputUID, in: state))
-                LabeledContent("현재 Mac 기본 출력", value: defaultLabel(state.defaults.outputUID, in: state))
-                Picker("Mac 시스템 입력", selection: $macInputUID) {
-                    Text("현재 기본값 유지").tag("")
-                    ForEach(state.endpoints.filter(\.input), id: \.uid) { endpoint in
-                        Text(endpoint.name).tag(endpoint.uid)
+                let displayed = MacAudioRouteSession.CatalogToken(revision: state.revision, defaults: state.defaults)
+                Picker("입력", selection: Binding(get: { state.defaults.inputUID ?? "" }, set: {
+                    selectMacDevice(inputUID: $0, outputUID: nil, displayed: displayed)
+                })) {
+                    if state.defaults.inputUID == nil || !state.endpoints.contains(where: { $0.uid == state.defaults.inputUID && $0.input }) {
+                        Text("현재 입력 미확인").tag(state.defaults.inputUID ?? "")
                     }
+                    ForEach(state.endpoints.filter(\.input), id: \.uid) { Text($0.name).tag($0.uid) }
                 }
+                .disabled(busy || client.macAudioRoutes.catalogToken != displayed)
                 .accessibilityIdentifier("macAudioInput")
-                Picker("Mac 시스템 출력", selection: $macOutputUID) {
-                    Text("현재 기본값 유지").tag("")
-                    ForEach(state.endpoints.filter(\.output), id: \.uid) { endpoint in
-                        Text(endpoint.name).tag(endpoint.uid)
+                Picker("출력", selection: Binding(get: { state.defaults.outputUID ?? "" }, set: {
+                    selectMacDevice(inputUID: nil, outputUID: $0, displayed: displayed)
+                })) {
+                    if state.defaults.outputUID == nil || !state.endpoints.contains(where: { $0.uid == state.defaults.outputUID && $0.output }) {
+                        Text("현재 출력 미확인").tag(state.defaults.outputUID ?? "")
                     }
+                    ForEach(state.endpoints.filter(\.output), id: \.uid) { Text($0.name).tag($0.uid) }
                 }
+                .disabled(busy || client.macAudioRoutes.catalogToken != displayed)
                 .accessibilityIdentifier("macAudioOutput")
-                Button("Mac 기본 장치 적용") {
-                    do {
-                        guard let macCatalogToken else { throw MacAudioRouteSession.Problem.catalogChanged }
-                        try client.selectMacAudioRoutes(inputUID: macInputUID.isEmpty ? nil : macInputUID,
-                                                        outputUID: macOutputUID.isEmpty ? nil : macOutputUID,
-                                                        displayed: macCatalogToken)
-                        macProblem = nil
-                    } catch { macProblem = error.localizedDescription }
-                }
-                .disabled(client.macAudioRoutes.pending != nil || macCatalogToken == nil || !macHasChange(state))
-                .accessibilityIdentifier("applyMacAudioRoutes")
             } else {
-                Text(client.macAudioRoutes.state?.available == false
-                     ? "Mac 오디오 장치 정보를 읽을 수 없습니다."
-                     : macCatalogWaitExpired
-                     ? "Mac 장치 목록을 받지 못했습니다. 현재 Mac의 Sill 버전에서 지원하지 않을 수 있습니다."
-                     : "Mac 오디오 장치 목록을 기다리는 중입니다.")
+                Text(client.macAudioRoutes.state?.available == false ? "Mac 장치 목록을 읽을 수 없습니다."
+                     : macCatalogWaitExpired ? "Mac 장치 목록을 받지 못했습니다." : "Mac 장치 목록을 확인 중입니다.")
                     .foregroundStyle(.secondary)
             }
-            Button("Mac 장치 새로고침") { client.fetchMacAudioRoutes() }
-                .disabled(client.authenticatedMacAudioRoutePeer == nil || client.macAudioRoutes.pending != nil)
-                .accessibilityIdentifier("fetchMacAudioRoutes")
-            if let outcome = client.macAudioRoutes.outcome {
-                Text(outcome.title)
-                    .foregroundStyle(outcome.isSuccess ? Color.secondary : Color.red)
-                    .accessibilityIdentifier("macAudioRouteResult")
+            if client.macAudioRoutes.pending != nil { ProgressView("Mac 장치 변경 중…") }
+            if let outcome = client.macAudioRoutes.outcome, !outcome.isSuccess {
+                Text(outcome.title).foregroundStyle(.secondary).accessibilityIdentifier("macAudioRouteResult")
             }
             if let macProblem { Text(macProblem).foregroundStyle(.red) }
-        } header: { Text("Mac 시스템 기본 장치") }
+            if macCatalogWaitExpired || macProblem != nil || client.macAudioRoutes.state?.available == false ||
+                (client.macAudioRoutes.outcome != nil && client.macAudioRoutes.outcome?.isSuccess == false && client.macAudioRoutes.pending == nil) {
+                Button("Mac 장치 다시 확인") { client.fetchMacAudioRoutes() }
+                    .disabled(busy || client.authenticatedMacAudioRoutePeer == nil)
+                    .accessibilityIdentifier("fetchMacAudioRoutes")
+            }
+        } header: { Text("Mac 기본 장치") }
     }
 
-    private func defaultLabel(_ uid: String?, in state: AudioRouteState) -> String {
-        guard let uid else { return "확인할 수 없음" }
-        return state.endpoints.first(where: { $0.uid == uid })?.name ?? "목록 밖 장치 (\(uid))"
+    private func selectMacDevice(inputUID: String?, outputUID: String?, displayed: MacAudioRouteSession.CatalogToken) {
+        guard !busy else { return }
+        do {
+            try client.selectMacAudioRoutes(inputUID: inputUID, outputUID: outputUID, displayed: displayed)
+            macProblem = nil
+        } catch { macProblem = error.localizedDescription }
     }
 
-    private func macHasChange(_ state: AudioRouteState) -> Bool {
-        (!macInputUID.isEmpty && macInputUID != state.defaults.inputUID) ||
-        (!macOutputUID.isEmpty && macOutputUID != state.defaults.outputUID)
-    }
-
-    private var microphoneStatus: String {
-        switch client.microphonePhase {
-        case .unavailable: "사용할 수 없음"
-        case .off: "꺼짐"
-        case .authorizing: "iPad 권한 확인 중"
-        case .cleanupRequired: "Mac 마이크 정리 필요"
-        case .requesting: "Mac 동의 대기 중"
-        case .capturing: "마이크 준비 중"
-        case .live: "전송 중"
-        case .stopping: "중지 중"
-        case .failed(let reason): "실패: \(reason)"
-        }
-    }
-
-    private var playbackStatus: String {
-        switch client.remoteAudioStatus {
-        case .unavailable: "사용할 수 없음"
-        case .off: "꺼짐"
-        case .requesting: "Mac 동의 대기 중"
-        case .starting: "소리 연결 준비 중"
-        case .listening: "iPad에서 재생 중"
-        case .failed(let reason): "실패: \(reason)"
+    private func startCall() {
+        guard !busy, client.iPadProviderCanPrepareCall else { return }
+        let chosen = selectionEdited || selection != .init() ? selection
+            : IPadAudioRoutePolicy.Selection(input: .iPadMicrophone, output: .iPadPlayback)
+        let displayed = context, target = callTarget
+        selection = chosen
+        client.acknowledgeAudioRoutes(identity: acknowledgedMac, context: displayed)
+        let id = UUID()
+        operationID = id
+        preparingCall = true
+        problem = nil
+        operation = Task { @MainActor in
+            defer {
+                if operationID == id { operationID = nil; operation = nil; preparingCall = false }
+            }
+            do {
+                try await client.prepareAndStartIPadProviderCall(chosen, context: displayed, target: target)
+            } catch {
+                guard operationID == id, !Task.isCancelled else { return }
+                problem = error.localizedDescription
+            }
         }
     }
 
     private func applySelection() {
-        let chosen = selection
-        let displayed = context
-        let identity = acknowledgedMac
-        client.acknowledgeAudioRoutes(identity: identity, context: displayed)
-        Task { @MainActor in
+        guard !busy else { return }
+        let chosen = selection, displayed = context
+        client.acknowledgeAudioRoutes(identity: acknowledgedMac, context: displayed)
+        let id = UUID()
+        operationID = id
+        problem = nil
+        operation = Task { @MainActor in
+            defer { if operationID == id { operationID = nil; operation = nil } }
             do {
+                try Task.checkCancellation()
                 try await client.applyAudioRoutes(chosen, context: displayed)
-                problem = nil
-            } catch { problem = error.localizedDescription }
+            } catch {
+                guard operationID == id, !Task.isCancelled else { return }
+                selection = client.audioRouteSelection
+                problem = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancelOperation(stopPreparingAudio: Bool) {
+        let wasPreparing = preparingCall
+        operation?.cancel()
+        operation = nil
+        operationID = nil
+        preparingCall = false
+        if client.audioRouteAuthorization?.context == context { client.audioRouteAuthorization = nil }
+        if stopPreparingAudio && wasPreparing && context == client.audioRouteContext {
+            client.cancelDesiredAudioRequest()
         }
     }
 
     private func close() {
-        client.audioRouteAuthorization = nil
+        cancelOperation(stopPreparingAudio: true)
         client.acknowledgeAudioRoutes(identity: acknowledgedMac, context: context)
         dismiss()
     }
