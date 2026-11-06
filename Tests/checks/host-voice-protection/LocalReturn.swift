@@ -58,11 +58,9 @@ private final class ReturnFixture {
     var authCalls = 0
     var authHook: (() -> Void)?
     var quiescent = true
-    var stored: Data?
-    var journal: LocalAudioJournal!
-    var durable: Bool { journal.latched }
+    var durable = false
     var commits = 0
-    var original: LocalAudioState? { journal.original }
+    var original: LocalAudioState?
     var intentCommits = 0
     var intentAccepted = true
     var persistenceAccepted = true
@@ -73,12 +71,10 @@ private final class ReturnFixture {
         callbacksDrained: true, buffersEmpty: true, workersExited: true)
 
     init(relay: Bool = true, forwarding: Bool = false) {
-        journal = LocalAudioJournal(data: nil, store: { [unowned self] in if persistenceAccepted { stored = $0 } },
-            load: { [unowned self] in stored }, synchronize: { [unowned self] in persistenceAccepted })
-        let journal = journal!
-        // PRODUCTION_JOURNAL_CALLBACKS
-        privacy = HostAudioPrivacy(hal: hal,
-            // PRODUCTION_JOURNAL_ARGUMENTS
+        privacy = HostAudioPrivacy(hal: hal, persist: { [unowned self] in durable = true; return persistenceAccepted },
+            saveLocal: { [unowned self] state in original = state; durable = state != nil; return persistenceAccepted },
+            prepareLatchClear: { [unowned self] in let result = clearAccepted; clearHook?(); return result },
+            clearLatch: { [unowned self] in commits += 1; durable = false; clearHook?(); return clearAccepted },
             authenticateLocal: { [unowned self] _ in authCalls += 1; authHook?(); return accepted },
             nativeStartup: startup)
         _ = startup.construct { true }
@@ -443,11 +439,39 @@ private func normalDisconnectReturnChecks() async {
 }
 
 @MainActor
+private final class JournalReturnFixture {
+    let hal = ReturnHAL()
+    let participant = ReturnFixture()
+    var privacy: HostAudioPrivacy!
+    var stored: Data?
+    var journal: LocalAudioJournal!
+    var persistenceAccepted = true
+    var synchronizeAccepted = true
+    var readbackAccepted = true
+    var clearHook: (() -> Void)?
+    var authCalls = 0
+    var original: LocalAudioState? { journal.original }
+
+    init() {
+        journal = LocalAudioJournal(data: nil, store: { [unowned self] in if persistenceAccepted { stored = $0 } },
+            load: { [unowned self] in readbackAccepted ? stored : nil },
+            synchronize: { [unowned self] in persistenceAccepted && synchronizeAccepted })
+        let journal = journal!
+        // PRODUCTION_JOURNAL_CALLBACKS
+        privacy = HostAudioPrivacy(hal: hal,
+            // PRODUCTION_JOURNAL_ARGUMENTS
+            authenticateLocal: { [unowned self] _ in authCalls += 1; return false }, nativeStartup: participant.startup)
+        privacy.revokeForLocalReturn = { true }
+        privacy.inspectForLocalReturn = { [unowned self] in participant.facts }
+    }
+}
+
+@MainActor
 private func normalDisconnectJournalFailureChecks() async {
     var protectedEveryCase = true
     var retainedEveryOriginal = true
     for hotplug in [false, true] {
-        let failure = ReturnFixture()
+        let failure = JournalReturnFixture()
         var admitted = true
         expect(failure.privacy.armAndVerify(), "저널 보상 반례 fixture 보호")
         let original = failure.original!
@@ -475,10 +499,41 @@ private func normalDisconnectJournalFailureChecks() async {
         retainedEveryOriginal = retainedEveryOriginal && retained
         expect(!result && failure.privacy.latched && !failure.privacy.forwardingHealth() && failure.authCalls == 0,
                "admission 상실과 저장 실패는 자동 복귀 성공·인증·원격 승인으로 바뀌지 않음")
+        if hotplug {
+            failure.persistenceAccepted = true
+            expect(failure.privacy.armAndVerify() && failure.journal.original?.devices.last?.streams?.allSatisfy(\.active) == true,
+                   "저장 회복은 메모리에 남긴 새 stream의 보호 전 active를 영속화한 뒤에만 재승인")
+        }
         failure.privacy.stop()
     }
     expect(protectedEveryCase, "P1: 새 stream 원본 저장 실패와 분리해 가능한 보호 쓰기를 적용")
     expect(retainedEveryOriginal, "P2: 최종 확정 전 실패하면 재시작 저널의 latch와 연결 전 원본 보존")
+    for fault in ["store", "synchronize", "readback"] {
+        let failure = JournalReturnFixture()
+        expect(failure.privacy.armAndVerify(), "최종 저널 \(fault) 실패 fixture 보호")
+        let original = failure.original!
+        failure.clearHook = {
+            switch fault {
+            case "store": failure.persistenceAccepted = false
+            case "synchronize": failure.synchronizeAccepted = false
+            default: failure.readbackAccepted = false
+            }
+        }
+        let result = await failure.privacy.requestNormalDisconnectReturn { true }
+        let restarted = LocalAudioJournal(data: failure.stored, store: { _ in }, load: { failure.stored }, synchronize: { true })
+        expect(!result && restarted.latched && restarted.original == original &&
+               (try? failure.hal.snapshot.plan().isEmpty) == true && !failure.privacy.forwardingHealth(),
+               "최종 \(fault) 실패도 실제 production 콜백이 재시작 원본과 가능한 물리 보호 보존")
+        failure.privacy.stop()
+    }
+    let success = JournalReturnFixture()
+    expect(success.privacy.armAndVerify(), "production 저널 정상 복귀 fixture 보호")
+    let original = success.original!
+    let result = await success.privacy.requestNormalDisconnectReturn { true }
+    let restarted = LocalAudioJournal(data: success.stored, store: { _ in }, load: { success.stored }, synchronize: { true })
+    expect(result && original.matches(success.hal.snapshot) && !restarted.latched && restarted.original == nil && success.authCalls == 0,
+           "최종 authority 확인 뒤 production 저널 해제가 확정된 정상 자동 복귀")
+    success.privacy.stop()
 }
 
 @MainActor

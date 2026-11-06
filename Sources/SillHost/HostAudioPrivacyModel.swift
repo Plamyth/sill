@@ -264,6 +264,7 @@ package final class HostAudioPrivacy {
     private var localState: LocalAudioState?
     private var localAudioDisposition: LocalAudioDisposition
     private let saveLocal: (LocalAudioState?) -> Bool
+    private let prepareLatchClear: () -> Bool
     private let clearLatch: () -> Bool
     private let authenticateLocal: (UUID) async -> Bool
     private let cancelAuthentication: () -> Void
@@ -279,6 +280,7 @@ package final class HostAudioPrivacy {
     package var forwardingIntentAllowed: Bool { !authenticatingLocal && !returningLocal }
     private var privacyGeneration = UUID()
     private var persistenceHealthy = true
+    private var localStateNeedsSave = false
     var revokeForLocalReturn: (() async -> Bool)?
     private let nativeStartup: NativeAudioStartup
     var participants: LocalAudioParticipantRegistry { nativeStartup.participants }
@@ -305,11 +307,13 @@ package final class HostAudioPrivacy {
 
     init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
          localState: LocalAudioState? = nil, saveLocal: @escaping (LocalAudioState?) -> Bool = { _ in true },
+         prepareLatchClear: @escaping () -> Bool = { true },
          clearLatch: @escaping () -> Bool = { false }, authenticateLocal: @escaping (UUID) async -> Bool = { _ in false },
          cancelAuthentication: @escaping () -> Void = {}, authenticationChallengeID: @escaping () -> UUID? = { nil },
          nativeStartup: NativeAudioStartup? = nil) {
         self.hal = hal; self.latched = latched; self.persist = persist
         self.localState = localState; self.saveLocal = saveLocal; self.clearLatch = clearLatch
+        self.prepareLatchClear = prepareLatchClear
         localAudioDisposition = latched || localState != nil ? .restorationRequired : .unmodified
         self.authenticateLocal = authenticateLocal; self.cancelAuthentication = cancelAuthentication
         self.authenticationChallengeID = authenticationChallengeID
@@ -368,7 +372,8 @@ package final class HostAudioPrivacy {
         invalidateLocalReturn()
         if latched {
             guard localState?.isValid == true else { fail(.persistence); return false }
-            persistenceHealthy = persist()
+            persistenceHealthy = localStateNeedsSave ? saveLocal(localState) : persist()
+            if persistenceHealthy { localStateNeedsSave = false }
         } else {
             guard let snapshot = try? readSnapshot(), let original = try? LocalAudioState(snapshot), original.isValid else {
                 fail(.readback); return false
@@ -413,7 +418,11 @@ package final class HostAudioPrivacy {
             lastSnapshot = snapshot
             let original = try localState.recordingStreams(snapshot)
             if original != localState {
-                guard saveLocal(original) else { throw PrivacyAudioFailure.persistence }
+                if !saveLocal(original) {
+                    guard allowUnpersistedProtection else { throw PrivacyAudioFailure.persistence }
+                    persistenceHealthy = false
+                    localStateNeedsSave = true
+                }
                 self.localState = original
             }
             watching = hal.observe(snapshot, changed: { [weak self] in self?.propertyChanged() })
@@ -433,6 +442,7 @@ package final class HostAudioPrivacy {
                 guard !plan.contains(write) else { throw PrivacyAudioFailure.readback }
             }
             guard try readSnapshot() == snapshot, try snapshot.plan().isEmpty else { throw PrivacyAudioFailure.readback }
+            guard persistenceHealthy else { throw PrivacyAudioFailure.persistence }
             publish(AudioPrivacyState(version: 2, protected: true))
             return true
         } catch {
@@ -536,6 +546,8 @@ package final class HostAudioPrivacy {
     /// Host-owned admission must continuously prove the last current voice owner disconnected,
     /// Sentry is off, and no other session/window or new owner exists. Never derive it from a wire bool.
     /// This restores audio only; it preserves Node intent and does not release Sentry surfaces.
+    /// Admission is a pure MainActor snapshot. Its final check and the synchronous journal clear
+    /// form one authority commit; owner/Sentry/generation mutations must use that same actor.
     func requestNormalDisconnectReturn(budgetMilliseconds: Int = 30_000,
                                        while admission: @escaping @MainActor () -> Bool) async -> Bool {
         await requestLocalReturn(trigger: .normalDisconnect(admission), budgetMilliseconds: budgetMilliseconds,
@@ -718,7 +730,8 @@ package final class HostAudioPrivacy {
                   self.participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership) else { return false }
             let committed: Bool
             switch audioPlan {
-            case .restoreOriginal: committed = self.clearLatch()
+            case .restoreOriginal:
+                committed = trigger.requiresAuthentication ? self.clearLatch() : self.prepareLatchClear()
             case .preserveLocal: committed = admission()
             }
             if committed { audioCommitReceipt = ticket }
@@ -728,7 +741,12 @@ package final class HostAudioPrivacy {
         if trigger.requiresAuthentication {
             completed = await localReturnDidComplete?(deadline, admission, commitAudio) ?? commitAudio()
         } else {
-            completed = commitAudio() && admission()
+            // Keep the durable original through preparation and the final authority check.
+            // A successful clear is the commit point, with no await or reentrant authority work.
+            if commitAudio() && admission() {
+                if case .restoreOriginal = audioPlan { completed = clearLatch() }
+                else { completed = true }
+            } else { completed = false }
         }
         let audioCommitted = audioCommitReceipt == ticket
         // Sentry has revalidated current through its inactive commit before returning success.

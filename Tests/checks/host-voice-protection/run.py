@@ -45,9 +45,9 @@ journal_arguments = 'persist: production_persist, localState: journal.original, 
 prepare = 'prepareLatchClear: '
 if prepare in production_privacy:
     journal_callbacks.append('let production_prepareLatchClear = ' + block(production_privacy, prepare).split(': ', 1)[1])
-    journal_arguments += 'prepareLatchClear: { [unowned self] in commits += 1; let result = clearAccepted && production_prepareLatchClear(); clearHook?(); return result }, clearLatch: production_clearLatch, '
+    journal_arguments += 'prepareLatchClear: { [unowned self] in let result = production_prepareLatchClear(); clearHook?(); return result }, clearLatch: production_clearLatch, '
 else:
-    journal_arguments += 'clearLatch: { [unowned self] in commits += 1; let result = clearAccepted && production_clearLatch(); clearHook?(); return result }, '
+    journal_arguments += 'clearLatch: { [unowned self] in let result = production_clearLatch(); clearHook?(); return result }, '
 (output / 'LocalReturn.swift').write_text((here / 'LocalReturn.swift').read_text()
     .replace('// PRODUCTION_JOURNAL_CALLBACKS', '\n'.join(journal_callbacks))
     .replace('// PRODUCTION_JOURNAL_ARGUMENTS', journal_arguments))
