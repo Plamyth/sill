@@ -223,16 +223,77 @@ enum ScenePhase { case active, inactive, background }
 }
 '''.replace('CHOOSER_METHODS', '\n'.join(method('IPadAudioRouteChooser.swift', name).replace('private func ', 'func ', 1)
                                        for name in ['handleScenePhase', 'handleRouteContext', 'cancelOperation']))
-    baseline = subprocess.check_output(['git', 'show', '6b82e77f:iOSClient/StreamClient+ProviderCall.swift'], cwd=root, text=True)
-    start = baseline.index('    @MainActor func prepareAndStartIPadProviderCall(')
-    end = baseline.index('\n    }', start) + len('\n    }')
-    legacy = baseline[start:end].replace('prepareAndStartIPadProviderCall(', 'legacyPrepareAndStartIPadProviderCall(', 1)
-    fixture += '\nextension StreamClient {\n' + legacy + '\n}\n'
-    baseline = subprocess.check_output(['git', 'show', '6b82e77f:iOSClient/IPadAudioRouteChooser.swift'], cwd=root, text=True)
-    start = baseline.index('.onChange(of: scenePhase)')
-    start = baseline.index(' in\n', start) + len(' in\n')
-    end = baseline.index('\n        }', start)
-    fixture += '\nextension ChooserFixture { func legacyHandleScenePhase(_ next: ScenePhase) {\n' + baseline[start:end] + '\n} }\n'
+    # Frozen 6b82e77f counterexamples must run in Git-free source snapshots.
+    fixture += r'''
+extension StreamClient {
+    @MainActor func legacyPrepareAndStartIPadProviderCall(_ selection: IPadAudioRoutePolicy.Selection,
+                                                   context: IPadAudioRoutePolicy.Context?,
+                                                   target: IPadCallTarget) async throws {
+        guard iPadProviderCanPrepareCall, let peer = connection, let context,
+              context == audioRouteContext, target == providerCall.target,
+              let forwarding = audioForwardingContext, let hostKey = providerCallTrustedHostKey else {
+            throw IPadAudioRoutePolicy.Problem.changedConnection
+        }
+        let generation = providerCallConnection
+        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+        var submitted = false
+        var preparedRevisions: [UUID]?
+        defer {
+            if !submitted, connection === peer, context == audioRouteContext,
+               forwarding == audioForwardingContext, providerCallConnection == generation,
+               providerCallTrustedHostKey == hostKey, target == providerCall.target,
+               preparedRevisions == IPadDesiredAudio.Direction.allCases.map({ desiredAudio.revision(for: $0) }),
+               selection == audioRouteSelection {
+                cancelDesiredAudioRequest()
+            }
+        }
+        func validate() throws {
+            try Task.checkCancellation()
+            guard connection === peer, context == audioRouteContext, forwarding == audioForwardingContext,
+                  providerCallConnection == generation, providerCallTrustedHostKey == hostKey,
+                  target == providerCall.target, iPadProviderCanPrepareCall else {
+                throw IPadAudioRoutePolicy.Problem.changedConnection
+            }
+            if let preparedRevisions,
+               preparedRevisions != IPadDesiredAudio.Direction.allCases.map({ desiredAudio.revision(for: $0) }) {
+                throw IPadAudioRoutePolicy.Problem.changedConnection
+            }
+            guard ContinuousClock.now < deadline else {
+                throw NSError(domain: "IPadProviderCall", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "음성 입출력 준비 시간이 지났습니다. 통화는 시작하지 않았습니다."])
+            }
+        }
+        try validate()
+        if selection != audioRouteSelection || !iPadProviderCanStart {
+            try await applyAudioRoutes(selection, context: context)
+        }
+        preparedRevisions = IPadDesiredAudio.Direction.allCases.map { desiredAudio.revision(for: $0) }
+        while true {
+            try validate()
+            guard selection == audioRouteSelection, audioForwarding.phase != .blocked,
+                  microphoneCleanupProblem == nil else { throw IPadAudioRoutePolicy.Problem.changedConnection }
+            if case .failed(let reason) = microphonePhase {
+                throw NSError(domain: "IPadProviderCall", code: 2, userInfo: [NSLocalizedDescriptionKey: reason])
+            }
+            if case .failed(let reason) = remoteAudioStatus {
+                throw NSError(domain: "IPadProviderCall", code: 3, userInfo: [NSLocalizedDescriptionKey: reason])
+            }
+            if iPadProviderCanStart {
+                performIPadProviderCall(.start, target: target)
+                guard providerCall.pending != nil else { throw IPadAudioRoutePolicy.Problem.changedConnection }
+                submitted = true
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+}
+
+extension ChooserFixture { func legacyHandleScenePhase(_ next: ScenePhase) {
+            if next != .active { cancelOperation(stopPreparingAudio: true) }
+} }
+'''
+
 if timer_mode in ('microphone-timers', 'microphone-timers-legacy'):
     microphone = (root/'iOSClient/StreamClient+Microphone.swift').read_text()
     start = microphone.index('            case .send(let peer, let control):')
