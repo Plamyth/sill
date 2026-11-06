@@ -2,6 +2,18 @@
 
 기준은 `4eff2c0bd2fa70de9acdd1fdf25d19c97f307012`이다. 공통 DTO는 읽기 정본의 `a14842b3a3a794f51d8ae0d90dbb8182a57ad8ea:Sources/StreamProtocol/AudioForwarding.swift` 468줄 원본 바이트를 사용한다. 같은 커밋의 공식 `Tests/checks/audio-forwarding-wire/Main.swift`에 있는 own intent 7 / binding 11 → resume intent 7 / binding 12 예제와 호스트 원담당의 확정 CAS·freshness·단일 inflight 규칙을 소비한다. Node 서버를 이 검사에서 실행한 것은 아니다.
 
+## 2026-11-06 최초 차단과 마이크 stop 진단
+
+작업 브랜치는 `codex/ipad-forwarding-stop-reason-20261106`, 기준은 `ec157358be4712ba13a810b0440db7aff76e5afd`다. 기존 읽기 원장 `rea-completion-20261028/program/CURRENT-RESUME.md`와 실제 자료 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/host245-ipad88-leaf-20261106`을 재사용한다. 설치 88의 mic는 13:37:13.340 전송 후 14.008에 client stop했고 Host deadline은 그 뒤 16.806이다. 당시 최초 실패 guard와 stop 구조화 필드가 없어 3초 freshness 만료는 미확정이다. 이 진단 패치는 과거 원인을 소급 확정하지 않는다.
+
+`IPadAudioForwarding.firstBlockSummary`는 최초 `block`의 내부 이유, 차단 전 phase, monotonic `now`, `freshUntil`, pending의 실제 `sentAt`, operation과 상관 요청 ID만 보존한다. 응답 처리에서 pending을 정상 폐기한 뒤 실패해도 검증 중인 원래 pending을 사용한다. 반복 reconcile·block과 늦은 응답은 최초 요약을 덮지 않는다. 새 context 또는 blocked 이후 명시 재선택은 요약을 초기화한다. 기존 `block()` 호출은 호환되며 이유·시각을 전달하지 않은 값은 `unknown`이다. 소유 범위 밖 `StreamClient+DesiredAudio.swift`의 두 호출은 부모의 이유 지정 대상이다.
+
+`forwarding_microphone_stop`은 `!permits`에서 `microphonePolicy.backgrounded()`를 호출하기 직전, 기존 `microphonePolicy.startRequestID` attempt에 기록한다. 기존 permission 조건을 같은 순서로 평가한 첫 실패 guard, 호출 경로, 관측 시각, 현재 forwarding phase와 두 boolean을 최초 block 요약에 더한다. 최대 13필드로 기존 encoder의 16필드 한도를 지킨다. 기존 attempt별 event 중복 방지를 사용하므로 같은 stop의 후속 관측으로 최초 event를 바꾸지 않는다. 새 요청 ID·저장소·타이머·의존성을 만들지 않는다. 기존 event 보관 한도나 attempt 부재로 기록이 없으면 미확정이며, 이후 Host deadline을 첫 원인으로 간주하지 않는다. 인증값·grant·토큰·기기/사용자 식별 내용·원시 음성은 기록하지 않는다.
+
+3초 freshness, 10초 timeout, 차단·중지, desired OFF, 권한, 프로토콜과 프레임 전송 정책은 유지한다. 가짜 시계 모델은 만료, 응답 ID/operation 불일치, 늦은 active 응답의 재활성화 금지와 최초 진단 보존을 확인한다. 실제 어댑터 추출 검사는 stop 이전 guard와 기존 attempt 연결을 확인하고 실제 metadata encoder 검사는 13필드 보존과 최초 event 중복 방지를 확인한다. 실제 기기·오디오·네트워크·설치·키·Codex UI 조작은 하지 않는다. 공통 Host 최종 차이 조율, 통합, SDK와 독립 검수는 부모 담당 범위다.
+
+2026-11-06 작성자 검사에서 모델 214개, 실제 어댑터 추출 114개, 실제 metadata encoder 24개, desired 모델 57개와 어댑터 5개가 통과했다. CLT의 `xcrun swiftc`로 로컬 compact 검사만 실행했으며 출력은 `/Volumes/BT-Workspace/Development-Archives/BT_CCR-ipad/forwarding-stop-reason-20261106-checks`에 있다. `ipad-audio-admission/run.py`는 기준 커밋에도 존재하는 `configuredCraftCapability` 및 `reconcileConfiguredCraftAction` 소비를 `ClientProbe`가 제공하지 않아 컴파일에 실패했다. 저장소 파일을 수정하지 않고 출력의 `ClientFixture.swift`에 `Int?` 필드와 no-op 메서드만 보충한 독립 보조 검사는 69개 통과했다. 이를 원본 회귀 통과로 바꾸지 않으며 부모가 기존 fixture를 보정해야 한다. 원장은 읽기만 했고 새 원장을 만들지 않았다.
+
 ## 구성
 
 - `IPadAudioForwarding`은 공통 DTO만으로 현재 인증된 기기/연결/화면 범위, 요청 ID, 자기 durable intent, CAS, native binding, 송신 시각 기준 freshness를 관리한다.

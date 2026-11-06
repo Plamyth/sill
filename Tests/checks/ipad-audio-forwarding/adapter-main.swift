@@ -86,20 +86,45 @@ struct AdapterChecks {
         client.clock.now = 1.4
         client.fixtureObserve(list)
         check(client.microphoneAttempts == 1 && client.desiredAudioPermits(.microphone), "new capability after active opens existing microphone gate")
+        AVCaptureDevice.status = .denied
+        check(client.audioForwardingPermissionFailure(.microphone) == "microphone_permission_denied" &&
+              !client.audioForwardingPermits(.microphone), "OS permission failure is the exact guard without changing policy")
+        AVCaptureDevice.status = .authorized
         let microphoneStarts = peer.messages.filter { $0.first == 204 }.compactMap {
             Wire.decode(MicrophoneControl.self, from: Data($0.dropFirst(StreamMessage.headerLength)))
         }.filter { $0.operation == .start }
         check(microphoneStarts.count == 1, "actual204 start passes the single gate exactly once")
+        let microphoneAttempt = client.microphonePolicy.startRequestID!
         var rendered = 0, sent = 0
         let ticket = client.audioCatalogAdmission
         check(client.audioAdmission.withAdmission(ticket, { rendered += 1 }), "live render admitted")
         check(client.audioAdmission.withAdmission(ticket, direction: .microphone, { sent += 1 }), "live frame admitted")
         client.clock.now = 4.2
+        check(client.audioForwardingPermissionFailure(.microphone) == "forwarding_freshness_expired", "expired lease is identified before scheduled block")
         check(!client.audioAdmission.withAdmission(ticket, { rendered += 1 }), "render expires without main scheduler")
         check(!client.audioAdmission.withAdmission(ticket, direction: .microphone, { sent += 1 }), "frame expires without main scheduler")
         check(rendered == 1 && sent == 1, "expired callbacks media0")
         client.reconcileAudioForwarding()
         check(client.audioForwarding.phase == .blocked && client.audioForwardingWake == nil, "admission expiry stops polling")
+        let stopDiagnostic = IPadMicrophoneDiagnostics.records.last { $0.0 == "forwarding_microphone_stop" && $0.2 == microphoneAttempt }
+        check(stopDiagnostic?.1["block.reason"] == "admission_faulted" && stopDiagnostic?.1["block.phase"] == "active" &&
+              stopDiagnostic?.1["block.freshUntil"] == "4.2" && stopDiagnostic?.1["block.now"] == "4.2",
+              "stop event retains the pre-block phase and freshness on the existing microphone attempt")
+        check(stopDiagnostic?.1["permissionFailure"] == "forwarding_phase_not_active" &&
+              stopDiagnostic?.1["stopPath"] == "applyAudioForwarding.microphonePolicy.backgrounded" &&
+              stopDiagnostic?.1["phaseCanStop"] == "true" && stopDiagnostic?.1["stopNow"] == "4.2",
+              "exact permission guard and backgrounded call path are recorded before policy stop")
+        check(stopDiagnostic!.1.count <= 16 && stopDiagnostic!.1.keys.allSatisfy {
+            ["block.reason", "block.phase", "block.now", "block.freshUntil", "block.pendingSentAt",
+             "block.pendingOperation", "block.pendingRequestID", "permissionFailure", "stopPath", "stopNow",
+             "forwardingPhase", "phaseCanStop", "captureTokenPresent"].contains($0)
+        }, "bounded diagnostic contains only internal reason, clock, phase and operation correlation fields")
+        let expiryBlock = client.audioForwarding.firstBlockSummary
+        client.microphoneCaptureToken = UUID()
+        client.applyAudioForwarding(nil)
+        client.microphoneCaptureToken = nil
+        check(IPadMicrophoneDiagnostics.records.filter { $0.0 == "forwarding_microphone_stop" && $0.2 == microphoneAttempt }.count == 1 &&
+              client.audioForwarding.firstBlockSummary == expiryBlock, "repeated stop reconcile cannot replace first event or block cause")
         let count = peer.messages.count
         client.clock.now = 5
         client.reconcileDesiredAudio()
@@ -468,6 +493,18 @@ struct AdapterChecks {
         unprotected.clock.now = 3.01
         check(!unprotected.audioForwarding.permits(.playback,in:unprotected.audioForwardingContext!,now:unprotected.clock.now),
               "optional Sentry does not extend the existing three-second lease")
+        let unconfirmedStop = StreamClient()
+        let unconfirmedPeer = ObjectIdentifier(unconfirmedStop.connection!)
+        _ = unconfirmedStop.microphonePolicy.setConnection(unconfirmedPeer)
+        _ = unconfirmedStop.microphonePolicy.observe(list, from: unconfirmedPeer)
+        _ = unconfirmedStop.microphonePolicy.toggle()
+        let unconfirmedAttempt = unconfirmedStop.microphonePolicy.startRequestID!
+        _ = unconfirmedStop.desiredAudio.observeSession(.interruptionBegan)
+        unconfirmedStop.applyAudioForwarding(nil)
+        let unconfirmedEvent = IPadMicrophoneDiagnostics.records.last { $0.0 == "forwarding_microphone_stop" && $0.2 == unconfirmedAttempt }
+        check(unconfirmedEvent?.1["block.reason"] == "unknown" && unconfirmedStop.audioForwarding.firstBlockSummary == nil &&
+              unconfirmedEvent?.1["permissionFailure"] == "desired_session_not_permitted",
+              "stop without a model failure reports an unknown first cause rather than inferring one")
         print("실제 iPad 어댑터·가짜 전송/시계 검사 \(checks)개 통과. 실제 미디어·기기·네트워크 없음.")
     }
 }

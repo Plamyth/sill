@@ -58,6 +58,21 @@ import Foundation
                          authFields.values.allSatisfy { $0 == "true" || $0 == "false" },
                          "stored fields contain only product guard names and booleans, no secret values")
         }
+        let stopFields = ["block.reason": "advance_freshness_expired", "block.phase": "active", "block.now": "4.2",
+            "block.freshUntil": "4.2", "block.pendingSentAt": "2.2", "block.pendingOperation": "observe",
+            "block.pendingRequestID": UUID().uuidString, "permissionFailure": "forwarding_phase_not_active",
+            "stopPath": "applyAudioForwarding.microphonePolicy.backgrounded", "stopNow": "4.2",
+            "forwardingPhase": "blocked", "phaseCanStop": "true", "captureTokenPresent": "true"]
+        attempt.record("forwarding_microphone_stop", stopFields)
+        attempt.record("forwarding_microphone_stop", ["block.reason": "later_failure"])
+        log.flush()
+        let stopEvents = (try JSONSerialization.jsonObject(with: Data(contentsOf: log.fileURL)) as! [[String:Any]])
+            .filter { $0["event"] as? String == "forwarding_microphone_stop" }
+        precondition(stopEvents.count == 1, "actual recorder keeps only the first stop event per microphone attempt")
+        precondition(stopEvents[0]["fields"] as? [String:String] == stopFields,
+                     "all 13 stop fields survive actual prefix16 serialization without later overwrite")
+        precondition(stopEvents[0]["attempt"] as? String == diagnosticID.uuidString,
+                     "stop event reuses the microphone attempt without creating a new identity")
         log.snapshot(runtime: runtime, render: nil, playbackRunning: false, session: [:])
         var second = first
         for _ in 0..<100 {
@@ -85,6 +100,6 @@ import Foundation
                      "connection replacement discards persisted current summary")
         precondition((final["runtime"] as! [String:Any])["forwardingContextReadiness"] == nil,
                      "connection replacement discards persisted guard map")
-        print("audio-metadata 실제 추출 본문 검사 21개 통과; 엔진·마이크·네트워크 0")
+        print("audio-metadata 실제 추출 본문 검사 24개 통과; 엔진·마이크·네트워크 0")
     }
 }

@@ -83,11 +83,24 @@ check(lost.operation == .observe, "one fresh active poll")
 check(!state.permits(.playback, in: context, now: 5.2), "render deadline closes even before scheduler runs")
 _ = state.advance(now: 5.2)
 check(state.phase == .blocked && state.wakeAt == nil && state.durable != nil, "lost reply blocks and stops polling, durable retained")
+let firstFailure = state.firstBlockSummary
+check(firstFailure == ["block.reason": "advance_freshness_expired", "block.phase": "active",
+    "block.now": "5.2", "block.freshUntil": "5.2", "block.pendingSentAt": "3.2",
+    "block.pendingOperation": "observe", "block.pendingRequestID": lost.requestID.uuidString],
+    "first block preserves the expired lease and outstanding observation before clearing them")
 _ = state.receive(try observed(lost, catalog(live, intent: 1, binding: 1)), from: context, now: 5.3)
 check(state.phase == .blocked && !state.permits(.playback, in: context, now: 5.3), "late response cannot resurrect expired evidence")
 check(state.advance(now: 50) == nil, "blocked no automatic request retry")
+state.block(reason: "later_failure", now: 50)
+check(state.firstBlockSummary == firstFailure, "late reply, repeated advance and repeated block cannot overwrite the first failure")
 check(state.supported && !state.permits(.playback, in: context, now: 50),
       "known protocol support survives blocked media for explicit recovery")
+var diagnosticRecovery = state
+_ = diagnosticRecovery.select(.init(playback: true), in: context, now: 51)
+check(diagnosticRecovery.firstBlockSummary == nil && !diagnosticRecovery.permits(.playback, in: context, now: 51),
+      "new explicit selection resets diagnostics without restoring old media authority")
+_ = diagnosticRecovery.connect(otherContext, durable: nil, now: 52)
+check(diagnosticRecovery.firstBlockSummary == nil, "new context does not inherit another context's failure")
 
 // Official host fixture: own intent 7/binding 11 -> resume intent 7/binding 12.
 let ownIntent = try AudioForwardingSnapshot.Intent(pairedDeviceId: device, intentId: UUID(), intentRevision: .init(7),
@@ -144,12 +157,22 @@ var timed = try ready()
 let timedRequest = timed.select(.init(playback: true), in: context, now: 0.2)!
 _ = timed.advance(now: 10.2)
 check(timed.phase == .blocked && timed.wakeAt == nil, "submit timeout blocks, no unsafe retry")
+let timeoutFailure = timed.firstBlockSummary
+check(timeoutFailure?["block.reason"] == "advance_pending_timeout" && timeoutFailure?["block.phase"] == "submitting" &&
+      timeoutFailure?["block.pendingSentAt"] == "0.2" && timeoutFailure?["block.pendingOperation"] == "submit" &&
+      timeoutFailure?["block.pendingRequestID"] == timedRequest.requestID.uuidString,
+      "ten-second timeout retains the original submit metadata")
 _ = timed.receive(try accepted(timedRequest, snapshot(timedRequest, phase: .active)), from: context, now: 10.3)
 check(timed.phase == .blocked && timed.durable == nil, "late218 rejected after timeout")
+check(timed.firstBlockSummary == timeoutFailure, "late active submit cannot replace timeout diagnostics")
 var lateObserve = IPadAudioForwarding()
 let staleRequest = lateObserve.connect(context, durable: nil, now: 0)!
 _ = lateObserve.receive(try observed(staleRequest, catalog()), from: context, now: 3)
 check(lateObserve.phase == .blocked && lateObserve.catalog == nil, "three-second-old observe cannot renew")
+check(lateObserve.firstBlockSummary?["block.reason"] == "observe_response_expired" &&
+      lateObserve.firstBlockSummary?["block.pendingSentAt"] == "0.0" &&
+      lateObserve.firstBlockSummary?["block.pendingOperation"] == "observe",
+      "receive validation retains matched pending even after normal pending retirement")
 
 for mutation in 0..<5 {
     var (model, snapshot, _) = try active()
@@ -177,6 +200,18 @@ check(refused.phase == .blocked && refused.durable != nil && refused.wakeAt == n
 var (mismatch, _, _) = try active()
 _ = mismatch.receive(try .init(requestID: UUID(), operation: .observe, catalog: catalog(), result: nil), from: context, now: 1.4)
 check(mismatch.phase == .blocked, "unsolicited or wrong request ID blocked")
+check(mismatch.firstBlockSummary?["block.reason"] == "receive_no_pending", "unsolicited response is distinct from a mismatched pending request")
+var (pendingMismatch, pendingSnapshot, _) = try active()
+let mismatchPoll = pendingMismatch.advance(now: 2.2)!
+_ = pendingMismatch.receive(try .init(requestID: UUID(), operation: .observe,
+    catalog: catalog(pendingSnapshot, intent: 1, binding: 1), result: nil), from: context, now: 2.3)
+let mismatchFailure = pendingMismatch.firstBlockSummary
+check(mismatchFailure?["block.reason"] == "receive_request_mismatch" &&
+      mismatchFailure?["block.pendingRequestID"] == mismatchPoll.requestID.uuidString &&
+      mismatchFailure?["block.freshUntil"] == "4.2", "mismatched reply preserves the expected request and lease")
+_ = pendingMismatch.receive(try observed(mismatchPoll, catalog(pendingSnapshot, intent: 1, binding: 1)), from: context, now: 2.4)
+check(pendingMismatch.firstBlockSummary == mismatchFailure && !pendingMismatch.permits(.microphone, in: context, now: 2.4),
+      "correct response arriving after mismatch cannot reactivate or overwrite diagnostics")
 var (replaced, _, _) = try active()
 let stalePeer = replaced.connect(otherContext, durable: replaced.durable, desired: replaced.durable!.selection, now: 2)!
 _ = replaced.receive(try observed(stalePeer, catalog()), from: context, now: 2.1)
@@ -290,8 +325,15 @@ let expectedObserve = mismatchedOperation.connect(context, durable: nil, now: 0)
 _ = mismatchedOperation.receive(try .init(requestID: expectedObserve.requestID, operation: .submit, catalog: nil,
     result: .refused(code: "refused", snapshot: empty)), from: context, now: 0.1)
 check(mismatchedOperation.lastReceivedSummary == nil, "same request with wrong operation is not recorded")
+check(mismatchedOperation.firstBlockSummary?["block.reason"] == "receive_operation_mismatch" &&
+      mismatchedOperation.firstBlockSummary?["block.pendingOperation"] == "observe", "operation mismatch records expected operation only")
 var lateDiagnostic = IPadAudioForwarding()
 let lateDiagnosticRequest = lateDiagnostic.connect(context, durable: nil, now: 0)!
 _ = lateDiagnostic.receive(try observed(lateDiagnosticRequest, catalog()), from: context, now: 10)
 check(lateDiagnostic.lastReceivedSummary == nil, "late response outside request deadline is not recorded")
+check(lateDiagnostic.firstBlockSummary?["block.reason"] == "receive_pending_timeout", "late receive and scheduled timeout have distinct call paths")
+var legacyBlock = IPadAudioForwarding()
+legacyBlock.block()
+check(legacyBlock.phase == .blocked && legacyBlock.firstBlockSummary?["block.reason"] == "unknown" &&
+      legacyBlock.firstBlockSummary?["block.now"] == "unknown", "legacy block callers stay compatible and never invent a cause or clock sample")
 print("iPad 공통 음성 상태 전이·가짜 전송/시계 검사 \(checks)개 통과. 기기·오디오·네트워크 실행 없음.")

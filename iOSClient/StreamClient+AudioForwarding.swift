@@ -76,7 +76,7 @@ extension StreamClient {
         }
         retireAudioForwardingWire(unless: connection.map(ObjectIdentifier.init))
         let context = audioForwardingContext
-        if audioAdmission.forwardingFaulted { audioForwarding.block() }
+        if audioAdmission.forwardingFaulted { audioForwarding.block(reason: "admission_faulted", now: audioForwardingNow) }
         let command: AudioForwardingControl?
         if context != audioForwarding.context {
             audioForwardingSubmissionAt = nil
@@ -108,16 +108,25 @@ extension StreamClient {
     }
 
     func audioForwardingPermits(_ direction: IPadDesiredAudio.Direction) -> Bool {
-        guard desiredAudio.sessionPermits(direction),
-              desiredAudio.selection == audioForwarding.durable?.selection,
-              desiredAudio.privacy == .protected, let context = audioForwardingContext,
-              audioForwarding.permits(direction, in: context, now: audioForwardingNow) else { return false }
-        if direction == .microphone {
-            guard let submitted = audioForwardingSubmissionAt, let catalog = audioForwardingCatalogAt,
-                  catalog >= submitted, microphonePolicy.scope != nil,
-                  AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return false }
+        audioForwardingPermissionFailure(direction) == nil
+    }
+
+    func audioForwardingPermissionFailure(_ direction: IPadDesiredAudio.Direction) -> String? {
+        guard desiredAudio.sessionPermits(direction) else { return "desired_session_not_permitted" }
+        guard desiredAudio.selection == audioForwarding.durable?.selection else { return "desired_selection_mismatch" }
+        guard desiredAudio.privacy == .protected else { return "privacy_not_protected" }
+        guard let context = audioForwardingContext else { return "forwarding_context_missing" }
+        if let failure = audioForwarding.permissionFailure(direction, in: context, now: audioForwardingNow) {
+            return "forwarding_" + failure
         }
-        return true
+        if direction == .microphone {
+            guard let submitted = audioForwardingSubmissionAt else { return "submission_time_missing" }
+            guard let catalog = audioForwardingCatalogAt else { return "catalog_time_missing" }
+            guard catalog >= submitted else { return "catalog_predates_submission" }
+            guard microphonePolicy.scope != nil else { return "microphone_scope_missing" }
+            guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return "microphone_permission_denied" }
+        }
+        return nil
     }
 
     func applyAudioForwarding(_ command: AudioForwardingControl?) {
@@ -126,17 +135,17 @@ extension StreamClient {
            context == audioForwardingContext, ObjectIdentifier(connection) == context.peer {
             let sentAt = audioForwardingNow
             guard audioForwarding.markSent(command.requestID, now: sentAt) else {
-                audioForwarding.block(); applyAudioForwarding(nil); return
+                audioForwarding.block(reason: "mark_sent_failed", now: sentAt); applyAudioForwarding(nil); return
             }
             if command.operation == .submit { audioForwardingSubmissionAt = sentAt }
             let payload = Wire.encode(command)
-            guard payload.count <= 4096 else { audioForwarding.block(); applyAudioForwarding(nil); return }
+            guard payload.count <= 4096 else { audioForwarding.block(reason: "control_payload_oversized", now: audioForwardingNow); applyAudioForwarding(nil); return }
             let message = StreamMessage(kind: .forwardingControl, timestamp: Date().timeIntervalSince1970,
                                         isKeyframe: false, payload: payload)
             audioForwardingWire = ForwardingExchange(context: context, requestID: command.requestID, operation: command.operation)
             let timeout = DispatchWorkItem { [weak self] in
                 guard let self, self.audioForwardingWire?.requestID == command.requestID else { return }
-                self.audioForwarding.block(); self.applyAudioForwarding(nil)
+                self.audioForwarding.block(reason: "wire_response_timeout", now: self.audioForwardingNow); self.applyAudioForwarding(nil)
                 // The peer may still be executing this exchange. Only a matching response,
                 // a send failure or replacement of the connection can drain the wire slot.
             }
@@ -149,7 +158,7 @@ extension StreamClient {
                           self.audioForwardingWire?.requestID == command.requestID else { return }
                     self.audioForwardingWire = nil
                     self.audioForwardingWireTimeout?.cancel(); self.audioForwardingWireTimeout = nil
-                    self.audioForwarding.block(); self.applyAudioForwarding(nil)
+                    self.audioForwarding.block(reason: "wire_send_failed", now: self.audioForwardingNow); self.applyAudioForwarding(nil)
                 }
             })
             if let observation = audioForwardingStopDiagnostic {
@@ -164,12 +173,23 @@ extension StreamClient {
             }
         }
         if audioForwardingPhase != audioForwarding.phase { audioForwardingPhase = audioForwarding.phase }
-        let microphone = audioForwardingPermits(.microphone)
+        let microphoneFailure = audioForwardingPermissionFailure(.microphone)
+        let microphone = microphoneFailure == nil
         let playback = audioForwardingPermits(.playback)
         audioAdmission.forwarding(peer: desiredAudio.peer, microphone: microphone, playback: playback,
                                   deadline: audioForwarding.mediaDeadline)
         if let peer = desiredAudio.peer { audioCatalogAdmission = audioAdmission.ticket(for: peer) }
         if !microphone && (microphonePolicy.phase.canStop || microphoneCaptureToken != nil) {
+            if let attempt = microphonePolicy.startRequestID {
+                var fields = audioForwarding.firstBlockSummary ?? ["block.reason": "unknown"]
+                fields["permissionFailure"] = microphoneFailure ?? "unknown"
+                fields["stopPath"] = "applyAudioForwarding.microphonePolicy.backgrounded"
+                fields["stopNow"] = String(audioForwardingNow)
+                fields["forwardingPhase"] = String(describing: audioForwarding.phase)
+                fields["phaseCanStop"] = String(microphonePolicy.phase.canStop)
+                fields["captureTokenPresent"] = String(microphoneCaptureToken != nil)
+                IPadMicrophoneDiagnostics.shared.attempt(attempt).record("forwarding_microphone_stop", fields)
+            }
             applyMicrophone(microphonePolicy.backgrounded())
         }
         if !playback && remoteAudioStatus.requested { remoteAudioControl.backgrounded() }
@@ -190,7 +210,7 @@ extension StreamClient {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.connection === peer else { return }
             guard data.count <= 16384, let state = Wire.decode(AudioForwardingState.self, from: data) else {
-                self.audioForwarding.block(); self.applyAudioForwarding(nil); return
+                self.audioForwarding.block(reason: "state_decode_failed", now: self.audioForwardingNow); self.applyAudioForwarding(nil); return
             }
             self.acceptAudioForwarding(state, from: peer)
         }
@@ -200,7 +220,7 @@ extension StreamClient {
         guard connection === peer, let wire = audioForwardingWire,
               wire.context.peer == ObjectIdentifier(peer), wire.requestID == state.requestID,
               wire.operation == state.operation else {
-            audioForwarding.block(); applyAudioForwarding(nil); return
+            audioForwarding.block(reason: "wire_response_mismatch", now: audioForwardingNow); applyAudioForwarding(nil); return
         }
         audioForwardingWire = nil
         audioForwardingWireTimeout?.cancel(); audioForwardingWireTimeout = nil

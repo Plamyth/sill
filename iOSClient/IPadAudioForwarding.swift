@@ -34,6 +34,8 @@ struct IPadAudioForwarding {
     private(set) var binding: AudioForwardingBinding?
     /// Last matched 218 observation only; never admission or media evidence. connect resets it.
     private(set) var lastReceivedSummary: [String: String]?
+    /// First failure in this selection/context only. Diagnostic values never grant media.
+    private(set) var firstBlockSummary: [String: String]?
     private var cursor: AudioForwardingBootstrap.OwnCursor?
     private var pending: Pending?
     private var draft: IPadDesiredAudio.Selection?
@@ -77,14 +79,32 @@ struct IPadAudioForwarding {
         return true
     }
 
-    mutating func block() {
+    mutating func block(reason: String = "unknown", now: TimeInterval? = nil) {
+        block(reason: reason, now: now, pending: pending)
+    }
+
+    private mutating func block(reason: String, now: TimeInterval?, pending: Pending?) {
+        if firstBlockSummary == nil {
+            firstBlockSummary = [
+                "block.reason": reason,
+                "block.phase": String(describing: phase),
+                "block.now": now.map { String($0) } ?? "unknown",
+                "block.freshUntil": freshUntil.map { String($0) } ?? "unknown",
+                "block.pendingSentAt": pending.map { String($0.sentAt) } ?? "unknown",
+                "block.pendingOperation": pending?.control.operation.rawValue ?? "unknown",
+                "block.pendingRequestID": pending?.control.requestID.uuidString ?? "unknown",
+            ]
+        }
         phase = .blocked
-        pending = nil; draft = nil; nextPoll = nil; freshUntil = nil; quiescingUntil = nil
+        self.pending = nil; draft = nil; nextPoll = nil; freshUntil = nil; quiescingUntil = nil
         binding = nil; resumeAllowed = false
     }
 
     private mutating func checkTime(_ now: TimeInterval) -> Bool {
-        guard now.isFinite, now >= 0, lastTime.map({ now >= $0 }) ?? true else { block(); return false }
+        guard now.isFinite, now >= 0, lastTime.map({ now >= $0 }) ?? true else {
+            block(reason: now.isFinite && now >= 0 ? "clock_regressed" : "clock_invalid", now: now)
+            return false
+        }
         lastTime = now
         return true
     }
@@ -106,6 +126,7 @@ struct IPadAudioForwarding {
         desired = selection
         freshUntil = nil
         if phase == .blocked {
+            firstBlockSummary = nil
             catalog = nil; cursor = nil; snapshot = nil; phase = .unknown
         }
         if catalog == nil { return deferToTransport || pending != nil ? nil : observe(now: now) }
@@ -117,7 +138,7 @@ struct IPadAudioForwarding {
                                  now: TimeInterval) -> AudioForwardingControl? {
         guard let context, let cursor, let snapshot, catalog != nil,
               pending == nil, (automatic || cursor.intentRevision.value < UInt64.max),
-              cursor.bindingRevision.value < UInt64.max else { block(); return nil }
+              cursor.bindingRevision.value < UInt64.max else { block(reason: "submit_preconditions", now: now); return nil }
         let own = snapshot.intent
         let owns = own?.pairedDeviceId == context.device
         let same = own?.pairedDeviceId == context.device && own?.intentId == durable?.intentID &&
@@ -138,7 +159,7 @@ struct IPadAudioForwarding {
             expectedRevision: snapshot.revision, transportId: transport, transportKind: .native,
             bindingRevision: .init(cursor.bindingRevision.value + 1)),
               let control = try? AudioForwardingControl(requestID: UUID(), operation: .submit, intent: request) else {
-            block(); return nil
+            block(reason: "submit_construction", now: now); return nil
         }
         pending = Pending(control: control, context: context, sentAt: now)
         draft = nil; phase = .submitting; freshUntil = nil; binding = nil; nextPoll = nil
@@ -147,9 +168,9 @@ struct IPadAudioForwarding {
 
     mutating func advance(now: TimeInterval) -> AudioForwardingControl? {
         guard checkTime(now) else { return nil }
-        if let freshUntil, now >= freshUntil { block(); return nil }
-        if let quiescingUntil, now >= quiescingUntil { block(); return nil }
-        if let pending, now >= pending.sentAt + 10 { block(); return nil }
+        if let freshUntil, now >= freshUntil { block(reason: "advance_freshness_expired", now: now); return nil }
+        if let quiescingUntil, now >= quiescingUntil { block(reason: "advance_quiescing_timeout", now: now); return nil }
+        if let pending, now >= pending.sentAt + 10 { block(reason: "advance_pending_timeout", now: now); return nil }
         guard let nextPoll, now >= nextPoll, pending == nil,
               phase == .active || phase == .quiescing else { return nil }
         return observe(now: now)
@@ -158,9 +179,11 @@ struct IPadAudioForwarding {
     mutating func receive(_ state: AudioForwardingState, from expected: Context,
                           now: TimeInterval) -> AudioForwardingControl? {
         guard checkTime(now), context == expected else { return nil }
-        guard let pending, pending.context == expected,
-              pending.control.requestID == state.requestID, pending.control.operation == state.operation,
-              now < pending.sentAt + 10 else { block(); return nil }
+        guard let pending else { block(reason: "receive_no_pending", now: now); return nil }
+        guard pending.context == expected else { block(reason: "receive_pending_context", now: now); return nil }
+        guard pending.control.requestID == state.requestID else { block(reason: "receive_request_mismatch", now: now); return nil }
+        guard pending.control.operation == state.operation else { block(reason: "receive_operation_mismatch", now: now); return nil }
+        guard now < pending.sentAt + 10 else { block(reason: "receive_pending_timeout", now: now); return nil }
         var summary = ["observedUptimeSeconds": String(now), "operation": state.operation.rawValue]
         let receivedSnapshot: AudioForwardingSnapshot?
         switch state.result {
@@ -179,52 +202,53 @@ struct IPadAudioForwarding {
         summary["binding.phase"] = receivedSnapshot?.binding?.phase.rawValue
         summary["binding.epoch"] = receivedSnapshot?.binding?.bindingEpoch.uuidString
         lastReceivedSummary = summary
-        if let freshUntil, now >= freshUntil { block(); return nil }
+        if let freshUntil, now >= freshUntil { block(reason: "receive_freshness_expired", now: now); return nil }
         self.pending = nil
         if state.operation == .observe {
-            guard now < pending.sentAt + 3, let catalog = state.catalog,
+            guard now < pending.sentAt + 3 else { block(reason: "observe_response_expired", now: now, pending: pending); return nil }
+            guard let catalog = state.catalog,
                   catalog.principal.id == expected.device,
-                  catalog.bootstrap.credential.pairedDeviceId == expected.device else { block(); return nil }
+                  catalog.bootstrap.credential.pairedDeviceId == expected.device else { block(reason: "observe_identity_mismatch", now: now, pending: pending); return nil }
             if let previous = self.catalog {
                 guard previous.principal.id == catalog.principal.id,
                       previous.principal.kind == catalog.principal.kind,
                       previous.principal.authorizationGeneration == catalog.principal.authorizationGeneration,
-                      previous.bootstrap.credential.credential == catalog.bootstrap.credential.credential else { block(); return nil }
+                      previous.bootstrap.credential.credential == catalog.bootstrap.credential.credential else { block(reason: "observe_authorization_changed", now: now, pending: pending); return nil }
             }
             let incoming = catalog.bootstrap.snapshot
-            if let snapshot, incoming.revision.value < snapshot.revision.value { block(); return nil }
+            if let snapshot, incoming.revision.value < snapshot.revision.value { block(reason: "observe_revision_regressed", now: now, pending: pending); return nil }
             if binding != nil, let cursor,
-               catalog.bootstrap.ownCursor.bindingRevision != cursor.bindingRevision { block(); return nil }
+               catalog.bootstrap.ownCursor.bindingRevision != cursor.bindingRevision { block(reason: "observe_binding_revision_changed", now: now, pending: pending); return nil }
             self.catalog = catalog
             cursor = catalog.bootstrap.ownCursor
             snapshot = incoming
             if binding != nil {
                 guard catalog.bootstrap.ownCursor.intentRevision == durable?.revision,
-                      accept(incoming, sentAt: pending.sentAt, now: now, stable: true) else { block(); return nil }
+                      accept(incoming, sentAt: pending.sentAt, now: now, stable: true) else { block(reason: "observe_binding_rejected", now: now, pending: pending); return nil }
             } else {
                 phase = .ready
                 if let draft { return submit(draft, automatic: false, now: now) }
                 if let durable { return submit(durable.selection, automatic: true, now: now) }
             }
         } else {
-            guard let result = state.result, let request = pending.control.intent else { block(); return nil }
+            guard let result = state.result, let request = pending.control.intent else { block(reason: "submit_result_missing", now: now, pending: pending); return nil }
             switch result {
-            case .refused(_, let snapshot): self.snapshot = snapshot; block(); return nil
+            case .refused(_, let snapshot): self.snapshot = snapshot; block(reason: "submit_refused", now: now, pending: pending); return nil
             case .accepted(let snapshot):
                 guard let intent = snapshot.intent, intent.pairedDeviceId == request.pairedDeviceId,
                       intent.intentId == request.intentId, intent.intentRevision == request.intentRevision,
                       intent.inputDesired == request.inputDesired, intent.outputDesired == request.outputDesired,
                       snapshot.revision.value > request.expectedRevision.value,
                       let binding = snapshot.binding, binding.transportId == request.transportId,
-                      binding.transportKind == .native else { block(); return nil }
-                if request.action == .resume, intent.intentGeneration != durable?.generation { block(); return nil }
+                      binding.transportKind == .native else { block(reason: "submit_response_mismatch", now: now, pending: pending); return nil }
+                if request.action == .resume, intent.intentGeneration != durable?.generation { block(reason: "resume_generation_mismatch", now: now, pending: pending); return nil }
                 durable = Durable(device: intent.pairedDeviceId, intentID: intent.intentId,
                     revision: intent.intentRevision, generation: intent.intentGeneration,
                     selection: .init(microphone: intent.inputDesired, playback: intent.outputDesired))
                 cursor = .init(intentRevision: request.intentRevision, bindingRevision: request.bindingRevision)
                 self.snapshot = snapshot
-                guard now < pending.sentAt + 3,
-                      accept(snapshot, sentAt: pending.sentAt, now: now, stable: false) else { block(); return nil }
+                guard now < pending.sentAt + 3 else { block(reason: "submit_response_expired", now: now, pending: pending); return nil }
+                guard accept(snapshot, sentAt: pending.sentAt, now: now, stable: false) else { block(reason: "submit_binding_rejected", now: now, pending: pending); return nil }
             }
         }
         if let draft { return submit(draft, automatic: false, now: now) }
@@ -262,11 +286,21 @@ struct IPadAudioForwarding {
     }
 
     func permits(_ direction: IPadDesiredAudio.Direction, in expected: Context, now: TimeInterval) -> Bool {
-        guard now.isFinite, lastTime.map({ now >= $0 }) ?? false,
-              context == expected, phase == .active, let freshUntil, now < freshUntil,
-              let durable, let binding, binding.phase == .active,
-              binding.pairedDeviceId == expected.device, binding.transportId == transport,
-              binding.intentGeneration == durable.generation else { return false }
-        return durable.selection[direction]
+        permissionFailure(direction, in: expected, now: now) == nil
+    }
+
+    func permissionFailure(_ direction: IPadDesiredAudio.Direction, in expected: Context, now: TimeInterval) -> String? {
+        guard now.isFinite else { return "clock_invalid" }
+        guard lastTime.map({ now >= $0 }) ?? false else { return "clock_unconfirmed_or_regressed" }
+        guard context == expected else { return "context_mismatch" }
+        guard phase == .active else { return "phase_not_active" }
+        guard let freshUntil else { return "freshness_missing" }
+        guard now < freshUntil else { return "freshness_expired" }
+        guard let durable else { return "durable_missing" }
+        guard let binding, binding.phase == .active else { return "binding_not_active" }
+        guard binding.pairedDeviceId == expected.device else { return "binding_device_mismatch" }
+        guard binding.transportId == transport else { return "binding_transport_mismatch" }
+        guard binding.intentGeneration == durable.generation else { return "binding_generation_mismatch" }
+        return durable.selection[direction] ? nil : "direction_not_selected"
     }
 }

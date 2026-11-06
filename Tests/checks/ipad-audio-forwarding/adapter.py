@@ -87,7 +87,10 @@ final class IPadMicrophoneDiagnostics {
  final class Attempt {
   let id: UUID
   init(_ id: UUID) { self.id = id }
-  func record(_ s: String, _ fields: [String:String] = [:]) { IPadMicrophoneDiagnostics.records.append((s, fields, id)) }
+  func record(_ s: String, _ fields: [String:String] = [:]) {
+   guard !IPadMicrophoneDiagnostics.records.contains(where: { $0.0 == s && $0.2 == id }) else { return }
+   IPadMicrophoneDiagnostics.records.append((s, fields, id))
+  }
   FORWARDING_GUARDS_METHOD
  }
  static let shared = IPadMicrophoneDiagnostics()
