@@ -9,10 +9,9 @@ struct VisionMacAudioChooser: View {
     @State private var presentationScope: VisionMacAudioScope?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("Mac 오디오 장치").font(.title2)
-            Text("Mac 전체의 기본 입력·출력 장치가 변경됩니다.")
-            Text("Vision Pro의 소리 재생과 마이크 전송은 별도 설정입니다.").font(.caption)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Mac 오디오 장치").font(.headline)
+            Text("Mac 전체의 기본 입력·출력 장치가 변경됩니다.").font(.caption)
             if !routes.catalogInvalid, let current = routes.model.state, current.available {
                 Text("현재 입력: \(name(current.defaults.inputUID, in: current))")
                 Text("현재 출력: \(name(current.defaults.outputUID, in: current))")
@@ -36,11 +35,11 @@ struct VisionMacAudioChooser: View {
                     Text("Mac 목록이 바뀌었습니다. 새 목록을 확인하고 다시 선택해 주세요.").foregroundStyle(.orange)
                 }
             }
-            Text(status).accessibilityLabel(status)
+            if let status { Text(status).accessibilityLabel(status) }
             HStack {
                 Button("목록 새로고침") { admit { routes.refresh() } }
                     .disabled(!routes.canRefresh)
-                Button("새 목록으로 다시 선택") { admit { resetDraft() } }
+                Button("다시 선택") { admit { resetDraft() } }
                     .disabled(routes.scope == nil || routes.draft == nil || routes.model.pending != nil)
                 Spacer()
                 Button("적용") {
@@ -51,8 +50,8 @@ struct VisionMacAudioChooser: View {
                 Button("닫기", action: close)
             }
         }
-        .padding(30)
-        .frame(minWidth: 640)
+        .padding(20)
+        .frame(width: 480)
         .onAppear {
             guard presentationScope == nil else { return }
             presentationScope = routes.scope
@@ -74,11 +73,11 @@ struct VisionMacAudioChooser: View {
         return catalog.endpoints.first { $0.uid == uid }?.name ?? "목록에 없는 현재 기본 장치"
     }
 
-    private var status: String {
+    private var status: String? {
         if let problem = routes.problem { return problem }
         if routes.catalogInvalid { return "Mac 오디오 장치 정보를 읽을 수 없습니다." }
         if let outcome = routes.model.outcome { return outcome.title }
         guard let state = routes.model.state else { return "목록을 아직 받지 못했습니다." }
-        return state.available ? "장치를 선택하고 적용을 눌러 주세요." : "Mac 오디오 장치 정보를 읽을 수 없습니다."
+        return state.available ? nil : "Mac 오디오 장치 정보를 읽을 수 없습니다."
     }
 }

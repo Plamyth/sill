@@ -64,14 +64,10 @@ struct SillVisionWorkspace: View {
     @State private var inputSuspended = false
     @State private var textDraft: VisionTextDraft<StreamClient.VisionTextTarget>?
     @State private var draftShown = false
-    @AppStorage("ccrVisionAudioOfferAnswered") private var audioOfferAnswered = false
-    @State private var audioOfferShown = false
-    @State private var audioOfferScope: VisionAudioScope?
     @State private var displayChooserShown = false
     @State private var newWindowChooserShown = false
     @State private var geometryProblem: String?
     @State private var macAudioShown = false
-    @State private var macAudioOfferShown = false
     @State private var controlEventsShown = false
     @State private var testDestinationsShown = false
     @StateObject private var testDestinationStores = VisionTestDestinationStores()
@@ -122,40 +118,14 @@ struct SillVisionWorkspace: View {
         .onChange(of: recoveryShown) { _, _ in updateInputAdmission() }
         .onChange(of: changingSource) { _, _ in updateInputAdmission() }
         .onChange(of: macAudioModalShown) { _, shown in
-            if shown {
-                audioOfferShown = false
-                audioOfferScope = nil
-                keysShown = false
-            }
+            if shown { keysShown = false }
             updateInputAdmission()
         }
         .onChange(of: audioControlsAllowed) { _, allowed in
-            if !allowed {
-                audioOfferShown = false; audioOfferScope = nil
-                macAudioShown = false; macAudioOfferShown = false
-            } else { offerMacAudioChooser() }
+            if !allowed { macAudioShown = false }
         }
         .onReceive(client.visionMacAudioRoutes.$scope) { scope in
-            if scope == nil { macAudioShown = false; macAudioOfferShown = false }
-        }
-        .onReceive(client.visionMacAudioRoutes.$model) { _ in
-            DispatchQueue.main.async { offerMacAudioChooser() }
-        }
-        .onChange(of: audioOfferShown) { _, shown in if !shown { offerMacAudioChooser() } }
-        .onReceive(client.visionAudio.$presentation) { state in
-            DispatchQueue.main.async {
-                guard session.owns(lease),
-                      client.visionAudio.presentation.availability == state.availability else { return }
-                if case .available(let scope) = state.availability,
-                   state.canEnable, audioControlsAllowed,
-                   !client.visionPlaybackDesired, !audioOfferAnswered, !audioOfferShown, !macAudioShown, !macAudioOfferShown {
-                    audioOfferScope = scope
-                    audioOfferShown = true
-                } else if state.availability != audioOfferScope.map(VisionAudioState.Availability.available) {
-                    audioOfferShown = false
-                    audioOfferScope = nil
-                }
-            }
+            if scope == nil { macAudioShown = false }
         }
         .onChange(of: phase, initial: true) { _, value in
             guard session.owns(lease) else { return }
@@ -227,36 +197,13 @@ struct SillVisionWorkspace: View {
                                        close: { testDestinationsShown = false })
         }
         .sheet(isPresented: $recoveryShown) { recoveryForm }
-        .sheet(isPresented: $macAudioShown) {
+        .popover(isPresented: $macAudioShown) {
             VisionMacAudioChooser(routes: client.visionMacAudioRoutes, admit: { action in
                 withWindowOwnership { if audioControlsAllowed { action() } }
             }, close: { macAudioShown = false })
         }
-        .confirmationDialog("Mac 오디오 장치를 선택할까요?", isPresented: $macAudioOfferShown) {
-            Button("장치 선택", action: openMacAudioChooser)
-            Button("현재 장치 유지", role: .cancel) {}
-        } message: {
-            Text("목록을 열어 입력·출력 장치를 선택한 뒤 적용을 눌러야 Mac의 기본 장치가 변경됩니다.")
-        }
         .sheet(isPresented: $draftShown, onDismiss: clearDraft) {
             VisionTextDraftPanel(client: client, draft: $textDraft, close: clearDraft)
-        }
-        .confirmationDialog("Mac 소리를 Vision Pro에서도 재생할까요?", isPresented: $audioOfferShown) {
-            Button("Vision Pro에서도 재생") {
-                withWindowOwnership {
-                    guard audioControlsAllowed, !macAudioModalShown, let scope = audioOfferScope,
-                          client.visionAudio.presentation.availability == .available(scope),
-                          client.visionAudio.presentation.canEnable else { return }
-                    if client.setVisionAudioDesired(true, direction: .playback, expectedScope: scope) { audioOfferAnswered = true }
-                }
-                audioOfferScope = nil
-            }
-            Button("나중에", role: .cancel) {
-                withWindowOwnership { audioOfferAnswered = true }
-                audioOfferScope = nil
-            }
-        } message: {
-            Text(client.visionAudioPrivacyMessage)
         }
         .confirmationDialog("같은 Mac에 연결된 iPad 화면도 바뀔 수 있습니다.", isPresented: $changingSource) {
             Button("Mac 전체 화면 표시") { requestTransition(.desktop) }
@@ -278,31 +225,13 @@ struct SillVisionWorkspace: View {
                     }
                 }
                 .disabled(phase != .active || draftShown || recoveryShown || changingSource || testDestinationsShown ||
-                          displayChooserShown || macAudioModalShown || audioOfferShown || transitions.isPending)
+                          displayChooserShown || macAudioModalShown || transitions.isPending)
                 .accessibilityHint("Codex와 Cursor의 원본 세션·실행 상태를 읽기 전용 패널에서 확인합니다.")
                 Button("다른 모니터 창", action: openAdditionalDisplayChooser)
                     .disabled(!client.connected || !client.visionDisplaySelection.independentWindowsAvailable)
                     .accessibilityHint("모니터를 선택한 뒤 그 모니터에 고정된 공간 창을 엽니다.")
                 Text(session.message).font(.caption).lineLimit(2)
                 if client.connected {
-                    Menu("오디오") {
-                        Button("Mac 오디오 장치") {
-                            openMacAudioChooser()
-                        }
-                        .disabled(!audioControlsAllowed)
-                        Button(client.visionAudio.presentation.phase.grant != nil || client.visionPlaybackDesired
-                               ? "Mac 소리 중지" : "Mac 소리 켜기") {
-                            withWindowOwnership {
-                                if client.visionAudio.presentation.phase.grant != nil || client.visionPlaybackDesired {
-                                    client.setVisionAudioDesired(false, direction: .playback)
-                                } else if audioControlsAllowed { client.setVisionAudioDesired(true, direction: .playback) }
-                            }
-                        }
-                        .disabled(!client.visionPlaybackDesired && client.visionAudio.presentation.phase.grant == nil &&
-                                  (!audioControlsAllowed || !client.visionAudioIntentContext.admitted))
-                        Text(client.visionAudioPrivacyMessage)
-                        Text("마이크는 아래 마이크 전송 설정에서 확인하세요.")
-                    }
                     Button("프로젝트 테스트 화면") {
                         withWindowOwnership {
                             guard phase == .active, !transitions.isPending else { return }
@@ -354,41 +283,9 @@ struct SillVisionWorkspace: View {
                         Text("Mac 화면 정보를 기다리는 중입니다. 입력은 확인 후 사용할 수 있습니다.").font(.caption)
                     }
                 }
-                VisionAudioControls(client: client, audio: client.visionAudio,
-                                    allowStart: audioControlsAllowed,
-                                    admit: withWindowOwnership)
-                VisionMicrophoneControls(client: client,
-                                         allowStart: audioControlsAllowed,
-                                         admit: withWindowOwnership)
-                VStack(alignment: .leading, spacing: 6) {
-                    Picker("통화 제어 대상", selection: Binding(
-                        get: { client.visionProviderCall.target },
-                        set: { target in
-                            withWindowOwnership {
-                                if audioControlsAllowed { client.visionProviderCall.selectTarget(target) }
-                            }
-                        })) {
-                        ForEach(VisionCallTarget.allCases, id: \.self) { target in
-                            Text(target.title).tag(target)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(!audioControlsAllowed || !client.visionProviderCall.canChangeTarget)
-                    .accessibilityHint("통화 제어 대상을 선택합니다. 통화나 오디오 장치를 자동으로 전환하지 않습니다.")
-                    if client.visionProviderCall.target != .grok {
-                        HStack {
-                            Button(client.visionProviderCall.target == .nativeCodex ? "음성 대화 시작" : "Dots 통화 시작") {
-                                withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.start) } }
-                            }
-                            .disabled(!audioControlsAllowed || !client.visionProviderCanStart)
-                            Button(client.visionProviderCall.target == .nativeCodex ? "음성 대화 종료" : "Dots 통화 종료") {
-                                withWindowOwnership { if audioControlsAllowed { client.performVisionProviderCall(.stop) } }
-                            }
-                            .disabled(!audioControlsAllowed || !client.visionProviderCanStop)
-                        }
-                    }
-                    Text(client.visionProviderCall.message).font(.caption)
-                }
+                VisionCallControls(client: client, audio: client.visionAudio,
+                                   allowStart: audioControlsAllowed, admit: withWindowOwnership,
+                                   chooseDevices: openMacAudioChooser)
             }
             #if DEBUG && targetEnvironment(simulator)
             if let peer = session.remotePeer { VisionReleaseRemoteStatus(peer: peer) }
@@ -517,10 +414,10 @@ struct SillVisionWorkspace: View {
     }
 
     private var inputAllowed: Bool {
-        targetPresented && !newWindowChooserShown && phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !controlEventsShown && !draftShown && !recoveryShown && !changingSource && !testDestinationsShown && !audioOfferShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
+        targetPresented && !newWindowChooserShown && phase == .active && client.connected && client.active != .none && !transitions.isPending && !inputSuspended && !controlEventsShown && !draftShown && !recoveryShown && !changingSource && !testDestinationsShown && !macAudioModalShown && !client.visionDisplaySelection.inputBlocked && !displayChooserShown
     }
 
-    private var macAudioModalShown: Bool { macAudioShown || macAudioOfferShown }
+    private var macAudioModalShown: Bool { macAudioShown }
 
     private func openAdditionalDisplayChooser() {
         guard session.owns(lease), phase == .active, !draftShown, !transitions.isPending,
@@ -539,8 +436,7 @@ struct SillVisionWorkspace: View {
             }
             clearDraft()
             keysShown = false
-            audioOfferShown = false; audioOfferScope = nil
-            macAudioShown = false; macAudioOfferShown = false
+            macAudioShown = false
             client.setVisionDisplayModal(true)
             displayChooserShown = true
             updateInputAdmission()
@@ -551,20 +447,8 @@ struct SillVisionWorkspace: View {
     private func openMacAudioChooser() {
         withWindowOwnership {
             guard audioControlsAllowed else { return }
-            audioOfferShown = false
-            audioOfferScope = nil
-            macAudioOfferShown = false
             macAudioShown = true
             keysShown = false
-            updateInputAdmission()
-        }
-    }
-
-    private func offerMacAudioChooser() {
-        guard session.owns(lease), audioControlsAllowed, !audioOfferShown,
-              !macAudioShown, !macAudioOfferShown else { return }
-        if client.visionMacAudioRoutes.takeOffer() {
-            macAudioOfferShown = true
             updateInputAdmission()
         }
     }
@@ -685,96 +569,106 @@ private struct VisionSentryOrnament: View {
     }
 }
 
-private struct VisionAudioControls: View {
+private struct VisionCallControls: View {
     @ObservedObject var client: StreamClient
     @ObservedObject var audio: VisionAudioController
     let allowStart: Bool
     let admit: (() -> Void) -> Void
+    let chooseDevices: () -> Void
+
+    private var call: VisionProviderCall.Controls {
+        client.visionProviderCall.controls(canStart: allowStart && client.visionProviderCanStart,
+            canStop: client.visionProviderCanStop, context: client.visionAudioIntentContext,
+            snapshot: client.visionForwarding?.providerCallSnapshot)
+    }
+    private var microphoneOn: Bool { client.visionMicrophoneDesired || client.microphonePhase.canStop }
+    private var speakerOn: Bool { client.visionPlaybackDesired || audio.presentation.phase.grant != nil }
 
     var body: some View {
-        HStack(spacing: 12) {
-            let running = audio.presentation.phase.grant != nil || client.visionPlaybackDesired
-            Button(running ? "Mac 소리 중지" : "Mac 소리 켜기",
-                   systemImage: running ? "speaker.slash" : "speaker.wave.2") {
-                admit {
-                    if running { client.setVisionAudioDesired(false, direction: .playback) }
-                    else if allowStart { client.setVisionAudioDesired(true, direction: .playback) }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Button(call.action == .stop ? "음성 대화 종료" : "음성 대화 시작",
+                       systemImage: call.action == .stop ? "phone.down.fill" : "phone.fill") {
+                    admit {
+                        let current = call
+                        guard current.enabled else { return }
+                        client.performVisionProviderCall(current.action)
+                    }
+                }
+                .disabled(!call.enabled)
+                .accessibilityIdentifier("VisionVoiceCall")
+                Toggle(isOn: Binding(get: { microphoneOn }, set: { enabled in
+                    admit {
+                        guard !enabled || allowStart else { return }
+                        client.setVisionAudioDesired(enabled, direction: .microphone)
+                    }
+                })) { Label("마이크", systemImage: microphoneOn ? "mic" : "mic.slash") }
+                .toggleStyle(.button)
+                .disabled(!microphoneOn && (!allowStart || !client.visionAudioIntentContext.admitted ||
+                    client.microphoneCleanupProblem != nil || audio.cleanupProblem != nil))
+                .accessibilityLabel("Vision 마이크")
+                .accessibilityIdentifier("VisionVoiceMicrophone")
+                Toggle(isOn: Binding(get: { speakerOn }, set: { enabled in
+                    admit {
+                        guard !enabled || allowStart else { return }
+                        client.setVisionAudioDesired(enabled, direction: .playback)
+                    }
+                })) { Label("스피커", systemImage: speakerOn ? "speaker.wave.2" : "speaker.slash") }
+                .toggleStyle(.button)
+                .disabled(!speakerOn && (!allowStart || !client.visionAudioIntentContext.admitted || audio.cleanupProblem != nil))
+                .accessibilityLabel("Vision 스피커")
+                .accessibilityIdentifier("VisionVoiceSpeaker")
+                Button(action: chooseDevices) {
+                    Label("장치", systemImage: "hifispeaker")
+                }
+                .disabled(!allowStart)
+                .accessibilityIdentifier("VisionVoiceDevices")
+                Spacer()
+                if audio.cleanupProblem != nil {
+                    Button("스피커 정리 다시 시도") { admit { audio.retryCleanup() } }
+                }
+                if client.microphoneCleanupProblem != nil {
+                    Button("마이크 정리 다시 시도") { admit { client.toggleVisionMicrophone() } }
                 }
             }
-            .disabled(!running && (!client.visionAudioIntentContext.admitted || !allowStart || audio.cleanupProblem != nil))
-            .accessibilityHint(running ? "즉시 소리를 중지합니다." : "이 버튼은 Mac 소리 수신만 켭니다. 마이크 전송은 별도입니다.")
-            Text(message).font(.caption).lineLimit(2)
-            if audio.cleanupProblem != nil {
-                Button("오디오 정리 다시 시도", systemImage: "arrow.clockwise") { admit { audio.retryCleanup() } }
-                    .accessibilityHint("남아 있는 오디오 세션만 정리합니다. 소리나 마이크를 다시 켜지 않습니다.")
+            ForEach(Array(messages.enumerated()), id: \.offset) { _, message in
+                Text(message).font(.caption)
             }
-            Spacer()
         }
     }
 
-    private var message: String {
-        if let problem = audio.cleanupProblem { return "오디오 정리가 필요합니다. " + problem }
-        if let problem = client.visionForwardingProblem { return problem }
+    private var messages: [String] {
+        [client.microphoneCleanupProblem, audio.cleanupProblem, client.visionForwardingProblem,
+         call.message, microphoneMessage, speakerMessage].compactMap { $0 }.reduce(into: []) {
+            if !$0.contains($1) { $0.append($1) }
+        }
+    }
+
+    private var speakerMessage: String? {
         switch audio.presentation.phase {
-        case .requesting: return "Mac의 소리 전송 확인을 기다립니다."
-        case .waiting: return "소리 데이터를 기다립니다."
-        case .rendering: return "Mac 소리 재생 중"
+        case .requesting: return "스피커 연결을 확인하고 있습니다."
+        case .waiting: return "Mac 소리를 기다리고 있습니다."
+        case .rendering: return nil
         case .failed(let problem): return problem
         case .off:
             switch audio.presentation.availability {
-            case .disconnected: return "Mac 연결 후 사용할 수 있습니다."
-            case .unsupported: return "현재 Mac 호스트는 소리 전송을 지원하지 않습니다."
-            case .noSource: return "Mac 화면을 선택하면 소리를 켤 수 있습니다."
-            case .available: return client.visionAudioPrivacyMessage
+            case .disconnected: return "Mac 연결 후 스피커를 사용할 수 있습니다."
+            case .unsupported: return "이 Mac 연결은 소리 전송을 지원하지 않습니다."
+            case .noSource: return "Mac 화면을 선택하면 스피커를 사용할 수 있습니다."
+            case .available: return nil
             }
         }
     }
-}
 
-private struct VisionMicrophoneControls: View {
-    @ObservedObject var client: StreamClient
-    let allowStart: Bool
-    let admit: (() -> Void) -> Void
-
-    var body: some View {
-        HStack(spacing: 12) {
-            let stopping = client.microphonePhase.canStop || client.visionMicrophoneDesired
-            let cleanup = client.microphoneCleanupProblem != nil
-            Button(cleanup ? "마이크 정리 다시 시도" : stopping ? "Vision 마이크 중지" : "Vision 마이크 보내기",
-                   systemImage: stopping ? "mic.slash" : "mic") {
-                admit {
-                    if cleanup { client.toggleVisionMicrophone() }
-                    else if stopping { client.setVisionAudioDesired(false, direction: .microphone) }
-                    else if allowStart { client.setVisionAudioDesired(true, direction: .microphone) }
-                }
-            }
-            .disabled(!cleanup && !stopping && (!allowStart || !client.visionAudioIntentContext.admitted || client.visionAudio.cleanupProblem != nil))
-            .accessibilityHint(cleanup ? "기존 마이크 자원만 정리합니다. 다시 녹음하지 않습니다." :
-                stopping ? "즉시 음성 전송을 중지합니다." : "직접 허용하면 Vision 마이크를 현재 선택한 Mac으로 전송합니다.")
-            Button("수신 확인", systemImage: "checkmark.circle") {
-                admit { client.requestVisionMicrophoneReceipt() }
-            }
-            .disabled(cleanup || client.microphonePhase != .live)
-            .accessibilityHint("현재 Mac의 음성 수신량을 한 번 확인합니다. 실제 통화 입력은 별도 확인이 필요합니다.")
-            Text(message).font(.caption).lineLimit(2)
-            Spacer()
-        }
-    }
-
-    private var message: String {
-        if let problem = client.microphoneCleanupProblem { return problem }
-        if let problem = client.visionForwardingProblem { return problem }
+    private var microphoneMessage: String? {
         switch client.microphonePhase {
         case .unavailable: return "이 Mac 연결은 마이크 입력을 지원하지 않습니다."
-        case .off: return "Vision 마이크 꺼짐"
+        case .off, .live: return nil
         case .authorizing: return "Vision 마이크 권한을 확인합니다."
-        case .requesting: return "선택한 Mac의 마이크 입력 허용을 기다립니다."
+        case .requesting: return "마이크 연결을 확인하고 있습니다."
         case .capturing: return "Vision 마이크를 준비합니다."
-        case .live:
-            return (client.microphoneReceipt?.admittedPackets ?? 0) > 0 ?
-                "마지막 조회에서 Mac 수신 확인 · 실제 통화 입력은 별도 확인" : "전송 허용됨 · 수신 확인을 눌러 조회하세요."
-        case .stopping: return "음성 전송을 중지했습니다. Mac의 정리 확인을 기다립니다."
-        case .cleanupRequired: return "Mac 마이크 정리가 확인되지 않았습니다. 화면 목록을 새로고침하거나 다시 연결한 뒤 직접 시작하세요."
+        case .stopping: return "마이크를 중지하고 있습니다."
+        case .cleanupRequired: return "Mac 마이크 정리를 확인하지 못했습니다."
         case .failed(let problem):
             return problem == "iPad 마이크 권한이 필요합니다." ? "Vision 마이크 권한이 필요합니다." : problem
         }
