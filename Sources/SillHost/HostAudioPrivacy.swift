@@ -189,7 +189,8 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
     }
 
     func write(_ change: PrivacyAudioWrite) -> Bool {
-        guard let snapshot = try? read(), let expected = snapshot.applying(change) else { return false }
+        guard let snapshot = try? read(), (try? snapshot.plan(allowPartial: true).contains(change)) == true,
+              let expected = snapshot.applying(change) else { return false }
         let object: AudioObjectID
         var property: AudioObjectPropertyAddress
         var value: UInt32
@@ -211,6 +212,74 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         return ops.set(object, &property, UInt32(MemoryLayout<UInt32>.size), &value) == noErr && (try? read()) == expected
     }
 
+    /// Reads physical protection without consulting BlackHole, defaults or listeners.
+    /// A bad endpoint is retained as unknown while other devices remain actionable.
+    func readPhysicalProtection() throws -> PrivacyAudioSnapshot {
+        let devices = try ids(system, kAudioHardwarePropertyDevices, allowEmpty: true)
+        let physicalTransports = [kAudioDeviceTransportTypeBuiltIn, kAudioDeviceTransportTypePCI,
+            kAudioDeviceTransportTypeUSB, kAudioDeviceTransportTypeFireWire, kAudioDeviceTransportTypeBluetooth,
+            kAudioDeviceTransportTypeBluetoothLE, kAudioDeviceTransportTypeHDMI, kAudioDeviceTransportTypeDisplayPort,
+            kAudioDeviceTransportTypeAVB, kAudioDeviceTransportTypeThunderbolt]
+        var result: [PrivacyAudioDevice] = []
+        var unknown: Set<UInt32> = []
+        for id in devices {
+            do {
+                guard try scalar(id, kAudioDevicePropertyDeviceIsAlive) == 1 else { continue }
+                let transport = try scalar(id, kAudioDevicePropertyTransportType)
+                if transport == kAudioDeviceTransportTypeVirtual || transport == kAudioDeviceTransportTypeAggregate { continue }
+                guard physicalTransports.contains(transport),
+                      try scalar(id, kAudioObjectPropertyClass) == kAudioDeviceClassID else { throw PrivacyAudioFailure.readback }
+                let uid = try registry.string(id, kAudioDevicePropertyDeviceUID)
+                guard !uid.isEmpty, uid != "BlackHole2ch_UID", uid != "BlackHole16ch_UID",
+                      try registry.resolve(uid) == id else { throw PrivacyAudioFailure.readback }
+                let input = try channels(id, kAudioObjectPropertyScopeInput)
+                let output = try channels(id, kAudioObjectPropertyScopeOutput)
+                let inputMuted = input > 0 ? mute(id, kAudioObjectPropertyScopeInput) : nil
+                let outputMuted = output > 0 ? mute(id, kAudioObjectPropertyScopeOutput) : nil
+                let streamState = (input > 0 && inputMuted == nil) || (output > 0 && outputMuted == nil)
+                    ? try? streams(id) : nil
+                guard try registry.string(id, kAudioDevicePropertyDeviceUID) == uid,
+                      try registry.resolve(uid) == id,
+                      try scalar(id, kAudioDevicePropertyTransportType) == transport,
+                      try channels(id, kAudioObjectPropertyScopeInput) == input,
+                      try channels(id, kAudioObjectPropertyScopeOutput) == output,
+                      streamState == nil || (try? streams(id)) == streamState else { throw PrivacyAudioFailure.readback }
+                result.append(PrivacyAudioDevice(id: id, uid: uid,
+                    transport: transport == kAudioDeviceTransportTypeBuiltIn ? .builtIn : .other,
+                    plugin: nil, inputChannels: input, outputChannels: output,
+                    inputMuted: inputMuted, outputMuted: outputMuted, streams: streamState))
+            } catch { unknown.insert(id) }
+        }
+        let after = try ids(system, kAudioHardwarePropertyDevices, allowEmpty: true)
+        unknown.formUnion(Set(devices).symmetricDifference(Set(after)))
+        return PrivacyAudioSnapshot(devices: result, input: 0, output: 0, systemOutput: 0,
+                                    unconfirmedDeviceIDs: unknown.sorted())
+    }
+
+    func writePhysicalProtection(_ change: PrivacyAudioWrite) -> Bool {
+        guard let snapshot = try? readPhysicalProtection(), snapshot.physicalProtectionPlan().contains(change),
+              let uid = snapshot.physicalUID(for: change), let expected = snapshot.applying(change),
+              let device = snapshot.devices.first(where: { $0.uid == uid }) else { return false }
+        let object: AudioObjectID
+        var property: AudioObjectPropertyAddress
+        var value: UInt32
+        switch change {
+        case .select: return false
+        case .mute(let id, let scope):
+            object = id; value = 1
+            property = address(kAudioDevicePropertyMute,
+                scope == .input ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput)
+        case .deactivateStream(_, let stream, _):
+            object = stream.id; value = 0; property = address(kAudioStreamPropertyIsActive)
+        }
+        guard canWrite(object, &property), (try? registry.resolve(uid)) == device.id,
+              let before = try? readPhysicalProtection(), before.physicalProtectionPlan().contains(change),
+              before.devices.first(where: { $0.uid == uid }) == device else { return false }
+        guard ops.set(object, &property, UInt32(MemoryLayout<UInt32>.size), &value) == noErr,
+              let after = try? readPhysicalProtection() else { return false }
+        return after.devices.first(where: { $0.uid == uid }) == expected.devices.first(where: { $0.uid == uid })
+    }
+
     func restoreLocal(_ original: LocalAudioState) -> Bool {
         var phase = "초기 원본·HAL 읽기"
         var restored = false
@@ -218,7 +287,7 @@ final class CoreAudioPrivacyHAL: HostAudioPrivacyHAL {
         guard original.isValid, var snapshot = try? read() else { return false }
         if original.matches(snapshot) { restored = true; return true }
         phase = "보호 상태·장치 집합"
-        guard (try? snapshot.plan(allowPartial: true).isEmpty) == true,
+        guard snapshot.protectedForLocalRestore,
               Set(snapshot.devices.map(\.uid)) == Set(original.devices.map(\.uid)) else { return false }
         var changes: [(uid: String, selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope,
                        value: UInt32?, streamID: UInt32?)] = []
@@ -362,7 +431,9 @@ extension HostAudioPrivacy {
             persist: { journal.write(latched: true, original: journal.original) },
             localState: journal.original, saveLocal: { original in
                 journal.write(latched: original != nil, original: original)
-            }, clearLatch: { journal.write(latched: false, original: nil) },
+            }, prepareLatchClear: { journal.prepareLocalReturn() },
+            clearLatch: { journal.write(latched: false, original: nil) },
+            finishLatchClear: { journal.finishLocalReturn() },
             authenticateLocal: { attempt in await authentication.evaluate(operationId: attempt) }, cancelAuthentication: { authentication.cancel() },
             authenticationChallengeID: { authentication.activeChallengeID },
             nativeStartup: nativeStartup)

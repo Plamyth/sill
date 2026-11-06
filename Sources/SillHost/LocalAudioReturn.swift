@@ -324,15 +324,23 @@ final class LocalAudioJournal {
         let original: LocalAudioState?
     }
     static let key = "CCRHostAudioPrivacyJournal.v2"
+    static let recoveryKey = "CCRHostAudioPrivacyJournal.localReturnRecovery.v1"
     private let store: (Data) -> Void
     private let load: () -> Data?
     private let synchronize: () -> Bool
+    private let storeRecovery: ((Data?) -> Void)?
+    private let loadRecovery: (() -> Data?)?
+    private var preparedRecovery: Data?
+    private var clearedData: Data?
     private(set) var latched: Bool
     private(set) var original: LocalAudioState?
 
     init(data: Data?, legacyLatched: Bool = false, legacyOriginal: LocalAudioState? = nil,
-         store: @escaping (Data) -> Void, load: @escaping () -> Data?, synchronize: @escaping () -> Bool) {
+         store: @escaping (Data) -> Void, load: @escaping () -> Data?, synchronize: @escaping () -> Bool,
+         recoveryData: Data? = nil, storeRecovery: ((Data?) -> Void)? = nil,
+         loadRecovery: (() -> Data?)? = nil) {
         self.store = store; self.load = load; self.synchronize = synchronize
+        self.storeRecovery = storeRecovery; self.loadRecovery = loadRecovery
         if let data {
             if let envelope = try? JSONDecoder().decode(Envelope.self, from: data), (envelope.version == 2 || envelope.version == 3),
                (!envelope.latched || envelope.original?.isValid == true) {
@@ -345,6 +353,17 @@ final class LocalAudioJournal {
             latched = legacyLatched
             original = legacyLatched && legacyOriginal?.isValid == true ? legacyOriginal : nil
         }
+        if let recoveryData {
+            // A durable protected primary can supersede an older backup. A cleared/unknown
+            // primary cannot prove the enclosing return completed, so recovery stays latched.
+            let primary = data.flatMap { try? JSONDecoder().decode(Envelope.self, from: $0) }
+            if primary?.latched != true || original?.isValid != true {
+                latched = true
+                let recovery = try? JSONDecoder().decode(Envelope.self, from: recoveryData)
+                original = recovery?.version == 3 && recovery?.latched == true && recovery?.original?.isValid == true
+                    ? recovery?.original : nil
+            }
+        }
     }
 
     convenience init(defaults: UserDefaults) {
@@ -353,16 +372,55 @@ final class LocalAudioJournal {
         self.init(data: defaults.data(forKey: Self.key),
             legacyLatched: defaults.bool(forKey: "CCRHostAudioPrivacyLatched.v1"), legacyOriginal: original,
             store: { defaults.set($0, forKey: Self.key) }, load: { defaults.data(forKey: Self.key) },
-            synchronize: { defaults.synchronize() })
+            synchronize: { defaults.synchronize() }, recoveryData: defaults.data(forKey: Self.recoveryKey),
+            storeRecovery: { value in
+                if let value { defaults.set(value, forKey: Self.recoveryKey) }
+                else { defaults.removeObject(forKey: Self.recoveryKey) }
+            }, loadRecovery: { defaults.data(forKey: Self.recoveryKey) })
+    }
+
+    func prepareLocalReturn() -> Bool {
+        guard latched, let original, original.isValid, let storeRecovery, let loadRecovery,
+              let data = try? JSONEncoder().encode(Envelope(version: 3, latched: true, original: original)) else { return false }
+        preparedRecovery = nil
+        storeRecovery(data)
+        guard synchronize(), loadRecovery() == data else { return false }
+        preparedRecovery = data
+        return true
+    }
+
+    /// Cleanup happens only after the enclosing audio/Sentry transaction has accepted success.
+    /// Failure leaves a conservative restart recovery record; it cannot undo that commit.
+    @discardableResult
+    func finishLocalReturn() -> Bool {
+        guard !latched, original == nil, let clearedData, load() == clearedData else { return false }
+        return removeRecovery()
+    }
+
+    @discardableResult
+    private func removeRecovery() -> Bool {
+        guard let storeRecovery, let loadRecovery else { return false }
+        storeRecovery(nil)
+        guard synchronize(), loadRecovery() == nil else { return false }
+        preparedRecovery = nil
+        return true
     }
 
     func write(latched: Bool, original: LocalAudioState?) -> Bool {
-        guard !latched || original?.isValid == true else { return false }
+        guard latched ? original?.isValid == true : original == nil else { return false }
+        if !latched, self.latched || self.original != nil {
+            if preparedRecovery == nil || loadRecovery?() != preparedRecovery {
+                guard prepareLocalReturn() else { return false }
+            }
+            guard let preparedRecovery, loadRecovery?() == preparedRecovery else { return false }
+        }
         guard let data = try? JSONEncoder().encode(Envelope(version: 3, latched: latched, original: original)) else { return false }
         store(data)
         guard synchronize(), load() == data else { return false }
         self.latched = latched
         self.original = original
+        clearedData = latched ? nil : data
+        if latched { removeRecovery() }
         return true
     }
 }

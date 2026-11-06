@@ -2,13 +2,16 @@ import Foundation
 import StreamProtocol
 
 @MainActor
-private final class ReturnHAL: HostAudioPrivacyHAL {
+final class ReturnHAL: HostAudioPrivacyHAL {
     var snapshot = PrivacyFakeHAL().snapshot
+    var observationsOK = true
     var restoreCalls = 0
     var restoreSucceeds = true
+    var restoreResultAfterApplying = true
     var readFailures = 0
     var writes = 0
     var beforeObservationStop: (() -> Void)?
+    var afterRestore: (() -> Void)?
     func read() throws -> PrivacyAudioSnapshot {
         if readFailures > 0 { readFailures -= 1; throw PrivacyAudioFailure.readback }
         return snapshot
@@ -30,7 +33,7 @@ private final class ReturnHAL: HostAudioPrivacyHAL {
     }
     func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool {
         if changed == nil { beforeObservationStop?() }
-        return true
+        return observationsOK
     }
     func restoreLocal(_ original: LocalAudioState) -> Bool {
         restoreCalls += 1
@@ -43,12 +46,13 @@ private final class ReturnHAL: HostAudioPrivacyHAL {
         snapshot.input = snapshot.devices.first { $0.uid == original.inputUID }!.id
         snapshot.output = snapshot.devices.first { $0.uid == original.outputUID }!.id
         snapshot.systemOutput = snapshot.devices.first { $0.uid == original.systemOutputUID }!.id
-        return true
+        afterRestore?()
+        return restoreResultAfterApplying
     }
 }
 
 @MainActor
-private final class ReturnFixture {
+final class ReturnFixture {
     let hal = ReturnHAL()
     let startup = NativeAudioStartup()
     var privacy: HostAudioPrivacy!
@@ -61,14 +65,18 @@ private final class ReturnFixture {
     var original: LocalAudioState?
     var intentCommits = 0
     var intentAccepted = true
+    var persistenceAccepted = true
+    var clearAccepted = true
+    var clearHook: (() -> Void)?
     var intentHook: ((@escaping @MainActor () -> Bool) async -> Bool)?
     let facts = LocalAudioParticipantFacts(admissionFenced: true, startsSettled: true, mediaDetached: true,
         callbacksDrained: true, buffersEmpty: true, workersExited: true)
 
     init(relay: Bool = true, forwarding: Bool = false) {
-        privacy = HostAudioPrivacy(hal: hal, persist: { [unowned self] in durable = true; return true },
-            saveLocal: { [unowned self] state in original = state; durable = state != nil; return true },
-            clearLatch: { [unowned self] in commits += 1; durable = false; return true },
+        privacy = HostAudioPrivacy(hal: hal, persist: { [unowned self] in durable = true; return persistenceAccepted },
+            saveLocal: { [unowned self] state in original = state; durable = state != nil; return persistenceAccepted },
+            prepareLatchClear: { [unowned self] in let result = clearAccepted; clearHook?(); return result },
+            clearLatch: { [unowned self] in commits += 1; durable = false; clearHook?(); return clearAccepted },
             authenticateLocal: { [unowned self] _ in authCalls += 1; authHook?(); return accepted },
             nativeStartup: startup)
         _ = startup.construct { true }
@@ -101,7 +109,9 @@ private final class ReturnFixture {
 
 @MainActor
 func localReturnChecks() async {
+    await physicalAbortCompensationChecks()
     armRecoveryChecks()
+    await normalDisconnectReturnChecks()
     let expiredRemoval = ReturnFixture()
     expect(expiredRemoval.privacy.armAndVerify(), "감시 종료 중 기한 만료 fixture 보호")
     var observationStopEntered = false
@@ -170,7 +180,7 @@ func localReturnChecks() async {
     let coupledResult = await coupled.privacy.requestLocalReturn()
     expect(!coupledResult && coupled.privacy.latched && coupled.commits == 0,
            "Sentry commit 거부는 오디오 영속 복귀를 완료하지 않음")
-    expect((try? coupled.hal.snapshot.plan().isEmpty) == true, "결합 실패 뒤 주입 장치 보호 재적용")
+    expect(coupled.hal.snapshot.physicalProtectionVerified, "결합 실패 뒤 주입 장치 보호 재적용")
     coupled.privacy.stop()
 
     let refused = ReturnFixture(); refused.intentAccepted = false
@@ -297,6 +307,396 @@ func localReturnChecks() async {
 }
 
 @MainActor
+private final class NormalDisconnectAuthority {
+    var sentry = false
+    var voiceSessions: Set<UUID> = []
+    var generation = UUID()
+
+    func admission() -> @MainActor () -> Bool {
+        let disconnectedGeneration = generation
+        return { !self.sentry && self.voiceSessions.isEmpty && self.generation == disconnectedGeneration }
+    }
+}
+
+@MainActor
+private func normalDisconnectReturnChecks() async {
+    await normalDisconnectJournalFailureChecks()
+    await normalDisconnectStreamChecks()
+    let success = ReturnFixture(forwarding: true)
+    success.accepted = false
+    success.intentAccepted = false
+    var surfaceCommits = 0
+    var sentryReturnActivity = false
+    var activityNotifications = 0
+    success.privacy.localReturnActivityChanged = {
+        activityNotifications += 1
+        sentryReturnActivity = success.privacy.localReturnInProgress
+    }
+    success.privacy.localReturnDidComplete = { _, _, _ in surfaceCommits += 1; return false }
+    success.hal.snapshot.devices[0].inputMuted = true
+    expect(success.privacy.armAndVerify(), "일반 disconnect 원본 장치와 비대칭 mute 저장")
+    let original = success.original!
+    let returned = await success.privacy.requestNormalDisconnectReturn { !sentryReturnActivity }
+    expect(returned && original.matches(success.hal.snapshot) && !success.privacy.latched &&
+           !success.durable && success.authCalls == 0 && success.intentCommits == 0 && surfaceCommits == 0 && activityNotifications == 0,
+           "일반 disconnect는 인증·Node intent·Sentry 해제 없이 연결 전 입출력과 mute 복원")
+    expect(success.privacy.armAndVerify(), "자동복귀 뒤 재접속 오디오 보호 재진입")
+    let returnedAgain = await success.privacy.requestNormalDisconnectReturn { true }
+    expect(returnedAgain && original.matches(success.hal.snapshot), "이전 원본으로 재접속 후 두 번째 일반 복귀")
+    success.privacy.stop()
+
+    for reason in ["Sentry", "같은 기기의 다른 Vision 창", "다른 owner", "이전 disconnect 세대"] {
+        let refused = ReturnFixture()
+        let authority = NormalDisconnectAuthority()
+        let admission = authority.admission()
+        switch reason {
+        case "Sentry": authority.sentry = true
+        case "이전 disconnect 세대": authority.generation = UUID()
+        default: authority.voiceSessions.insert(UUID())
+        }
+        expect(refused.privacy.armAndVerify(), "\(reason) 최초 admission 거절 fixture")
+        let result = await refused.privacy.requestNormalDisconnectReturn(while: admission)
+        expect(!result && refused.hal.restoreCalls == 0 && refused.commits == 0 && refused.authCalls == 0 &&
+               refused.privacy.verify(), "\(reason)은 복원·인증·latch 변경 없이 보호 유지")
+        refused.privacy.stop()
+    }
+
+    for reason in ["Sentry 활성화", "새 owner", "늦은 세대"] {
+        let race = ReturnFixture()
+        let authority = NormalDisconnectAuthority()
+        let admission = authority.admission()
+        race.privacy.revokeForLocalReturn = {
+            await Task.yield()
+            switch reason {
+            case "Sentry 활성화": authority.sentry = true
+            case "새 owner": authority.voiceSessions.insert(UUID())
+            default: authority.generation = UUID()
+            }
+            return true
+        }
+        expect(race.privacy.armAndVerify(), "drain 중 \(reason) fixture")
+        let result = await race.privacy.requestNormalDisconnectReturn(while: admission)
+        expect(!result && race.hal.restoreCalls == 0 && race.commits == 0 && race.privacy.latched &&
+               (try? race.hal.snapshot.plan().isEmpty) == true,
+               "drain 중 \(reason)이 admission을 취소하면 복원 거절")
+        race.privacy.stop()
+    }
+
+    let membership = ReturnFixture()
+    membership.privacy.revokeForLocalReturn = {
+        membership.startup.participants.unregister(.relay)
+        return true
+    }
+    expect(membership.privacy.armAndVerify(), "일반복귀 참여자 세대 교체 fixture")
+    let membershipResult = await membership.privacy.requestNormalDisconnectReturn { true }
+    expect(!membershipResult && membership.hal.restoreCalls == 0 && membership.commits == 0 && membership.privacy.latched,
+           "외부 admission이 참이어도 내부 참여자 세대 변경은 복원 거절")
+    membership.privacy.stop()
+
+    for phase in ["drain", "restore", "readback", "restore admission", "commit admission", "persistence"] {
+        let failure = ReturnFixture()
+        var admitted = true
+        expect(failure.privacy.armAndVerify(), "일반복귀 \(phase) 실패 fixture")
+        switch phase {
+        case "drain": failure.quiescent = false
+        case "restore": failure.hal.restoreSucceeds = false
+        case "readback": failure.hal.afterRestore = { failure.hal.readFailures = 1 }
+        case "restore admission": failure.hal.afterRestore = { admitted = false }
+        case "commit admission": failure.clearHook = { admitted = false }
+        default:
+            failure.clearAccepted = false
+            failure.clearHook = { failure.persistenceAccepted = false }
+        }
+        let result = await failure.privacy.requestNormalDisconnectReturn { admitted }
+        expect(!result && failure.privacy.latched && failure.hal.snapshot.physicalProtectionVerified &&
+               failure.authCalls == 0 && failure.intentCommits == 0,
+               "\(phase) 실패 시 로컬을 유지하지 않고 보호 상태 복구")
+        if phase == "persistence" {
+            expect(!failure.privacy.state.protected && !failure.privacy.forwardingHealth(),
+                   "영속 복구 실패는 물리 보호를 재적용해도 성공·원격 admission으로 승격하지 않음")
+        }
+        failure.privacy.stop()
+    }
+
+    let cancelled = ReturnFixture()
+    var releaseDrain: CheckedContinuation<Void, Never>?
+    var drainCompleted = false
+    cancelled.privacy.revokeForLocalReturn = {
+        await withCheckedContinuation { releaseDrain = $0 }
+        drainCompleted = true
+        return true
+    }
+    expect(cancelled.privacy.armAndVerify(), "일반복귀 취소 fixture")
+    let task = Task { await cancelled.privacy.requestNormalDisconnectReturn { true } }
+    let enteredDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while releaseDrain == nil && ContinuousClock.now < enteredDeadline { await Task.yield() }
+    expect(releaseDrain != nil, "일반복귀 비동기 drain 진입")
+    task.cancel()
+    let result = await task.value
+    releaseDrain?.resume()
+    let settledDeadline = ContinuousClock.now.advanced(by: .seconds(2))
+    while !drainCompleted && ContinuousClock.now < settledDeadline { await Task.yield() }
+    expect(!result && drainCompleted && cancelled.hal.restoreCalls == 0 && cancelled.commits == 0 && cancelled.privacy.latched,
+           "취소된 disconnect의 늦은 drain 성공은 로컬 복원 불가")
+    cancelled.privacy.stop()
+}
+
+@MainActor
+final class JournalReturnFixture {
+    let hal = ReturnHAL()
+    let participant = ReturnFixture()
+    var privacy: HostAudioPrivacy!
+    var stored: Data?
+    var recoveryStored: Data?
+    var recoveryStorageAccepted = true
+    var recoveryDeletionAccepted = true
+    var recoveryReadbackAccepted = true
+    var clearEffectiveThenStorageFails = false
+    var afterClearHook: (() -> Void)?
+    var authAccepted = false
+    var journal: LocalAudioJournal!
+    var persistenceAccepted = true
+    var synchronizeAccepted = true
+    var readbackAccepted = true
+    var clearHook: (() -> Void)?
+    var authCalls = 0
+    var original: LocalAudioState? { journal.original }
+
+    init() {
+        journal = LocalAudioJournal(data: nil, store: { [unowned self] bytes in
+                if persistenceAccepted { stored = bytes }
+                if clearEffectiveThenStorageFails,
+                   let envelope = try? JSONDecoder().decode(LocalAudioJournal.Envelope.self, from: bytes), !envelope.latched {
+                    persistenceAccepted = false
+                }
+            },
+            load: { [unowned self] in readbackAccepted ? stored : nil },
+            synchronize: { [unowned self] in persistenceAccepted && synchronizeAccepted }
+            // JOURNAL_RECOVERY_ARGUMENTS
+        )
+        let journal = journal!
+        // PRODUCTION_JOURNAL_CALLBACKS
+        privacy = HostAudioPrivacy(hal: hal,
+            // PRODUCTION_JOURNAL_ARGUMENTS
+            authenticateLocal: { [unowned self] _ in authCalls += 1; return authAccepted }, nativeStartup: participant.startup)
+        privacy.revokeForLocalReturn = { true }
+        privacy.inspectForLocalReturn = { [unowned self] in participant.facts }
+    }
+
+    func restartedJournal() -> LocalAudioJournal {
+        LocalAudioJournal(data: stored, store: { _ in }, load: { self.stored }, synchronize: { true }
+            // JOURNAL_RESTART_RECOVERY
+        )
+    }
+}
+
+@MainActor
+private func normalDisconnectJournalFailureChecks() async {
+    await normalDisconnectRecheckRegressions()
+    #if JOURNAL_RECOVERY
+    await journalRecoveryChecks()
+    #endif
+    var protectedEveryCase = true
+    var retainedEveryOriginal = true
+    for hotplug in [false, true] {
+        let failure = JournalReturnFixture()
+        var admitted = true
+        expect(failure.privacy.armAndVerify(), "저널 보상 반례 fixture 보호")
+        let original = failure.original!
+        let writes = failure.hal.writes
+        failure.clearHook = {
+            admitted = false
+            failure.persistenceAccepted = false
+            if hotplug {
+                let format = PrivacyAudioStream.Format(sampleRate: 48_000, formatID: 0x6c70636d, flags: 12,
+                    bytesPerPacket: 8, framesPerPacket: 1, bytesPerFrame: 8, channels: 2, bitsPerChannel: 32, reserved: 0)
+                failure.hal.snapshot.devices.append(.init(id: 40, uid: "new-usb", transport: .other, plugin: nil,
+                    inputChannels: 2, outputChannels: 2, streams: [
+                        .init(id: 41, ownerID: 40, direction: .input, startingChannel: 1,
+                              virtualFormat: format, physicalFormat: format, active: true, activeSettable: true),
+                        .init(id: 42, ownerID: 40, direction: .output, startingChannel: 1,
+                              virtualFormat: format, physicalFormat: format, active: true, activeSettable: true)]))
+            }
+        }
+        let result = await failure.privacy.requestNormalDisconnectReturn { admitted }
+        let restarted = failure.restartedJournal()
+        let protected = failure.hal.snapshot.physicalProtectionVerified
+        let retained = restarted.latched && restarted.original == original
+        print("JOURNAL_REPRO hotplug=\(hotplug) returned=\(result) compensationWrites=\(failure.hal.writes - writes) physicalProtected=\(protected) restartLatched=\(restarted.latched) restartHasOriginal=\(restarted.original != nil)")
+        protectedEveryCase = protectedEveryCase && protected && failure.hal.writes > writes
+        retainedEveryOriginal = retainedEveryOriginal && retained
+        expect(!result && failure.privacy.latched && !failure.privacy.forwardingHealth() && failure.authCalls == 0,
+               "admission 상실과 저장 실패는 자동 복귀 성공·인증·원격 승인으로 바뀌지 않음")
+        if hotplug {
+            failure.persistenceAccepted = true
+            expect(failure.privacy.armAndVerify() && failure.journal.original?.devices.last?.streams?.allSatisfy(\.active) == true,
+                   "저장 회복은 메모리에 남긴 새 stream의 보호 전 active를 영속화한 뒤에만 재승인")
+        }
+        failure.privacy.stop()
+    }
+    expect(protectedEveryCase, "P1: 새 stream 원본 저장 실패와 분리해 가능한 보호 쓰기를 적용")
+    expect(retainedEveryOriginal, "P2: 최종 확정 전 실패하면 재시작 저널의 latch와 연결 전 원본 보존")
+    for fault in ["store", "synchronize", "readback"] {
+        let failure = JournalReturnFixture()
+        expect(failure.privacy.armAndVerify(), "최종 저널 \(fault) 실패 fixture 보호")
+        let original = failure.original!
+        failure.clearHook = {
+            switch fault {
+            case "store": failure.persistenceAccepted = false
+            case "synchronize": failure.synchronizeAccepted = false
+            default: failure.readbackAccepted = false
+            }
+        }
+        let result = await failure.privacy.requestNormalDisconnectReturn { true }
+        let restarted = failure.restartedJournal()
+        expect(!result && restarted.latched && restarted.original == original &&
+               failure.hal.snapshot.physicalProtectionVerified && !failure.privacy.forwardingHealth(),
+               "최종 \(fault) 실패도 실제 production 콜백이 재시작 원본과 가능한 물리 보호 보존")
+        failure.privacy.stop()
+    }
+    let success = JournalReturnFixture()
+    expect(success.privacy.armAndVerify(), "production 저널 정상 복귀 fixture 보호")
+    let original = success.original!
+    let result = await success.privacy.requestNormalDisconnectReturn { true }
+    let restarted = success.restartedJournal()
+    expect(result && original.matches(success.hal.snapshot) && !restarted.latched && restarted.original == nil && success.authCalls == 0,
+           "최종 authority 확인 뒤 production 저널 해제가 확정된 정상 자동 복귀")
+    success.privacy.stop()
+}
+
+@MainActor
+private func normalDisconnectRecheckRegressions() async {
+    for manual in [false, true] {
+        let cleanup = JournalReturnFixture()
+        cleanup.authAccepted = manual
+        cleanup.privacy.authenticatedLocalReturnWillCommit = { admission in admission() }
+        expect(cleanup.privacy.armAndVerify(), "WAL 정리 실패 \(manual) fixture 보호")
+        let original = cleanup.original!
+        cleanup.recoveryDeletionAccepted = false
+        let returned = manual ? await cleanup.privacy.requestLocalReturn() : await cleanup.privacy.requestNormalDisconnectReturn { true }
+        let restarted = cleanup.restartedJournal()
+        expect(returned && original.matches(cleanup.hal.snapshot) && !cleanup.privacy.latched &&
+               cleanup.privacy.localReturnRecoveryPending && cleanup.privacy.localReturnStatusReason?.contains("재시작") == true &&
+               cleanup.privacy.state.reason?.contains("재시작") == true && restarted.latched && restarted.original == original,
+               "WAL 정리 실패는 현재 로컬 복귀와 재시작 복구 미확인을 구분")
+        cleanup.privacy.stop()
+    }
+    var protectedEveryCase = true, retainedEveryOriginal = true
+    for kind in ["restore-hotplug-save-failure", "clear-effective-rollback-failure"] {
+        let f = JournalReturnFixture()
+        var admitted = true
+        expect(f.privacy.armAndVerify(), "재검수 \(kind) fixture 보호")
+        let original = f.original!, writes = f.hal.writes
+        if kind == "restore-hotplug-save-failure" {
+            f.hal.afterRestore = {
+                admitted = false; f.persistenceAccepted = false
+                let format = PrivacyAudioStream.Format(sampleRate: 48_000, formatID: 0x6c70636d, flags: 12,
+                    bytesPerPacket: 8, framesPerPacket: 1, bytesPerFrame: 8, channels: 2, bitsPerChannel: 32, reserved: 0)
+                f.hal.snapshot.devices.append(.init(id: 40, uid: "after-restore-usb", transport: .other, plugin: nil,
+                    inputChannels: 2, outputChannels: 2, streams: [
+                        .init(id: 41, ownerID: 40, direction: .input, startingChannel: 1,
+                              virtualFormat: format, physicalFormat: format, active: true, activeSettable: true),
+                        .init(id: 42, ownerID: 40, direction: .output, startingChannel: 1,
+                              virtualFormat: format, physicalFormat: format, active: true, activeSettable: true)]))
+            }
+        } else { f.clearEffectiveThenStorageFails = true }
+        let result = await f.privacy.requestNormalDisconnectReturn { admitted }
+        let restarted = f.restartedJournal()
+        let protected = f.hal.snapshot.physicalProtectionVerified
+        print("RECHECK_REGRESSION kind=\(kind) returned=\(result) compensationWrites=\(f.hal.writes - writes) physicalProtected=\(protected) restartLatched=\(restarted.latched) restartHasOriginal=\(restarted.original != nil) recoveryPresent=\(f.recoveryStored != nil)")
+        protectedEveryCase = protectedEveryCase && !result && protected && f.hal.writes > writes
+        retainedEveryOriginal = retainedEveryOriginal && restarted.latched && restarted.original == original
+        f.privacy.stop()
+    }
+    expect(protectedEveryCase, "재검수 P1: HAL 복원 직후 실패도 저장 실패와 무관하게 가능한 보호 보상")
+    expect(retainedEveryOriginal, "재검수 P2: primary clear 반영 후 synchronize·rollback 실패에도 독립 영속 원본 복구")
+    for phase in ["partial-restore", "readback", "owner", "sentry", "cancel", "unrecordable-device"] {
+        await Task { @MainActor in
+            let f = JournalReturnFixture()
+            var admitted = true
+            expect(f.privacy.armAndVerify(), "\(phase) 복원 후 실패 fixture 보호")
+            f.hal.afterRestore = {
+                f.persistenceAccepted = false
+                if phase == "partial-restore" { f.hal.restoreResultAfterApplying = false }
+                if phase == "readback" { f.hal.readFailures = 1 }
+                if phase == "owner" || phase == "sentry" { admitted = false }
+                if phase == "cancel" { withUnsafeCurrentTask { $0?.cancel() } }
+                if phase == "unrecordable-device" {
+                    let format = PrivacyAudioStream.Format(sampleRate: 0, formatID: 0, flags: 0,
+                        bytesPerPacket: 0, framesPerPacket: 0, bytesPerFrame: 0, channels: 2, bitsPerChannel: 0, reserved: 0)
+                    f.hal.snapshot.devices.append(.init(id: 40, uid: "unconfirmed-usb", transport: .other, plugin: nil,
+                        inputChannels: 2, outputChannels: 2, streams: [
+                            .init(id: 41, ownerID: 40, direction: .input, startingChannel: 1,
+                                  virtualFormat: format, physicalFormat: format, active: true, activeSettable: true)]))
+                }
+            }
+            let result = await f.privacy.requestNormalDisconnectReturn { admitted }
+            expect(!result && f.privacy.latched && f.hal.snapshot.devices[0].inputMuted == true &&
+                   f.hal.snapshot.devices[0].outputMuted == true && f.hal.snapshot.input == 10 &&
+                   f.hal.snapshot.output == 10 && f.hal.snapshot.systemOutput == 10,
+                   "\(phase) 복원 후 실패에서도 가능한 보호 write를 저장·topology 오류와 분리")
+            f.privacy.stop()
+        }.value
+    }
+    for phase in ["owner", "sentry", "cancel", "hotplug"] {
+        await Task { @MainActor in
+            let f = JournalReturnFixture()
+            var admitted = true
+            expect(f.privacy.armAndVerify(), "primary clear 후 \(phase) fixture 보호")
+            let original = f.original!
+            f.afterClearHook = {
+                admitted = false; f.persistenceAccepted = false; f.recoveryStorageAccepted = false
+                if phase == "cancel" { withUnsafeCurrentTask { $0?.cancel() } }
+                if phase == "hotplug" {
+                    let format = PrivacyAudioStream.Format(sampleRate: 48_000, formatID: 0x6c70636d, flags: 12,
+                        bytesPerPacket: 8, framesPerPacket: 1, bytesPerFrame: 8, channels: 2, bitsPerChannel: 32, reserved: 0)
+                    f.hal.snapshot.devices.append(.init(id: 40, uid: "after-clear-usb", transport: .other, plugin: nil,
+                        inputChannels: 2, outputChannels: 2, streams: [
+                            .init(id: 41, ownerID: 40, direction: .input, startingChannel: 1,
+                                  virtualFormat: format, physicalFormat: format, active: true, activeSettable: true),
+                            .init(id: 42, ownerID: 40, direction: .output, startingChannel: 1,
+                                  virtualFormat: format, physicalFormat: format, active: true, activeSettable: true)]))
+                }
+            }
+            let result = await f.privacy.requestNormalDisconnectReturn { admitted }
+            let restarted = f.restartedJournal()
+            expect(!result && f.privacy.latched && f.hal.snapshot.physicalProtectionVerified &&
+                   restarted.latched && restarted.original == original && f.recoveryStored != nil,
+                   "primary clear 후 \(phase) 취소도 WAL 정리 없이 보호와 독립 원본 보존")
+            f.privacy.stop()
+        }.value
+    }
+}
+
+@MainActor
+private func normalDisconnectStreamChecks() async {
+    for uid in ["M32R", "AppleUSBAudioEngine:KLARK TEKNIK:DN32-LIVE:02D37313455564310:1,2"] {
+        let fake = PrivacyFakeHAL(), participant = ReturnFixture()
+        let format = PrivacyAudioStream.Format(sampleRate: 48_000, formatID: 0x6c70636d, flags: 12,
+            bytesPerPacket: 128, framesPerPacket: 1, bytesPerFrame: 128, channels: 32, bitsPerChannel: 32, reserved: 0)
+        fake.snapshot.devices.append(.init(id: 126, uid: uid, transport: .other, plugin: nil,
+            inputChannels: 32, outputChannels: 32, streams: [
+                .init(id: 127, ownerID: 126, direction: .input, startingChannel: 1,
+                      virtualFormat: format, physicalFormat: format, active: false, activeSettable: true),
+                .init(id: 128, ownerID: 126, direction: .output, startingChannel: 1,
+                      virtualFormat: format, physicalFormat: format, active: true, activeSettable: true)]))
+        fake.snapshot.input = 126; fake.snapshot.output = 126; fake.snapshot.systemOutput = 126
+        let original = try! LocalAudioState(fake.snapshot)
+        let privacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: fake.operations), clearLatch: { true },
+            authenticateLocal: { _ in expect(false, "일반복귀는 인증을 호출하지 않음"); return false },
+            nativeStartup: participant.startup)
+        privacy.revokeForLocalReturn = { true }
+        privacy.inspectForLocalReturn = { participant.facts }
+        expect(privacy.armAndVerify() && fake.snapshot.devices.last?.streams?.allSatisfy({ !$0.active }) == true,
+               "\(uid) 양방향 32채널 가짜 HAL 보호")
+        let result = await privacy.requestNormalDisconnectReturn { true }
+        expect(result && original.matches(fake.snapshot) && !privacy.latched,
+               "\(uid) 실제 HAL 어댑터가 연결 전 장치·음소거·비대칭 stream active를 자동 복원")
+        privacy.stop()
+    }
+}
+
+@MainActor
 private func armRecoveryChecks() {
     for failure in ["read", "synchronize", "readback"] {
         let hal = ReturnHAL()
@@ -343,3 +743,83 @@ private func armRecoveryChecks() {
     expect(!journal.write(latched: true, original: nil) && stored == nil,
            "저널은 원본 없는 새 latch 쓰기를 거부")
 }
+
+#if JOURNAL_RECOVERY
+@MainActor
+private func journalRecoveryChecks() async {
+    let original = try! LocalAudioState(ReturnHAL().snapshot)
+    for fault in ["success", "backup-store", "backup-sync", "backup-readback", "primary-store", "primary-sync", "primary-readback", "cleanup-store", "cleanup-sync", "before-final-confirmation"] {
+        var primary: Data?, recovery: Data?
+        var phase = "arm", synchronized = true
+        var events: [String] = []
+        let journal = LocalAudioJournal(data: nil, store: { data in
+            let envelope = try! JSONDecoder().decode(LocalAudioJournal.Envelope.self, from: data)
+            events.append(envelope.latched ? "primary-protect" : "primary-clear")
+            if phase == "primary-store" && !envelope.latched { return }
+            primary = data
+            if phase == "primary-sync" && !envelope.latched { synchronized = false }
+        }, load: {
+            if phase == "primary-readback", let primary,
+               (try? JSONDecoder().decode(LocalAudioJournal.Envelope.self, from: primary).latched) == false { return Data([0]) }
+            return primary
+        }, synchronize: { synchronized }, storeRecovery: { data in
+            events.append(data == nil ? "recovery-cleanup" : "recovery-write")
+            if data != nil && phase == "backup-store" { return }
+            if data == nil && phase == "cleanup-store" { return }
+            recovery = data
+            if (data != nil && phase == "backup-sync") || (data == nil && phase == "cleanup-sync") { synchronized = false }
+        }, loadRecovery: { phase == "backup-readback" ? Data([0]) : recovery })
+        expect(journal.write(latched: true, original: original), "\(fault) 원본 초기 저장")
+        events.removeAll();phase = fault
+        let prepared = journal.prepareLocalReturn()
+        let cleared = prepared && journal.write(latched: false, original: nil)
+        let pending = LocalAudioJournal(data: primary, store: { _ in }, load: { primary }, synchronize: { true }, recoveryData: recovery)
+        expect(pending.latched && pending.original == original, "\(fault) 최종 완료 전에는 read/init이 primary 또는 독립 recovery 원본을 소비")
+        if cleared {
+            let backupIndex = events.firstIndex(of: "recovery-write")!, clearIndex = events.firstIndex(of: "primary-clear")!
+            expect(backupIndex < clearIndex, "\(fault) 독립 저장과 readback 뒤에만 primary clear")
+            if fault != "before-final-confirmation" { journal.finishLocalReturn() }
+            let restarted = LocalAudioJournal(data: primary, store: { _ in }, load: { primary }, synchronize: { true }, recoveryData: recovery)
+            let pendingRecovery = fault == "cleanup-store" || fault == "before-final-confirmation"
+            expect(restarted.latched == pendingRecovery && restarted.original == (pendingRecovery ? original : nil),
+                   "\(fault) 성공 확정 후 정리 또는 미확인 recovery의 보수적 재시작")
+        } else {
+            expect(!["success", "cleanup-store", "cleanup-sync", "before-final-confirmation"].contains(fault), "\(fault) 실패 주입이 실제 실패 경계에 도달")
+            let retained = recovery
+            journal.finishLocalReturn()
+            expect(recovery == retained, "\(fault) 실패를 최종 완료로 정리하지 않음")
+            if fault.hasPrefix("backup-") { expect(!events.contains("primary-clear"), "\(fault) backup 미확인은 파괴적 clear 쓰기0") }
+        }
+    }
+    let clear = try! JSONEncoder().encode(LocalAudioJournal.Envelope(version: 3, latched: false, original: nil))
+    for primary in [Optional<Data>.none, Optional(clear), Optional(Data([0]))] {
+        let corrupted = LocalAudioJournal(data: primary, store: { _ in }, load: { primary }, synchronize: { true }, recoveryData: Data([0]))
+        expect(corrupted.latched && corrupted.original == nil && !corrupted.write(latched: false, original: nil),
+               "손상·누락 primary와 미확인 recovery는 원본 없는 fail-closed이며 clear 금지")
+    }
+    for accepted in [false, true] {
+        let f = JournalReturnFixture()
+        f.authAccepted = true
+        expect(f.privacy.armAndVerify(), "manual coupled recovery fixture 보호")
+        let original = f.original!
+        f.privacy.authenticatedLocalReturnWillCommit = { admission in admission() }
+        f.privacy.localReturnDidComplete = { _, current, commit in
+            guard current(), commit() else { return false }
+            let pending = f.restartedJournal()
+            expect(pending.latched && pending.original == original, "manual Sentry 최종 결과 전 독립 원본 유지")
+            if !accepted { f.persistenceAccepted = false }
+            return accepted
+        }
+        let result = await f.privacy.requestLocalReturn()
+        let restarted = f.restartedJournal()
+        expect(result == accepted && f.authCalls == 1 && restarted.latched == !accepted &&
+               restarted.original == (accepted ? nil : original), "manual 최종 성공·실패에서도 원본 보존과 cleanup 시점 일치")
+        if !accepted {
+            f.persistenceAccepted = true
+            expect(f.privacy.armAndVerify() && f.journal.original == original,
+                   "manual 저장 회복도 메모리 원본을 다시 영속화하고 보호를 회복")
+        }
+        f.privacy.stop()
+    }
+}
+#endif

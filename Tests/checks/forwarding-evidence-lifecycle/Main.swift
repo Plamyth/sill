@@ -3,9 +3,10 @@ import StreamProtocol
 
 @MainActor final class Peer {
     let id: AudioForwardingDeviceID
-    let generation = UUID(), connection = UUID()
+    let generation: UUID
+    let connection = UUID()
     var live = true
-    init(_ byte: String) { id = AudioForwardingDeviceID(hex: String(repeating: byte, count: 32))! }
+    init(_ byte: String, generation: UUID = UUID()) { id = AudioForwardingDeviceID(hex: String(repeating: byte, count: 32))!; self.generation = generation }
     var context: AudioForwardingConnectionContext {
         .init(peer: .init(id: id, pairingGeneration: generation),
             principal: .init(kind: .tailnet, id: id, authorizationGeneration: generation), role: .controlOnly,
@@ -90,7 +91,70 @@ import StreamProtocol
 @main struct Checks {
     @MainActor static func main() async throws {
         var assertions = 0
-        func check(_ value: Bool) { precondition(value); assertions += 1 }
+        func check(_ value: Bool, line: UInt = #line) { precondition(value, "check \(assertions + 1), source line \(line)"); assertions += 1 }
+        if CommandLine.arguments.contains("--normal-disconnect") || CommandLine.arguments.contains("--normal-disconnect-failed") {
+            let failedPreparation = CommandLine.arguments.contains("--normal-disconnect-failed")
+            let f = try Fixture("normal-disconnect"), owner = Peer("ab")
+            check(await f.runtime.start())
+            let bootstrap = await f.observe(owner)!
+            let request = try AudioForwardingIntentRequest(pairedDeviceId: owner.id, intentId: UUID(),
+                intentRevision: .init(bootstrap.ownCursor.intentRevision.value + 1), action: .request,
+                inputDesired: !failedPreparation, outputDesired: !failedPreparation, expectedRevision: bootstrap.snapshot.revision,
+                transportId: UUID(), transportKind: .native, bindingRevision: .init(bootstrap.ownCursor.bindingRevision.value + 1))
+            check(await f.runtime.exchange(try .init(requestID: UUID(), operation: .submit, intent: request), context: owner.context) != nil)
+            let activeDeadline = ContinuousClock.now.advanced(by: .seconds(6))
+            while f.runtime.snapshot?.binding?.phase != (failedPreparation ? .off : .active), ContinuousClock.now < activeDeadline {
+                try? await Task.sleep(for: .milliseconds(10))
+            }
+            check(f.runtime.snapshot?.binding?.phase == (failedPreparation ? .off : .active))
+            let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: f.folder.appendingPathComponent("journal.json"))) as! [String: Any]
+            let originalIntent = saved["intent"] as! NSDictionary
+            let originalGeneration = f.runtime.snapshot!.intent!.intentGeneration
+            var returned = 0
+            f.runtime.normalDisconnectReturn = { current in
+                check(current())
+                f.privacy.forwardingIntentAllowed = false
+                f.runtime.evidenceWillChange(); f.runtime.invalidate()
+                let quiescent = await f.runtime.quiesceForNormalDisconnect()
+                check(quiescent && current())
+                f.privacy.latched = false
+                f.privacy.forwardingIntentAllowed = true
+                returned += 1
+                return true
+            }
+            if failedPreparation {
+                f.runtime.evidenceWillChange();f.runtime.invalidate()
+                check(f.runtime.checkOwnerScopeEmpty && f.runtime.snapshot?.intent?.inputDesired == false &&
+                      f.runtime.snapshot?.intent?.outputDesired == false && f.runtime.snapshot?.intent?.localMutedDesired == true && f.privacy.latched)
+            }
+            owner.live = false;f.runtime.disconnected(owner.connection)
+            let returnDeadline = ContinuousClock.now.advanced(by: .seconds(6))
+            while returned == 0, ContinuousClock.now < returnDeadline { try? await Task.sleep(for: .milliseconds(10)) }
+            check(returned == 1 && f.runtime.snapshot?.binding == nil && !f.privacy.latched)
+            let after = try JSONSerialization.jsonObject(with: Data(contentsOf: f.folder.appendingPathComponent("journal.json"))) as! [String: Any]
+            check(originalIntent.isEqual(after["intent"]))
+            check(!f.events(1).contains("\"method\":\"forwardingLocalReturn\""))
+            let reconnected = Peer("ab", generation: owner.generation)
+            let reconnect = await f.observe(reconnected)
+            check(reconnect != nil)
+            let resume = try AudioForwardingIntentRequest(pairedDeviceId: reconnected.id, intentId: request.intentId,
+                intentRevision: reconnect!.ownCursor.intentRevision, action: .resume,
+                inputDesired: !failedPreparation, outputDesired: !failedPreparation,
+                expectedRevision: reconnect!.snapshot.revision, transportId: UUID(), transportKind: .native,
+                bindingRevision: .init(reconnect!.ownCursor.bindingRevision.value + 1))
+            let response = await f.runtime.exchange(try .init(requestID: UUID(), operation: .submit, intent: resume), context: reconnected.context)
+            if case .refused(let code, _) = response?.result { print("RECONNECT_RESUME_REFUSED \(code)") }
+            if case .accepted = response?.result { check(true) } else { check(false) }
+            let reconnectDeadline = ContinuousClock.now.advanced(by: .seconds(6))
+            while f.runtime.snapshot?.binding?.phase != (failedPreparation ? .off : .active), ContinuousClock.now < reconnectDeadline {
+                await f.runtime.checkRefresh();try? await Task.sleep(for: .milliseconds(20))
+            }
+            check(f.runtime.snapshot?.binding?.phase == (failedPreparation ? .off : .active) && f.privacy.arms == (failedPreparation ? 0 : 1))
+            check(f.runtime.snapshot?.intent?.intentGeneration == originalGeneration)
+            await f.finish()
+            print("PASS 실제 Node failedPreparation=\(failedPreparation) detach readback과 intent 보존·같은 pairing 재연결: \(assertions)개; 실제 media/UI/Keychain 효과0")
+            return
+        }
         if let test = CommandLine.arguments.first(where: { ["--http-first", "--off-fresh", "--off-latched"].contains($0) }) {
             let off = test != "--http-first", initiallyLatched = test == "--off-latched"
             let f = try Fixture(String(test.dropFirst(2))), peer = Peer("cd")

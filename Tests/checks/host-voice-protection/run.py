@@ -33,12 +33,34 @@ privacy_fixture = privacy_fixture.replace('__SENTRY_PRIVACY_CHANGED__',
     block(coordinator, 'package func sentryAudioProtectionChanged(').replace('package func', 'func'))
 (output / 'PrivacySentryFixture.swift').write_text(privacy_fixture)
 sources = [root / 'Sources/SillHost' / (name + '.swift') for name in [
-    'HostAudioPrivacy', 'HostAudioPrivacyModel', 'HostSentry', 'SentryAdmission', 'HostExclusiveAudioSilence', 'LocalAudioReturn', 'LocalAuthenticationPresentation', 'LocalAudioParticipants',
+    'HostAudioPrivacy', 'HostAudioPrivacyModel', 'HostLog', 'HostSentry', 'SentryAdmission', 'HostExclusiveAudioSilence', 'LocalAudioReturn', 'LocalAuthenticationPresentation', 'LocalAudioParticipants',
     'SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'AudioHardwareRoutes']]
-sources += [here / 'Main.swift', here / 'JournalRollback.swift', here / 'LegacyAudioJournal.swift', here / 'FakeHAL.swift', here / 'LocalReturn.swift', here / 'Exclusive.swift', output / 'CoordinatorFixture.swift']
+production_privacy = (root / 'Sources/SillHost/HostAudioPrivacy.swift').read_text()
+journal_callbacks = []
+for name in ['persist', 'saveLocal', 'clearLatch']:
+    callback = block(production_privacy, name + ': ').split(': ', 1)[1]
+    signature = '(LocalAudioState?) -> Bool' if name == 'saveLocal' else '() -> Bool'
+    journal_callbacks.append('let production_' + name + ': ' + signature + ' = ' + callback)
+journal_arguments = 'persist: production_persist, localState: journal.original, saveLocal: production_saveLocal, '
+prepare = 'prepareLatchClear: '
+if prepare in production_privacy:
+    journal_callbacks.append('let production_prepareLatchClear = ' + block(production_privacy, prepare).split(': ', 1)[1])
+    journal_arguments += 'prepareLatchClear: { [unowned self] in let result = production_prepareLatchClear(); clearHook?(); return result }, clearLatch: { [unowned self] in let result = production_clearLatch(); afterClearHook?(); return result }, '
+else:
+    journal_arguments += 'clearLatch: { [unowned self] in let result = production_clearLatch(); clearHook?(); return result }, '
+if 'finishLatchClear: ' in production_privacy:
+    journal_callbacks.append('let production_finishLatchClear: () -> Bool = ' + block(production_privacy, 'finishLatchClear: ').split(': ', 1)[1])
+    journal_arguments += 'finishLatchClear: production_finishLatchClear, '
+(output / 'LocalReturn.swift').write_text((here / 'LocalReturn.swift').read_text()
+    .replace('// PRODUCTION_JOURNAL_CALLBACKS', '\n'.join(journal_callbacks))
+    .replace('// PRODUCTION_JOURNAL_ARGUMENTS', journal_arguments)
+    .replace('// JOURNAL_RECOVERY_ARGUMENTS', ', recoveryData: recoveryStored, storeRecovery: { [unowned self] in if recoveryStorageAccepted && ($0 != nil || recoveryDeletionAccepted) { recoveryStored = $0 } }, loadRecovery: { [unowned self] in recoveryReadbackAccepted ? recoveryStored : nil }'
+        if 'recoveryData:' in (root / 'Sources/SillHost/LocalAudioReturn.swift').read_text() else '')
+    .replace('// JOURNAL_RESTART_RECOVERY', ', recoveryData: recoveryStored' if 'recoveryData:' in (root / 'Sources/SillHost/LocalAudioReturn.swift').read_text() else ''))
+sources += [here / 'Main.swift', here / 'PhysicalCompensation.swift', here / 'JournalRollback.swift', here / 'LegacyAudioJournal.swift', here / 'FakeHAL.swift', output / 'LocalReturn.swift', here / 'Exclusive.swift', output / 'CoordinatorFixture.swift']
 sources += [output / 'PrivacySentryFixture.swift']
 sources += [root / 'Tests/checks/host-audio-privacy/StreamSilence.swift']
-inputs = sorted(set(sources + [root / 'Sources/SillHost/StreamCoordinator.swift', root / 'Package.swift', here / 'CoordinatorFixture.swift', Path(__file__).resolve()] + list((root / 'Sources/StreamProtocol').glob('*.swift')) + [p for p in (root / 'Sources/AudioSilence').rglob('*') if p.is_file()]))
+inputs = sorted(set(sources + [root / 'Sources/SillHost/StreamCoordinator.swift', root / 'Package.swift', here / 'CoordinatorFixture.swift', here / 'LocalReturn.swift', Path(__file__).resolve()] + list((root / 'Sources/StreamProtocol').glob('*.swift')) + [p for p in (root / 'Sources/AudioSilence').rglob('*') if p.is_file()]))
 inputs += [here / 'PrivacySentry.swift']
 hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 modules = build / 'Modules'
@@ -51,6 +73,10 @@ if not modules.is_dir():
 assert objects and modules.is_dir()
 command = ['xcrun', 'swiftc', '-whole-module-optimization', '-parse-as-library', '-package-name', 'Sill', '-module-cache-path', str(output.parent / 'sdk-cache'),
            '-I', str(modules), '-Xcc', '-fmodule-map-file=' + str(modulemap), *map(str, sources), *map(str, objects), '-o', str(output / 'checks')]
+if 'recoveryData:' in (root / 'Sources/SillHost/LocalAudioReturn.swift').read_text():
+    command[2:2] = ['-D', 'JOURNAL_RECOVERY']
+if 'func readPhysicalProtection()' in production_privacy:
+    command[2:2] = ['-D', 'PHYSICAL_COMPENSATION']
 record = {'scope': '생산 HAL 어댑터와 모델, 현재 coordinator 경계, 주입 HAL과 비활성 전송만 실행',
           'sourceSHA256': hashes, 'objectSHA256': {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in objects}, 'actualHardwareOrMediaActions': 0, 'commands': []}
 for name, command in [('compile', command), ('checks', [str(output / 'checks')])]:

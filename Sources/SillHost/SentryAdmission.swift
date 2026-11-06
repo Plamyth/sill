@@ -107,13 +107,92 @@ final class SentryAdmission: @unchecked Sendable {
 
     func inactiveMatches(_ proof: InactiveSnapshot) -> Bool { inactiveSnapshot() == proof }
 
+    struct NormalOffProof: Equatable {
+        fileprivate let lease: UUID
+        fileprivate let revision: UUID
+        fileprivate let sessions: UUID
+    }
+    private var normalOffLease: UUID?
+    private var normalOffSessionRevision = UUID()
+    private var normalOffMutations: [() -> Void] = []
+    private var drainingNormalOffMutations = false
+
+    @MainActor
+    func beginNormalOffReturn() -> NormalOffProof? {
+        drainNormalOffMutations()
+        lock.lock(); defer { lock.unlock() }
+        guard normalOffLease == nil, normalOffReadyLocked else { return nil }
+        let lease = UUID()
+        normalOffLease = lease
+        return NormalOffProof(lease: lease, revision: inactiveRevision, sessions: normalOffSessionRevision)
+    }
+
+    @MainActor
+    func normalOffMatches(_ proof: NormalOffProof) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return normalOffLease == proof.lease && inactiveRevision == proof.revision &&
+            normalOffSessionRevision == proof.sessions && normalOffReadyLocked
+    }
+
+    @MainActor
+    func endNormalOffReturn(_ proof: NormalOffProof) {
+        lock.lock(); defer { lock.unlock() }
+        if normalOffLease == proof.lease { normalOffLease = nil }
+    }
+
+    private var normalOffReadyLocked: Bool {
+        enabled && !requested && !returningLocal && !localReturnRequestActive && pendingControl == nil &&
+            persistenceHealthy && reason == nil && manualIntent != .on && sessions.isEmpty
+    }
+
+    // Admission and journal completion run synchronously on MainActor. During that lease,
+    // background writers enqueue there instead of racing its final snapshot or blocking media drain.
+    private func lockForMutation(_ replay: @escaping () -> Void) -> Bool {
+        lock.lock()
+        if !Thread.isMainThread,
+           normalOffLease != nil || !normalOffMutations.isEmpty || drainingNormalOffMutations {
+            let schedule = normalOffMutations.isEmpty && !drainingNormalOffMutations
+            normalOffMutations.append(replay)
+            lock.unlock()
+            if schedule { Task { @MainActor in self.drainNormalOffMutations() } }
+            return false
+        }
+        if Thread.isMainThread, !drainingNormalOffMutations, !normalOffMutations.isEmpty {
+            lock.unlock()
+            drainNormalOffMutations()
+            lock.lock()
+        }
+        return true
+    }
+
+    private func drainNormalOffMutations() {
+        lock.lock()
+        guard !drainingNormalOffMutations else { lock.unlock(); return }
+        drainingNormalOffMutations = true
+        while !normalOffMutations.isEmpty {
+            let mutations = normalOffMutations
+            normalOffMutations.removeAll()
+            lock.unlock()
+            for mutation in mutations { mutation() }
+            lock.lock()
+        }
+        drainingNormalOffMutations = false
+        lock.unlock()
+    }
+
+    private func cancelNormalOffProof() {
+        lock.lock(); defer { lock.unlock() }
+        inactiveRevision = UUID()
+    }
+
     static let limitations = [
         "사용자 로그인 세션의 화면과 일반 키보드·마우스 입력을 보호합니다.",
         "전원 버튼·시스템 보안 화면·다른 로그인 세션은 차단을 보장하지 않습니다."
     ]
 
     func configure(latched: Bool, persistenceHealthy: Bool) {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.configure(latched: latched, persistenceHealthy: persistenceHealthy) }) else { return }
+        defer { lock.unlock() }
         enabled = true
         protectionRevision = UUID()
         inactiveRevision = UUID()
@@ -124,20 +203,26 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func register(_ peer: ObjectIdentifier, externalRoute _: Bool) {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.register(peer, externalRoute: false) }) else { return }
+        defer { lock.unlock() }
+        normalOffSessionRevision = UUID()
         cancelPendingLocked(for: peer)
         sessions[peer] = Session()
         refreshSelectionAdmissionLocked()
     }
 
     func admit(_ peer: ObjectIdentifier) {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.admit(peer) }) else { return }
+        defer { lock.unlock() }
+        normalOffSessionRevision = UUID()
         sessions[peer]?.admitted = true
         refreshSelectionAdmissionLocked()
     }
 
     func remove(_ peer: ObjectIdentifier) {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.remove(peer) }) else { return }
+        defer { lock.unlock() }
+        normalOffSessionRevision = UUID()
         cancelPendingLocked(for: peer)
         sessions[peer] = nil
         peerCaptureEpochs[peer] = nil
@@ -146,7 +231,8 @@ final class SentryAdmission: @unchecked Sendable {
 
     @discardableResult
     func requireProtection(explicit: Bool = false) -> Bool {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.cancelNormalOffProof() }) else { return false }
+        defer { lock.unlock() }
         // 연결·포커스의 기존 호출은 선택을 만들지 않고 명시 활성화만 ON으로 바꾼다.
         guard explicit, enabled, !returningLocal && !localReturnRequestActive, pendingControl == nil else { return false }
         guard !requested || manualIntent != .on else { return true }
@@ -170,7 +256,8 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func update(verified: Bool, persistenceHealthy: Bool, reason: String?) {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.update(verified: verified, persistenceHealthy: persistenceHealthy, reason: reason) }) else { return }
+        defer { lock.unlock() }
         guard surfacesVerified != verified || self.persistenceHealthy != persistenceHealthy || self.reason != reason else { return }
         protectionRevision = UUID()
         inactiveRevision = UUID()
@@ -280,7 +367,8 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func accept(_ activation: SentryActivation, from peer: ObjectIdentifier) -> Bool {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.cancelNormalOffProof() }) else { return false }
+        defer { lock.unlock() }
         guard enabled, !returningLocal && !localReturnRequestActive, pendingControl == nil, activation.version == 1, activation.hostBootID == bootID,
               var session = sessions[peer], session.admitted,
               activation.sessionID == session.id else { return false }
@@ -306,7 +394,8 @@ final class SentryAdmission: @unchecked Sendable {
 
     @discardableResult
     func grantControl(to peer: ObjectIdentifier, verifiedOwner: VerifiedOwnerDevice) -> UUID? {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.cancelNormalOffProof() }) else { return nil }
+        defer { lock.unlock() }
         guard enabled, !returningLocal, var session = sessions[peer], session.admitted,
               session.controlDeviceID == nil || session.controlDeviceID == verifiedOwner.deviceID else { return nil }
         let existing = controlGrants[verifiedOwner.deviceID]
@@ -320,7 +409,8 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func revokeControl(forDeviceID deviceID: String) {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.revokeControl(forDeviceID: deviceID) }) else { return }
+        defer { lock.unlock() }
         guard controlGrants.removeValue(forKey: deviceID) != nil else { return }
         if pendingControl?.deviceID == deviceID { cancelPendingLocked() }
         for peer in sessions.keys where sessions[peer]?.controlDeviceID == deviceID {
@@ -347,7 +437,8 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func prepareControl(_ request: SentryControlRequest, from peer: ObjectIdentifier) -> ControlPreparation {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.cancelNormalOffProof() }) else { return .unauthorized }
+        defer { lock.unlock() }
         guard let identity = controlIdentityLocked(peer), let state = statusLocked(for: peer) else { return .unauthorized }
         func rejection(_ code: SentryControlResponse.Code, unknown: Bool = false) -> ControlPreparation {
             .rejected(SentryControlResponse(requestID: request.requestID, accepted: false,
@@ -393,7 +484,8 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func completeControl(_ ticket: ControlTicket, result: ControlResult) -> SentryControlResponse? {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ _ = self.completeControl(ticket, result: result) }) else { return nil }
+        defer { lock.unlock() }
         guard pendingControl == ticket, policyRevision == ticket.policyRevision,
               let identity = controlIdentityLocked(ticket.peer), identity.deviceID == ticket.deviceID,
               identity.generation == ticket.request.authorizationGeneration,
@@ -480,7 +572,8 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func fenceForLocalReturn() {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.fenceForLocalReturn() }) else { return }
+        defer { lock.unlock() }
         cancelPendingLocked()
         protectionRevision = UUID()
         inactiveRevision = UUID()
@@ -491,7 +584,8 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func setLocalReturnRequestActive(_ active: Bool) {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.setLocalReturnRequestActive(active) }) else { return }
+        defer { lock.unlock() }
         guard localReturnRequestActive != active else { return }
         localReturnRequestActive = active
         if active { cancelPendingLocked() }
@@ -502,7 +596,8 @@ final class SentryAdmission: @unchecked Sendable {
     }
 
     func completeLocalReturn() {
-        lock.lock(); defer { lock.unlock() }
+        guard lockForMutation({ self.completeLocalReturn() }) else { return }
+        defer { lock.unlock() }
         pendingControl = nil
         let retainedDevices = Set(sessions.values.compactMap(\.controlDeviceID))
         controlGrants = controlGrants.filter { retainedDevices.contains($0.key) }.mapValues { _ in UUID() }

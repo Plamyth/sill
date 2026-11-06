@@ -494,7 +494,13 @@ package final class StreamCoordinator {
                 self?.audioPrivacyChanged(state)
                 self?.sentryAudioProtectionChanged()
             }
-            privacy.revokeForLocalReturn = { [weak self] in await self?.prepareLocalAudioReturn() ?? false }
+            privacy.revokeForLocalReturn = { [weak self] in
+                guard let self else { return false }
+                if self.forwardingRuntime?.normalDisconnectReturnInProgress == true {
+                    return await self.prepareNormalDisconnectAudioReturn()
+                }
+                return await self.prepareLocalAudioReturn()
+            }
             privacy.inspectForLocalReturn = { [weak self] in self?.localAudioReturnFacts() ?? .unknown }
         }
         microphoneReceiver.availabilityChanged = { [weak self] in
@@ -3271,6 +3277,11 @@ package final class StreamCoordinator {
         return localAudioReturnFacts().quiescent
     }
 
+    private func prepareNormalDisconnectAudioReturn() async -> Bool {
+        guard await forwardingRuntime?.quiesceForNormalDisconnect() == true else { return false }
+        return await prepareLocalAudioReturn()
+    }
+
     private func localAudioReturnFacts() -> LocalAudioParticipantFacts {
         let retired = microphoneReceiver.retirementComplete
         let captureStopped = remoteAudioLifecycle.isIdle && remoteAudioCapture.retirementConfirmed &&
@@ -4078,6 +4089,7 @@ extension StreamCoordinator {
                     self.broadcastList()
                 })
             forwardingRuntime = runtime
+            configureNormalDisconnectReturn(runtime)
             if let identity = remote?.identity { providerRuntime = ProviderCallRuntime(identity: identity) }
             nativeAudioBindingAuthorized = { [weak runtime] fingerprint, direction in
                 runtime?.allows(fingerprint, direction: direction) == true
@@ -4103,6 +4115,20 @@ extension StreamCoordinator {
     private func forwardingClientLeft(_ id: ObjectIdentifier) {
         guard let session = forwardingClients.removeValue(forKey: id) else { return }
         forwardingRuntime?.disconnected(session.generation)
+    }
+
+    private func configureNormalDisconnectReturn(_ runtime: HostAudioForwardingRuntime) {
+        runtime.normalDisconnectReturn = { [weak self, weak runtime] ownershipCurrent in
+            guard let self, let runtime, self.forwardingRuntime === runtime, !self.shuttingDown,
+                  ownershipCurrent(), let audioPrivacy = self.audioPrivacy,
+                  let proof = self.server.sentryAdmission.beginNormalOffReturn() else { return false }
+            defer { self.server.sentryAdmission.endNormalOffReturn(proof) }
+            return await audioPrivacy.requestNormalDisconnectReturn { [weak self, weak runtime] in
+                guard let self, let runtime else { return false }
+                return !self.shuttingDown && self.forwardingRuntime === runtime && ownershipCurrent() &&
+                    self.server.sentryAdmission.normalOffMatches(proof)
+            }
+        }
     }
 
     private func handleProvider(_ exchange: StreamServer.ProviderExchange, connection: NWConnection,
