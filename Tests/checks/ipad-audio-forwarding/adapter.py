@@ -95,6 +95,9 @@ final class IPadMicrophoneDiagnostics {
  static func route() -> String { "controlled route" }
 }
 final class StreamClient {
+ var configuredCraftCapability: Int?
+ func configuredCraftSetConnection(_ peer: NWConnection?) {}
+ func reconcileConfiguredCraftAction() {}
  func observeAudioDiagnostics() {}
  struct Saved { let macID: String; let fingerprintData: Data? }
  struct Session {
@@ -218,6 +221,7 @@ enum ScenePhase { case active, inactive, background }
  var operation: Task<Void, Never>?
  var operationID: UUID? = UUID()
  var preparingCall = true
+ var preparingCraft = false
  init(_ client: StreamClient) { self.client = client; context = client.audioRouteContext }
  CHOOSER_METHODS
 }

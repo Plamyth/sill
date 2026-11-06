@@ -93,6 +93,7 @@ extension Error { var localizedDescription: String { "검사 오류" } }
     var operation: Task<Void, Never>?
     var operationID: UUID?
     var preparingCall = false
+    var preparingCraft = false
     var busy: Bool { operationID != nil }
     init(_ client: StreamClient) { self.client = client }
 CURRENT_METHODS

@@ -44,6 +44,9 @@ struct FixtureForwarding {
  mutating func block() { phase = .blocked }
 }
 final class StreamClient {
+ var configuredCraftCapability: Int?
+ func configuredCraftSetConnection(_ peer: NWConnection?) {}
+ func reconcileConfiguredCraftAction() {}
  var audioForwardingStopDiagnostic: (id: UUID, context: IPadAudioForwarding.Context?)?
  var forwardingContextReadiness: [String: Bool] { [:] }
  func observeAudioDiagnostics() {}
