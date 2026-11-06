@@ -44,7 +44,7 @@ catalog는 다음 정확한 6필드다. `settingsSHA`와 session 필드는 없�
 {"schemaVersion":1,"supported":true,"expectedProfileId":"21234567-89ab-4cde-8fab-0123456789ab","inputID":"speed.button.stop-play","trigger":"longPress","expectedAssignmentSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 ```
 
-result는 `outcome`, `operationId`, `deviceId`, `bindingSha256`, `invoked`, `effectConfirmed`의 필수 6필드와 optional `reason`만 가진다. outcome은 `invoked`, `rejected`, `unknown`이다. bindingSha256은 비교 전 `null`이거나 소문자 SHA-256 문자열이다. invoked는 boolean이며 executor 인계 사실만 표현한다. effectConfirmed는 항상 false다. reason이 있으면 error와 같은 stable code 형식이다. result operationId는 invoke.client.operationId 또는 query.operationId와 일치하고 result.deviceId는 공통 deviceId와 일치한다.
+result는 `outcome`, `operationId`, `deviceId`, `bindingSha256`, `invoked`, `effectConfirmed`의 필수 6필드와 optional `reason`만 가진다. outcome은 `invoked`, `rejected`, `unknown`이다. bindingSha256은 비교 전 `null`이거나 소문자 SHA-256 문자열이다. invoked는 boolean이며 executor 인계 사실만 표현한다. effectConfirmed는 항상 false다. nested result.reason이 있으면 공백만으로 구성되지 않은 UTF-8 최대 256바이트 문자열이며 원문을 보존한다. `prior-operation-result-unknown`, `executor-submitted-result-unknown` 같은 producer reason을 허용한다. outer state.error와 local bridge 외피 reason은 기존 `^[a-z][a-z0-9_]{0,79}$` stable code 규칙을 유지한다. result operationId는 invoke.client.operationId 또는 query.operationId와 일치하고 result.deviceId는 공통 deviceId와 일치한다.
 
 ```json
 {"outcome":"unknown","operationId":"11234567-89ab-4cde-8fab-0123456789ab","deviceId":"abababababababababababababababababababababababababababababababab","bindingSha256":null,"invoked":false,"effectConfirmed":false,"reason":"invocation_uncertain"}

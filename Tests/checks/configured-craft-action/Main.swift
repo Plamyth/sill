@@ -238,11 +238,59 @@ import StreamProtocol
         _ = await first.value
     }
     @MainActor static func main() async throws {
+        try await reasonChecks()
         try wireChecks()
         try await runtimeChecks()
         try await reconnectChecks()
         try await craftServerChecks(check)
         print("configured-craft \(count) checks passed; actual effects=0")
+    }
+
+    @MainActor static func reasonChecks() async throws {
+        let peer = AudioForwardingDeviceID(hex: device)!, op = UUID(uuidString: operation)!
+        let base = try ConfiguredCraftActionResult(outcome: .unknown, operationId: op, deviceId: peer,
+                                                   bindingSha256: nil, invoked: false)
+        let object = try JSONSerialization.jsonObject(with: Wire.encode(base)) as! [String: Any]
+        for reason in ["prior-operation-result-unknown", "executor-submitted-result-unknown", "실행 결과 미확인",
+                       String(repeating: "a", count: 256), String(repeating: "가", count: 85) + "x", String(repeating: "🙂", count: 64)] {
+            var result = object; result["reason"] = reason
+            let decoded = try? JSONDecoder().decode(ConfiguredCraftActionResult.self,
+                from: JSONSerialization.data(withJSONObject: result))
+            check("nested producer reason accepted: \(reason.prefix(40))", decoded?.reason == reason)
+            let constructed = try? ConfiguredCraftActionResult(outcome: .unknown, operationId: op, deviceId: peer,
+                bindingSha256: nil, invoked: false, reason: reason)
+            check("nested reason initializer preserves original", constructed?.reason == reason)
+            let socket = CraftFixtureTransport { data in
+                let request = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+                return try JSONSerialization.data(withJSONObject: ["op":"configuredCraftAction.reply", "schemaVersion":1,
+                    "requestId":request["requestId"]!, "outcome":"ok", "actionResult":result])
+            }
+            let runtime = HostConfiguredCraftRuntime(open: { _ in socket })
+            let session = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: UUID(), pairingGeneration: UUID(),
+                sentryProtected: { false }, isCurrent: { true }, readSnapshot: { nil })
+            let control = ConfiguredCraftActionControl(requestId: UUID(), operationId: op)
+            let response = await runtime.exchange(control, session: session)
+            check("Core actionResult transported without replacement", response?.result == decoded)
+            if let response {
+                check("external state reason bytes preserved", try ConfiguredCraftActionState.decode(Wire.encode(response)).result?.reason == reason)
+            }
+        }
+        for reason in ["", " \t\n", String(repeating: "a", count: 257), String(repeating: "가", count: 86), String(repeating: "🙂", count: 64) + "a"] {
+            var result = object; result["reason"] = reason
+            check("nested reason rejects blank or UTF8 overflow", (try? JSONDecoder().decode(ConfiguredCraftActionResult.self,
+                from: JSONSerialization.data(withJSONObject: result))) == nil)
+            check("nested initializer rejects blank or UTF8 overflow", (try? ConfiguredCraftActionResult(outcome: .unknown,
+                operationId: op, deviceId: peer, bindingSha256: nil, invoked: false, reason: reason)) == nil)
+        }
+        let control = ConfiguredCraftActionControl(requestId: UUID(), operationId: op)
+        for reason in ["prior-operation-result-unknown", "not a stable code", String(repeating: "a", count: 81)] {
+            check("outer state.error keeps stable underscore80", (try? ConfiguredCraftActionState(control: control,
+                deviceId: peer, error: reason)) == nil)
+            let outer: [String: Any] = ["op":"configuredCraftAction.reply", "schemaVersion":1,
+                "requestId":control.requestId.uuidString.lowercased(), "outcome":"rejected", "notSent":true, "reason":reason]
+            check("local bridge outer reason keeps stable underscore80", (try? JSONDecoder().decode(HostConfiguredCraftReply.self,
+                from: JSONSerialization.data(withJSONObject: outer))) == nil)
+        }
     }
 
     @MainActor static func reconnectChecks() async throws {
