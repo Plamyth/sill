@@ -575,6 +575,39 @@ private struct VisionCallControls: View {
     let allowStart: Bool
     let admit: (() -> Void) -> Void
     let chooseDevices: () -> Void
+    @State private var configuredAction = VisionConfiguredCraftAction()
+
+    private var configuredContext: VisionConfiguredCraftAction.Context {
+        let audioContext = client.visionAudioIntentContext
+        var context = VisionConfiguredCraftAction.Context()
+        context.hostKey = audioContext.hostKey
+        context.scope = audioContext.scope
+        context.admitted = allowStart && audioContext.admitted
+        context.selection = client.visionStoredAudioSelection?.desire
+        context.selectionRevision = client.visionStoredAudioSelection?.revision ?? 0
+        let routes = client.visionMacAudioRoutes
+        context.otherDeviceSelected = routes.hasExplicitSelection
+        context.deviceRouteRevision = context.otherDeviceSelected ? routes.model.catalogToken?.revision : nil
+        if context.otherDeviceSelected && (routes.scope == nil || routes.catalogInvalid || routes.model.pending != nil) {
+            context.admitted = false
+        }
+        if let snapshot = client.visionForwarding?.providerCallSnapshot, let intent = snapshot.intent {
+            let speakerReady: Bool
+            switch audio.presentation.phase {
+            case .waiting, .rendering: speakerReady = true
+            default: speakerReady = false
+            }
+            context.readback = .init(desire: .init(playback: intent.outputDesired, microphone: intent.inputDesired),
+                microphoneReady: audioContext.eligible && client.microphonePhase == .live &&
+                    client.visionForwarding?.permits(.microphone) == true,
+                speakerReady: audioContext.eligible && speakerReady && client.visionForwarding?.permits(.playback) == true,
+                microphoneOff: (client.microphonePhase == .off || client.microphonePhase == .unavailable) &&
+                    client.microphoneCleanupProblem == nil,
+                speakerOff: audio.presentation.phase == .off && audio.cleanupProblem == nil)
+        }
+        // No authenticated descriptor or implemented route is connected yet.
+        return context
+    }
 
     private var call: VisionProviderCall.Controls {
         client.visionProviderCall.controls(canStart: allowStart && client.visionProviderCanStart,
@@ -587,16 +620,23 @@ private struct VisionCallControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
-                Button(call.action == .stop ? "음성 대화 종료" : "음성 대화 시작",
-                       systemImage: call.action == .stop ? "phone.down.fill" : "phone.fill") {
+                Button("음성 대화", systemImage: "phone.fill", action: {})
+                .onLongPressGesture(minimumDuration: VisionConfiguredCraftAction.holdDuration) {
                     admit {
-                        let current = call
-                        guard current.enabled else { return }
-                        client.performVisionProviderCall(current.action)
+                        guard allowStart else { return }
+                        _ = configuredAction.begin(heldFor: VisionConfiguredCraftAction.holdDuration,
+                            context: configuredContext, now: ProcessInfo.processInfo.systemUptime, issuedAt: Date())
                     }
                 }
-                .disabled(!call.enabled)
+                .disabled(!configuredAction.canBegin(configuredContext))
                 .accessibilityIdentifier("VisionVoiceCall")
+                .accessibilityHint("0.5초 동안 길게 눌러 현재 Mac의 음성 대화를 전환합니다.")
+                if client.visionProviderCall.selectedActiveCall != nil {
+                    Button("기존 통화 종료", systemImage: "phone.down.fill") {
+                        admit { if call.enabled && call.action == .stop { client.performVisionProviderCall(.stop) } }
+                    }
+                    .disabled(!call.enabled)
+                }
                 Toggle(isOn: Binding(get: { microphoneOn }, set: { enabled in
                     admit {
                         guard !enabled || allowStart else { return }
@@ -635,11 +675,18 @@ private struct VisionCallControls: View {
                 Text(message).font(.caption)
             }
         }
+        .onChange(of: configuredContext.fence) { _, _ in
+            _ = configuredAction.advance(context: configuredContext, now: ProcessInfo.processInfo.systemUptime)
+        }
+        .onDisappear { configuredAction.cancel() }
     }
 
     private var messages: [String] {
-        [client.microphoneCleanupProblem, audio.cleanupProblem, client.visionForwardingProblem,
-         call.message, microphoneMessage, speakerMessage].compactMap { $0 }.reduce(into: []) {
+        let commandMessage = configuredAction.message ??
+            (configuredContext.fence == nil ? "공통 음성 명령 연결을 확인하지 못했습니다." : nil)
+        return [client.microphoneCleanupProblem, audio.cleanupProblem, client.visionForwardingProblem,
+         commandMessage, client.visionProviderCall.request != nil ? call.message : nil,
+         microphoneMessage, speakerMessage].compactMap { $0 }.reduce(into: []) {
             if !$0.contains($1) { $0.append($1) }
         }
     }

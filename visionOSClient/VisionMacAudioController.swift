@@ -28,6 +28,7 @@ final class VisionMacAudioController: ObservableObject {
     private var foreground = false
     private var trustedCurrentPeer = false
     private var selectionRequestCount = 0
+    var hasExplicitSelection: Bool { selectionRequestCount > 0 }
     static let responseTimeout = 8.0
 
     init(transport: VisionMacAudioTransport, authorize: @escaping (VisionMacAudioScope) -> Bool,

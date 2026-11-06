@@ -132,6 +132,13 @@ extension StreamClient {
     var visionPlaybackDesired: Bool { VisionRemoteAudioStore.shared.model.intent.desired(.playback, hostKey: visionAudioTrustedHostKey) }
     var visionMicrophoneDesired: Bool { VisionRemoteAudioStore.shared.model.intent.desired(.microphone, hostKey: visionAudioTrustedHostKey) }
 
+    var visionStoredAudioSelection: (desire: VisionRemoteAudioIntent.Desire, revision: UInt64)? {
+        guard let key = visionAudioTrustedHostKey else { return nil }
+        let intent = VisionRemoteAudioStore.shared.model.intent
+        guard let desire = intent.desires[key] else { return nil }
+        return (desire, max(intent.desiredRevision(.microphone, hostKey: key), intent.desiredRevision(.playback, hostKey: key)))
+    }
+
     var visionAudioIntentContext: VisionRemoteAudioIntent.Context {
         var context = VisionRemoteAudioIntent.Context()
         if VisionReleaseTestContext.isTestBundle { return context }

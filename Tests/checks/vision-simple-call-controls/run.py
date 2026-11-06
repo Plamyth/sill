@@ -11,7 +11,7 @@ checks = {
     'one integrated audio control surface': panels == 1 and 'private struct VisionCallControls:' in view,
     'no automatic media or device offers': all(name not in view for name in
         ['audioOfferShown', 'audioOfferScope', 'macAudioOfferShown', 'offerMacAudioChooser']),
-    'native call is the main path without provider picker': '통화 제어 대상' not in view and 'VisionCallTarget.allCases' not in view,
+    'one voice action without provider picker': '통화 제어 대상' not in view and 'VisionCallTarget.allCases' not in view,
     'device chooser is still explicitly reachable': 'openMacAudioChooser' in view and 'VisionMacAudioChooser(' in view,
     'input ownership and existing media intent remain': 'withWindowOwnership' in view and
         'setVisionAudioDesired' in view and 'direction: .microphone' in view and 'direction: .playback' in view,

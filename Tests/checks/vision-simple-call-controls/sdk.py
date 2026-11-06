@@ -14,10 +14,12 @@ env = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer
 sdk = subprocess.check_output(['xcrun', '--sdk', 'xros', '--show-sdk-path'], env=env, text=True).strip()
 wire = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
 models = [root / 'visionOSClient' / (name + '.swift') for name in
-          ['VisionProviderCall', 'VisionRemoteAudioIntent', 'VisionAudioForwarding']]
+          ['VisionProviderCall', 'VisionRemoteAudioIntent', 'VisionAudioForwarding', 'VisionConfiguredCraftAction']]
 view = root / 'visionOSClient/SillVisionApp.swift'
 chooser = root / 'visionOSClient/VisionMacAudioChooser.swift'
-sources = wire + models + [view, chooser, root / 'visionOSClient/VisionAudioState.swift', root / 'iOSClient/IPadMicrophonePolicy.swift']
+sources = wire + models + [view, chooser, root / 'visionOSClient/VisionAudioState.swift',
+    root / 'iOSClient/IPadMicrophonePolicy.swift', root / 'iOSClient/MacAudioRouteSession.swift',
+    root / 'visionOSClient/VisionMacAudioController.swift']
 before = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
 with tempfile.TemporaryDirectory(prefix='vision-call-sdk-') as temporary:
     scratch = Path(temporary)
@@ -38,11 +40,19 @@ final class VisionAudioController: ObservableObject {
     @Published var cleanupProblem: String?
     func retryCleanup() {}
 }
+final class VisionMacAudioController {
+    var hasExplicitSelection = false
+    var model = MacAudioRouteSession()
+    var scope: UUID?
+    var catalogInvalid = false
+}
 final class StreamClient: ObservableObject {
     @Published var visionProviderCall = VisionProviderCall(connection: UUID())
     var visionProviderCanStart = false
     var visionProviderCanStop = false
     var visionAudioIntentContext = VisionRemoteAudioIntent.Context()
+    var visionStoredAudioSelection: (desire: VisionRemoteAudioIntent.Desire, revision: UInt64)?
+    var visionMacAudioRoutes = VisionMacAudioController()
     var visionForwarding: VisionAudioForwarding?
     var visionMicrophoneDesired = false
     var visionPlaybackDesired = false
@@ -59,6 +69,7 @@ final class StreamClient: ObservableObject {
                  '-emit-module-path', str(scratch / 'StreamProtocol.swiftmodule')],
         flags + ['-typecheck', '-I', str(scratch), *map(str, pure),
                  str(root / 'visionOSClient/VisionAudioState.swift'),
+                 str(root / 'iOSClient/MacAudioRouteSession.swift'),
                  str(root / 'iOSClient/IPadMicrophonePolicy.swift'), str(ui)],
         flags + ['-parse', str(view), str(chooser), str(root / 'visionOSClient/VisionProviderCall.swift')],
     ]
