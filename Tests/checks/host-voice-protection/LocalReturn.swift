@@ -2,8 +2,9 @@ import Foundation
 import StreamProtocol
 
 @MainActor
-private final class ReturnHAL: HostAudioPrivacyHAL {
+final class ReturnHAL: HostAudioPrivacyHAL {
     var snapshot = PrivacyFakeHAL().snapshot
+    var observationsOK = true
     var restoreCalls = 0
     var restoreSucceeds = true
     var restoreResultAfterApplying = true
@@ -32,7 +33,7 @@ private final class ReturnHAL: HostAudioPrivacyHAL {
     }
     func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool {
         if changed == nil { beforeObservationStop?() }
-        return true
+        return observationsOK
     }
     func restoreLocal(_ original: LocalAudioState) -> Bool {
         restoreCalls += 1
@@ -51,7 +52,7 @@ private final class ReturnHAL: HostAudioPrivacyHAL {
 }
 
 @MainActor
-private final class ReturnFixture {
+final class ReturnFixture {
     let hal = ReturnHAL()
     let startup = NativeAudioStartup()
     var privacy: HostAudioPrivacy!
@@ -108,6 +109,7 @@ private final class ReturnFixture {
 
 @MainActor
 func localReturnChecks() async {
+    await physicalAbortCompensationChecks()
     armRecoveryChecks()
     await normalDisconnectReturnChecks()
     let expiredRemoval = ReturnFixture()
@@ -440,7 +442,7 @@ private func normalDisconnectReturnChecks() async {
 }
 
 @MainActor
-private final class JournalReturnFixture {
+final class JournalReturnFixture {
     let hal = ReturnHAL()
     let participant = ReturnFixture()
     var privacy: HostAudioPrivacy!
