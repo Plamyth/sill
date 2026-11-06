@@ -89,6 +89,8 @@ public enum StreamMessageKind: UInt8 {
     case forwardingDownlinkReserved = 220
     case providerCallControl = 221
     case providerCallState = 222
+    case configuredCraftActionControl = 225
+    case configuredCraftActionState = 226
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 
@@ -116,8 +118,8 @@ public struct StreamMessage {
 
     public static func clientPayloadLimit(for kind: StreamMessageKind) -> Int {
         switch kind {
-        case .forwardingControl, .providerCallControl: return 4096
-        case .forwardingState, .providerCallState, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
+        case .forwardingControl, .providerCallControl, .configuredCraftActionControl: return 4096
+        case .forwardingState, .providerCallState, .configuredCraftActionState, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
         case .changeAudioRoute: return AudioRoutingPolicy.maxSelectionPayload
         case .fetchAudioRoutes: return 0
         case .fetchCatalog: return 256
@@ -133,8 +135,8 @@ public struct StreamMessage {
 
     public static func hostPayloadLimit(for kind: StreamMessageKind) -> Int {
         switch kind {
-        case .forwardingState, .providerCallState: return 16384
-        case .forwardingControl, .providerCallControl, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
+        case .forwardingState, .providerCallState, .configuredCraftActionState: return 16384
+        case .forwardingControl, .providerCallControl, .configuredCraftActionControl, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
         case .audioRoutes: return AudioRoutingPolicy.maxStatePayload
         case .changeAudioRoute, .fetchAudioRoutes, .fetchCatalog: return -1
         case .microphoneState, .microphoneReceipt, .sentryState: return 4096

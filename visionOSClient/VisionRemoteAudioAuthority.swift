@@ -32,6 +32,16 @@ struct VisionRemoteAudioAuthority {
         intent.setDesired(enabled, direction: direction, hostKey: hostKey)
         if enabled, contexts[id]?.admitted == true { preferred = id }
     }
+    mutating func prepareSelection(_ desire: Intent.Desire, hostKey: String, operationId: UUID,
+                                   preferred id: UUID) -> Intent.Preparation? {
+        guard contexts[id]?.admitted == true, contexts[id]?.hostKey == hostKey,
+              let preparation = intent.prepareSelection(desire, hostKey: hostKey, operationId: operationId) else { return nil }
+        if desire.playback || desire.microphone { preferred = id }
+        return preparation
+    }
+    mutating func cancelPreparation(_ preparation: Intent.Preparation) -> [Intent.Direction] {
+        intent.cancelPreparation(preparation)
+    }
 
     private func eligible(_ id: UUID) -> Bool {
         guard let context = contexts[id], context.admitted else { return false }
@@ -124,6 +134,68 @@ final class VisionRemoteAudioStore {
     }
     private var providerCalls: [String: ProviderCallRecord] = [:]
     private var providerCallTickets: [UUID: UUID] = [:]
+    private struct CraftPreparation {
+        let operation: VisionConfiguredCraftAction.Operation
+        let selection: VisionRemoteAudioIntent.Preparation
+        let microphoneWasRunning: Bool
+        let playbackWasRunning: Bool
+    }
+    private var craftPreparations: [UUID: CraftPreparation] = [:]
+
+    func prepareConfiguredAction(_ operation: VisionConfiguredCraftAction.Operation, client: StreamClient) -> UInt64? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let id = client.visionAudioOwnerID
+        guard craftPreparations[id] == nil,
+              client.visionConfiguredCraftContext.fence == operation.fence else { return nil }
+        model.update(id, context: client.visionAudioIntentContext)
+        guard let selection = model.prepareSelection(operation.mediaSelection, hostKey: operation.fence.hostKey,
+            operationId: operation.request.operationId, preferred: id) else { return nil }
+        craftPreparations[id] = .init(operation: operation, selection: selection,
+            microphoneWasRunning: client.microphonePhase.canStop,
+            playbackWasRunning: client.visionAudio.presentation.phase.grant != nil)
+        model.intent.persist(defaults)
+        if let scope = client.visionAudioIntentContext.scope {
+            pendingNativeSelection = NativeSelection(owner: id, hostKey: selection.hostKey, scope: scope)
+        }
+        for direction in VisionRemoteAudioIntent.Direction.allCases where operation.mediaSelection[direction] {
+            _ = refresh(manual: (id, direction, nil))
+        }
+        refresh()
+        return selection.revision
+    }
+
+    func finishConfiguredAction(_ operation: VisionConfiguredCraftAction.Operation, client: StreamClient) {
+        guard craftPreparations[client.visionAudioOwnerID]?.selection.operationId == operation.request.operationId else { return }
+        craftPreparations.removeValue(forKey: client.visionAudioOwnerID)
+    }
+
+    func cancelConfiguredAction(_ operation: VisionConfiguredCraftAction.Operation, client: StreamClient) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let id = client.visionAudioOwnerID
+        guard let prepared = craftPreparations[id], prepared.selection.operationId == operation.request.operationId else { return }
+        craftPreparations.removeValue(forKey: id)
+        let current = model.intent
+        let rolledBack = model.cancelPreparation(prepared.selection)
+        for direction in VisionRemoteAudioIntent.Direction.allCases {
+            let unchanged = current.desiredRevision(direction, hostKey: prepared.selection.hostKey) == prepared.selection.revision(direction)
+            if let pending = pendingManual[direction]?.0, pending.owner == id,
+               pending.request.hostKey == prepared.selection.hostKey,
+               pending.request.revision == prepared.selection.revision(direction) { pendingManual.removeValue(forKey: direction) }
+            let wasRunning = direction == .microphone ? prepared.microphoneWasRunning : prepared.playbackWasRunning
+            if rolledBack.contains(direction) || (unchanged && !wasRunning &&
+                prepared.operation.fence.matchesMediaScope(client.visionAudioIntentContext.scope)) {
+                if model.owner == id { stop(client, direction: direction) }
+            }
+        }
+        model.intent.persist(defaults)
+        if !rolledBack.isEmpty, client.visionAudioTrustedHostKey == prepared.selection.hostKey,
+           let scope = client.visionAudioIntentContext.scope, client.visionAudioIntentContext.admitted,
+           prepared.operation.fence.matchesMediaScope(scope) {
+            pendingNativeSelection = NativeSelection(owner: id, hostKey: prepared.selection.hostKey, scope: scope)
+        }
+        refresh()
+        NotificationCenter.default.post(name: Self.changed, object: nil)
+    }
 
     private func providerCallPeerIsCurrent(_ client: StreamClient) -> Bool {
         guard model.owner == client.visionAudioOwnerID,
@@ -220,6 +292,7 @@ final class VisionRemoteAudioStore {
     }
 
     func retire(_ client: StreamClient) {
+        client.visionConfiguredCraftAction.cancel()
         revokeProviderCall(client.visionAudioOwnerID)
         revokeActual(client)
         clients.removeValue(forKey: client.visionAudioOwnerID)
@@ -329,6 +402,7 @@ final class VisionRemoteAudioStore {
         for (id, entry) in clients {
             model.update(id, context: entry.value?.visionAudioIntentContext)
         }
+        for entry in clients.values { entry.value?.visionConfiguredCraftAction.refresh() }
         if let pending = pendingNativeSelection {
             if !selectionIsCurrent(pending.owner, hostKey: pending.hostKey, scope: pending.scope) {
                 pendingNativeSelection = nil

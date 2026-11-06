@@ -575,37 +575,19 @@ private struct VisionCallControls: View {
     let allowStart: Bool
     let admit: (() -> Void) -> Void
     let chooseDevices: () -> Void
-    @State private var configuredAction = VisionConfiguredCraftAction()
+    @ObservedObject private var configuredExecutor: VisionConfiguredCraftActionExecutor
+    @State private var configuredOperationId: UUID?
+
+    init(client: StreamClient, audio: VisionAudioController, allowStart: Bool,
+         admit: @escaping (() -> Void) -> Void, chooseDevices: @escaping () -> Void) {
+        self.client = client; self.audio = audio; self.allowStart = allowStart
+        self.admit = admit; self.chooseDevices = chooseDevices
+        configuredExecutor = client.visionConfiguredCraftAction
+    }
 
     private var configuredContext: VisionConfiguredCraftAction.Context {
-        let audioContext = client.visionAudioIntentContext
-        var context = VisionConfiguredCraftAction.Context()
-        context.hostKey = audioContext.hostKey
-        context.scope = audioContext.scope
-        context.admitted = allowStart && audioContext.admitted
-        context.selection = client.visionStoredAudioSelection?.desire
-        context.selectionRevision = client.visionStoredAudioSelection?.revision ?? 0
-        let routes = client.visionMacAudioRoutes
-        context.otherDeviceSelected = routes.hasExplicitSelection
-        context.deviceRouteRevision = context.otherDeviceSelected ? routes.model.catalogToken?.revision : nil
-        if context.otherDeviceSelected && (routes.scope == nil || routes.catalogInvalid || routes.model.pending != nil) {
-            context.admitted = false
-        }
-        if let snapshot = client.visionForwarding?.providerCallSnapshot, let intent = snapshot.intent {
-            let speakerReady: Bool
-            switch audio.presentation.phase {
-            case .waiting, .rendering: speakerReady = true
-            default: speakerReady = false
-            }
-            context.readback = .init(desire: .init(playback: intent.outputDesired, microphone: intent.inputDesired),
-                microphoneReady: audioContext.eligible && client.microphonePhase == .live &&
-                    client.visionForwarding?.permits(.microphone) == true,
-                speakerReady: audioContext.eligible && speakerReady && client.visionForwarding?.permits(.playback) == true,
-                microphoneOff: (client.microphonePhase == .off || client.microphonePhase == .unavailable) &&
-                    client.microphoneCleanupProblem == nil,
-                speakerOff: audio.presentation.phase == .off && audio.cleanupProblem == nil)
-        }
-        // No authenticated descriptor or implemented route is connected yet.
+        var context = client.visionConfiguredCraftContext
+        context.admitted = allowStart && context.admitted
         return context
     }
 
@@ -624,13 +606,18 @@ private struct VisionCallControls: View {
                 .onLongPressGesture(minimumDuration: VisionConfiguredCraftAction.holdDuration) {
                     admit {
                         guard allowStart else { return }
-                        _ = configuredAction.begin(heldFor: VisionConfiguredCraftAction.holdDuration,
-                            context: configuredContext, now: ProcessInfo.processInfo.systemUptime, issuedAt: Date())
+                        configuredExecutor.begin(heldFor: VisionConfiguredCraftAction.holdDuration)
+                        configuredOperationId = configuredExecutor.model.operation?.request.operationId
                     }
                 }
-                .disabled(!configuredAction.canBegin(configuredContext))
+                .disabled(!allowStart || !configuredExecutor.canBegin)
                 .accessibilityIdentifier("VisionVoiceCall")
                 .accessibilityHint("0.5초 동안 길게 눌러 현재 Mac의 음성 대화를 전환합니다.")
+                if configuredExecutor.canQuery {
+                    Button("결과 확인") { configuredExecutor.query() }
+                } else if !configuredExecutor.canBegin && configuredExecutor.canReadCatalog {
+                    Button("연결 확인") { configuredExecutor.readCatalog() }
+                }
                 if client.visionProviderCall.selectedActiveCall != nil {
                     Button("기존 통화 종료", systemImage: "phone.down.fill") {
                         admit { if call.enabled && call.action == .stop { client.performVisionProviderCall(.stop) } }
@@ -675,14 +662,17 @@ private struct VisionCallControls: View {
                 Text(message).font(.caption)
             }
         }
-        .onChange(of: configuredContext.fence) { _, _ in
-            _ = configuredAction.advance(context: configuredContext, now: ProcessInfo.processInfo.systemUptime)
+        .onChange(of: configuredContext) { _, _ in
+            if allowStart { configuredExecutor.refresh() }
+            else if let configuredOperationId { configuredExecutor.cancel(operationId: configuredOperationId) }
         }
-        .onDisappear { configuredAction.cancel() }
+        .onDisappear {
+            if let configuredOperationId { configuredExecutor.cancel(operationId: configuredOperationId) }
+        }
     }
 
     private var messages: [String] {
-        let commandMessage = configuredAction.message ??
+        let commandMessage = configuredExecutor.message ??
             (configuredContext.fence == nil ? "공통 음성 명령 연결을 확인하지 못했습니다." : nil)
         return [client.microphoneCleanupProblem, audio.cleanupProblem, client.visionForwardingProblem,
          commandMessage, client.visionProviderCall.request != nil ? call.message : nil,

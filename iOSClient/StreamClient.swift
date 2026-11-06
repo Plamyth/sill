@@ -920,7 +920,9 @@ final class StreamClient: ObservableObject {
     @Published var visionTestDestinations = VisionTestDestinations()
     var visionTestDestinationPeer: NWConnection?
     var visionTestDestinationGeneration = UUID()
-    @Published var visionSentrySnapshot = VisionSentryController.Snapshot()
+    @Published var visionSentrySnapshot = VisionSentryController.Snapshot() {
+        didSet { visionConfiguredCraftAction.refresh() }
+    }
     let visionSentry = VisionSentryController(store: VisionReleaseTestContext.isTestBundle ? .unavailable : .keychain)
     var visionSentryDeadline: DispatchWorkItem?
     var visionSentryLink: SessionLink { link }
@@ -1092,6 +1094,7 @@ final class StreamClient: ObservableObject {
 
     func setVisionPresentationForeground(_ foreground: Bool) {
         visionTextForeground = foreground
+        visionConfiguredCraftAction.refresh()
         if !foreground {
             revokeVisionTextDrafts()
         }
@@ -1205,6 +1208,25 @@ final class StreamClient: ObservableObject {
         authorize: { [weak self] scope in self?.visionMacAudioScopeIsCurrent(scope) == true })
 
     var visionForwarding: VisionAudioForwarding?
+    private var visionConfiguredCraftSubmission: (id: UUID, submission: SessionLink.Submission)?
+    var visionConfiguredCraftFocused: Bool { visionTextForeground }
+    lazy var visionConfiguredCraftAction = VisionConfiguredCraftActionExecutor(
+        context: { [weak self] in self?.visionConfiguredCraftMediaContext ?? .init() },
+        readScope: { [weak self] in self?.visionConfiguredCraftReadScope },
+        prepare: { [weak self] operation in
+            guard let self else { return nil }
+            return VisionRemoteAudioStore.shared.prepareConfiguredAction(operation, client: self)
+        },
+        cancelPreparation: { [weak self] operation in
+            guard let self else { return }
+            VisionRemoteAudioStore.shared.cancelConfiguredAction(operation, client: self)
+        },
+        finishPreparation: { [weak self] operation in
+            guard let self else { return }
+            VisionRemoteAudioStore.shared.finishConfiguredAction(operation, client: self)
+        }, send: { [weak self] control, scope, fence in
+            self?.sendVisionConfiguredCraftAction(control, scope: scope, fence: fence) == true
+        }, cancelSend: { [weak self] id in self?.cancelVisionConfiguredCraftSend(id) })
     @Published var visionProviderCall = VisionProviderCall(connection: UUID())
     var visionForwardingPoll: DispatchWorkItem?
     var visionForwardingMediaBinding: AudioForwardingBinding?
@@ -1251,6 +1273,8 @@ final class StreamClient: ObservableObject {
     }
 
     private func resetVisionAudio() {
+        visionConfiguredCraftAction.cancel()
+        visionConfiguredCraftAction.observe(capability: nil)
         suspendVisionForwarding()
         visionForwarding = nil
         visionForwardingMediaBinding = nil
@@ -4501,6 +4525,7 @@ final class StreamClient: ObservableObject {
     /// On the network queue.
     private func handle(_ header: StreamHeader, _ data: Data, from peer: NWConnection) {
         #if os(visionOS)
+        if receiveVisionConfiguredCraftAction(header, data, from: peer) { return }
         if receiveVisionProviderCall(header, data, from: peer) { return }
         if receiveVisionForwarding(header, data, from: peer) { return }
         if receiveVisionMacAudioRoutes(header, data, from: peer) { return }
@@ -4625,6 +4650,9 @@ final class StreamClient: ObservableObject {
                 // not at `.ready`: the Mac has admitted this device's key.
                 self.remoteSessionReady()
                 self.homeSessionReady()
+                #if os(visionOS)
+                self.visionConfiguredCraftAction.observe(capability: list.configuredCraftActions)
+                #endif
                 // The host this session runs on, which a move to the network must reach again
                 // (`moveProbed`); its first list is what lets a move start.
                 self.sessionHost = list.launchID
@@ -5165,6 +5193,58 @@ extension StreamClient {
                 subscribeToMenus()
             }
         } else { visionMenuPresentation = nil }
+    }
+
+    private func cancelVisionConfiguredCraftSend(_ id: UUID) {
+        guard let current = visionConfiguredCraftSubmission, current.id == id else { return }
+        visionConfiguredCraftSubmission = nil
+        link.cancel(current.submission)
+    }
+
+    private func sendVisionConfiguredCraftAction(_ control: ConfiguredCraftActionControl,
+        scope: VisionConfiguredCraftActionExecutor.ReadScope, fence: VisionConfiguredCraftAction.Fence?) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard visionAudioIntentCatalog?.configuredCraftActions == 1,
+              visionConfiguredCraftReadScope == scope, let expected = connection,
+              authenticatedVisionMacAudioPeer == ObjectIdentifier(expected) else { return false }
+        let permit: UUID?
+        let now = ProcessInfo.processInfo.systemUptime
+        var deadline = now + VisionConfiguredCraftAction.responseBudget
+        if control.operation == .invoke {
+            guard let fence, visionConfiguredCraftContext.fence == fence,
+                  visionConfiguredCraftContext.mediaReady, visionSentrySnapshot.permitsConfiguredCraftInvocation,
+                  let freshUntil = visionForwarding?.freshUntil, freshUntil > now,
+                  let current = visionInputPermit else { return false }
+            permit = current
+            deadline = min(deadline, freshUntil)
+        } else { permit = nil }
+        let payload = Wire.encode(control)
+        guard payload.count <= 4096 else { return false }
+        let bytes = StreamMessage(kind: .configuredCraftActionControl, timestamp: Date().timeIntervalSince1970,
+            isKeyframe: false, payload: payload).serialized()
+        queue.sync { flushPendingMove() }
+        guard visionConfiguredCraftReadScope == scope,
+              control.operation != .invoke || (visionConfiguredCraftContext.fence == fence && visionConfiguredCraftContext.mediaReady) else { return false }
+        let id = control.requestId
+        let submission = SessionLink.Submission(deadline: deadline) { [weak self] outcome in
+            guard outcome == .cancelled else { return }
+            self?.visionConfiguredCraftAction.sendCancelled(id)
+        }
+        visionConfiguredCraftSubmission = (id, submission)
+        return link.send(bytes, onlyOn: expected, permit: permit, submission: submission)
+    }
+
+    private func receiveVisionConfiguredCraftAction(_ header: StreamHeader, _ data: Data, from peer: NWConnection) -> Bool {
+        guard header.kind == .configuredCraftActionState else { return false }
+        let generation = visionAudioIntentConnection
+        DispatchQueue.main.async { [weak self, weak peer] in
+            guard let self, let peer, self.connection === peer,
+                  self.visionAudioIntentConnection == generation,
+                  self.authenticatedVisionMacAudioPeer == ObjectIdentifier(peer),
+                  let scope = self.visionConfiguredCraftReadScope else { return }
+            _ = self.visionConfiguredCraftAction.receive(data, in: scope)
+        }
+        return true
     }
 
     @discardableResult

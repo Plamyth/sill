@@ -1,4 +1,5 @@
 import Foundation
+import StreamProtocol
 
 struct VisionConfiguredCraftAction {
     static let holdDuration = 0.5
@@ -11,71 +12,9 @@ struct VisionConfiguredCraftAction {
         let assignmentSha256: String
     }
 
-    struct CatalogRequest: Encodable {
-        let schemaVersion = 1
-        let operation = "get-configured-craft-action"
-    }
-    struct Catalog: Decodable {
-        let schemaVersion: Int
-        let supported: Bool
-        let expectedProfileId: UUID
-        let inputID: String
-        let trigger: String
-        let expectedAssignmentSha256: String
-
-        private enum CodingKeys: String, CodingKey, CaseIterable {
-            case schemaVersion, supported, expectedProfileId, inputID, trigger, expectedAssignmentSha256
-        }
-        private struct FieldKey: CodingKey {
-            let stringValue: String
-            var intValue: Int? { nil }
-            init?(stringValue: String) { self.stringValue = stringValue }
-            init?(intValue: Int) { return nil }
-        }
-        init(from decoder: Decoder) throws {
-            let keys = try decoder.container(keyedBy: FieldKey.self).allKeys.map(\.stringValue)
-            guard Set(keys) == Set(CodingKeys.allCases.map(\.rawValue)) else {
-                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "공통 Craft catalog의 필드가 일치하지 않습니다."))
-            }
-            let values = try decoder.container(keyedBy: CodingKeys.self)
-            schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
-            supported = try values.decode(Bool.self, forKey: .supported)
-            expectedProfileId = try values.decode(UUID.self, forKey: .expectedProfileId)
-            inputID = try values.decode(String.self, forKey: .inputID)
-            trigger = try values.decode(String.self, forKey: .trigger)
-            expectedAssignmentSha256 = try values.decode(String.self, forKey: .expectedAssignmentSha256)
-            guard schemaVersion == 1, supported, inputID == "speed.button.stop-play", trigger == "longPress",
-                  expectedAssignmentSha256.utf8.count == 64,
-                  expectedAssignmentSha256.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
-                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "공통 Craft catalog를 확인하지 못했습니다."))
-            }
-        }
-    }
-    struct Request: Encodable, Equatable {
-        let schemaVersion = 1
-        let operation = "invoke-configured-craft-action"
-        let operationId: UUID
-        let deviceId: String
-        let inputID = "speed.button.stop-play"
-        let trigger = "longPress"
-        let expectedProfileId: UUID
-        let expectedAssignmentSha256: String
-        let issuedAt: Int64
-    }
-
-    struct Result: Decodable, Equatable {
-        enum Outcome: String, Decodable { case invoked, rejected, unknown }
-        let outcome: Outcome
-        let operationId: UUID
-        let deviceId: String
-        let bindingSha256: String?
-        let invoked: Bool
-        let effectConfirmed: Bool
-        let reason: String?
-        private enum CodingKeys: String, CodingKey {
-            case outcome, operationId, deviceId, bindingSha256, invoked, effectConfirmed, reason
-        }
-    }
+    typealias Catalog = ConfiguredCraftActionCatalog
+    typealias Request = ConfiguredCraftActionRequest
+    typealias Result = ConfiguredCraftActionResult
 
     struct Fence: Equatable {
         let hostKey: String
@@ -90,8 +29,13 @@ struct VisionConfiguredCraftAction {
         let selectionRevision: UInt64
         let otherDeviceSelected: Bool
         let deviceRouteRevision: UUID?
+        func matchesMediaScope(_ scope: VisionRemoteAudioIntent.Scope?) -> Bool {
+            guard let scope else { return false }
+            return connection == scope.connection && window == scope.window && admission == scope.admission &&
+                video == scope.video && foreground == scope.foreground
+        }
     }
-    struct MediaReadback {
+    struct MediaReadback: Equatable {
         let desire: VisionRemoteAudioIntent.Desire
         let microphoneReady: Bool
         let speakerReady: Bool
@@ -99,7 +43,7 @@ struct VisionConfiguredCraftAction {
         let speakerOff: Bool
     }
 
-    struct Context {
+    struct Context: Equatable {
         var hostKey: String?
         var scope: VisionRemoteAudioIntent.Scope?
         var binding: Binding?
@@ -107,6 +51,7 @@ struct VisionConfiguredCraftAction {
         var capabilityPresent = false
         var routeImplemented = false
         var admitted = false
+        var invocationAllowed = true
         var selection: VisionRemoteAudioIntent.Desire?
         var selectionRevision: UInt64 = 0
         var otherDeviceSelected = false
@@ -124,7 +69,7 @@ struct VisionConfiguredCraftAction {
         }
 
         var fence: Fence? {
-            guard capabilityPresent, routeImplemented, admitted,
+            guard capabilityPresent, routeImplemented, admitted, invocationAllowed,
                   let hostKey, !hostKey.isEmpty, let scope, let binding, let routeGeneration,
                   !binding.deviceId.isEmpty, !binding.assignmentSha256.isEmpty,
                   !otherDeviceSelected || deviceRouteRevision != nil else { return nil }
@@ -156,6 +101,13 @@ struct VisionConfiguredCraftAction {
         case cancelPreparation(Operation)
     }
     private(set) var phase = Phase.idle
+    var operation: Operation? {
+        switch phase {
+        case .idle: return nil
+        case .preparing(let operation, _, _), .ready(let operation, _, _), .awaiting(let operation, _, _),
+             .completed(let operation, _), .cancelled(let operation), .unknown(let operation): return operation
+        }
+    }
 
     func canBegin(_ context: Context) -> Bool {
         guard context.fence != nil else { return false }
@@ -169,11 +121,13 @@ struct VisionConfiguredCraftAction {
                         operationId: () -> UUID = UUID.init) -> Effect? {
         let epochMilliseconds = issuedAt.timeIntervalSince1970 * 1000
         guard heldFor.isFinite, heldFor >= Self.holdDuration, now.isFinite, now >= 0,
-              epochMilliseconds.isFinite, epochMilliseconds >= 0, epochMilliseconds < Double(Int64.max),
+              epochMilliseconds.isFinite, epochMilliseconds >= 1, epochMilliseconds <= 9_007_199_254_740_991,
               canBegin(context), let fence = context.fence else { return nil }
-        let request = Request(operationId: operationId(), deviceId: fence.binding.deviceId,
-            expectedProfileId: fence.binding.profileId,
-            expectedAssignmentSha256: fence.binding.assignmentSha256, issuedAt: Int64(epochMilliseconds))
+        guard let device = AudioForwardingDeviceID(hex: fence.binding.deviceId),
+              let catalog = try? Catalog(expectedProfileId: fence.binding.profileId,
+                  expectedAssignmentSha256: fence.binding.assignmentSha256),
+              let request = try? Request(operationId: operationId(), deviceId: device,
+                  catalog: catalog, issuedAt: Int64(epochMilliseconds)) else { return nil }
         let operation = Operation(request: request, fence: fence, mediaSelection: context.mediaSelection)
         if context.mediaReady {
             phase = .ready(operation, since: now, until: now + Self.responseBudget)
@@ -216,7 +170,7 @@ struct VisionConfiguredCraftAction {
             }
             return nil
         case .awaiting(let operation, let since, let until):
-            guard context.fence == operation.fence, now.isFinite, now >= since, now < until else {
+            guard context.fence == operation.fence, context.mediaReady, now.isFinite, now >= since, now < until else {
                 phase = .unknown(operation)
                 return .cancelPreparation(operation)
             }
@@ -274,25 +228,289 @@ struct VisionConfiguredCraftAction {
                     "음성 명령의 응답을 받았습니다. 실제 실행·대화 효과는 미확인입니다." :
                     "할당 확인 값이 달라 호출 효과는 미확인입니다."
             case .rejected: return "음성 명령이 거절됐습니다."
-            case .unknown: return "호출 효과를 확인하지 못했습니다. 자동으로 다시 실행하지 않습니다."
+                case .unknown: return "호출 효과를 확인하지 못했습니다. 자동으로 다시 실행하지 않습니다."
             }
         }
     }
-}
 
-extension VisionConfiguredCraftAction.Result {
-    init(from decoder: Decoder) throws {
-        let values = try decoder.container(keyedBy: CodingKeys.self)
-        guard values.contains(.bindingSha256) else {
-            throw DecodingError.keyNotFound(CodingKeys.bindingSha256,
-                .init(codingPath: decoder.codingPath, debugDescription: "bindingSha256 필드는 null이어도 필요합니다."))
+    mutating func receiveReadback(_ result: Result, hostKey: String, device: AudioForwardingDeviceID) -> Bool {
+        guard let operation, operation.fence.hostKey == hostKey, operation.request.deviceId == device,
+              result.deviceId == device, result.operationId == operation.request.operationId,
+              !result.effectConfirmed, result.outcome != .invoked || result.invoked,
+              result.outcome != .rejected || !result.invoked else { return false }
+        switch phase {
+        case .unknown: break
+        case .completed(_, let old) where old.outcome == .unknown: break
+        default: return false
         }
-        outcome = try values.decode(Outcome.self, forKey: .outcome)
-        operationId = try values.decode(UUID.self, forKey: .operationId)
-        deviceId = try values.decode(String.self, forKey: .deviceId)
-        bindingSha256 = try values.decodeIfPresent(String.self, forKey: .bindingSha256)
-        invoked = try values.decode(Bool.self, forKey: .invoked)
-        effectConfirmed = try values.decode(Bool.self, forKey: .effectConfirmed)
-        reason = try values.decodeIfPresent(String.self, forKey: .reason)
+        phase = .completed(operation, result)
+        return true
     }
 }
+
+
+import Combine
+
+final class VisionConfiguredCraftActionExecutor: ObservableObject {
+    typealias Action = VisionConfiguredCraftAction
+    struct ReadScope: Equatable {
+        let hostKey: String
+        let connection: UUID
+        let window: UUID
+        let admission: UUID
+        let foreground: UUID
+        let video: UUID?
+        let device: AudioForwardingDeviceID
+    }
+    private struct Pending {
+        let control: ConfiguredCraftActionControl
+        let scope: ReadScope
+        let until: Double
+    }
+    @Published private(set) var model = Action()
+    @Published private(set) var problem: String?
+    private var capability = false
+    private var scope: ReadScope?
+    private var catalog: Action.Catalog?
+    private var catalogRevision: UUID?
+    private var catalogAttempted = false
+    private var pending: Pending?
+    private let readContext: () -> Action.Context
+    private let readScope: () -> ReadScope?
+    private let prepare: (Action.Operation) -> UInt64?
+    private let cancelPreparation: (Action.Operation) -> Void
+    private let finishPreparation: (Action.Operation) -> Void
+    private let send: (ConfiguredCraftActionControl, ReadScope, Action.Fence?) -> Bool
+    private let cancelSend: (UUID) -> Void
+    private let clock: () -> Double
+    private var executing = false
+    private var deadlineWork: DispatchWorkItem?
+    private var deadline: Double?
+    private var deadlineOperation: UUID?
+
+    init(context: @escaping () -> Action.Context, readScope: @escaping () -> ReadScope?,
+         prepare: @escaping (Action.Operation) -> UInt64?,
+         cancelPreparation: @escaping (Action.Operation) -> Void,
+         finishPreparation: @escaping (Action.Operation) -> Void,
+         send: @escaping (ConfiguredCraftActionControl, ReadScope, Action.Fence?) -> Bool,
+         cancelSend: @escaping (UUID) -> Void,
+         clock: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) {
+        readContext = context; self.readScope = readScope; self.prepare = prepare
+        self.cancelPreparation = cancelPreparation; self.finishPreparation = finishPreparation
+        self.send = send; self.cancelSend = cancelSend; self.clock = clock
+    }
+    deinit { deadlineWork?.cancel() }
+
+    var context: Action.Context {
+        var value = readContext()
+        value.capabilityPresent = capability && scope != nil && scope == readScope()
+        value.routeImplemented = value.capabilityPresent
+        value.binding = nil; value.routeGeneration = nil
+        if value.capabilityPresent, let catalog, let scope, let profile = UUID(uuidString: catalog.expectedProfileId) {
+            value.binding = .init(deviceId: scope.device.hex, profileId: profile, assignmentSha256: catalog.expectedAssignmentSha256)
+            value.routeGeneration = catalogRevision
+        }
+        return value
+    }
+    var canBegin: Bool { pending == nil && model.canBegin(context) }
+    var canReadCatalog: Bool {
+        guard capability, readScope() != nil, pending == nil else { return false }
+        switch model.phase {
+        case .preparing, .ready, .awaiting: return false
+        default: return true
+        }
+    }
+    var canQuery: Bool {
+        guard canReadCatalog, let scope = readScope(), let operation = model.operation,
+              operation.fence.hostKey == scope.hostKey, operation.request.deviceId == scope.device else { return false }
+        switch model.phase {
+        case .unknown: return true
+        case .completed(_, let result): return result.outcome == .unknown
+        default: return false
+        }
+    }
+    var message: String? {
+        let result = problem ?? model.message
+        if !context.invocationAllowed {
+            return "센트리 보호가 켜져 있거나 상태가 미확인이어서 음성 명령을 실행할 수 없습니다." +
+                (result.map { " " + $0 } ?? "")
+        }
+        return result
+    }
+    func observe(capability: Int?) {
+        self.capability = capability == 1
+        refresh()
+    }
+    func begin(heldFor: Double, issuedAt: Date = Date()) {
+        guard !executing, canBegin else { return }
+        executing = true
+        execute(model.begin(heldFor: heldFor, context: context, now: clock(), issuedAt: issuedAt))
+        executing = false; scheduleDeadline()
+    }
+    func refresh() {
+        guard !executing else { return }
+        executing = true
+        let current = capability ? readScope() : nil
+        if scope != current {
+            clearPending(); scope = current; catalog = nil; catalogRevision = nil
+            catalogAttempted = false; problem = nil
+        }
+        if let pending, clock() >= pending.until {
+            clearPending(); problem = "음성 명령 응답을 확인하지 못했습니다."
+        }
+        execute(model.advance(context: context, now: clock()))
+        if capability, scope != nil, !catalogAttempted, pending == nil {
+            catalogAttempted = true
+            submit(.init(requestId: UUID()), fence: nil)
+        }
+        executing = false; scheduleDeadline()
+    }
+    func cancel(operationId: UUID? = nil) {
+        if let operationId, model.operation?.request.operationId != operationId { return }
+        guard !executing else { return }
+        executing = true
+        execute(model.cancel())
+        if pending?.control.operation == .invoke { clearPending() }
+        executing = false; scheduleDeadline()
+    }
+    func readCatalog() {
+        refresh()
+        guard canReadCatalog else { return }
+        submit(.init(requestId: UUID()), fence: nil); scheduleDeadline()
+    }
+    func query() {
+        refresh()
+        guard canQuery, let operation = model.operation else { return }
+        submit(.init(requestId: UUID(), operationId: operation.request.operationId), fence: nil)
+        scheduleDeadline()
+    }
+    @discardableResult
+    func receive(_ data: Data, in incoming: ReadScope) -> Bool {
+        guard let pending, scope == incoming, readScope() == incoming, pending.scope == incoming,
+              clock().isFinite, clock() < pending.until,
+              let state = try? ConfiguredCraftActionState.decode(data), state.deviceId == incoming.device,
+              state.matches(pending.control) else { return false }
+        clearPending()
+        if let catalog = state.catalog {
+            if self.catalog != catalog { catalogRevision = UUID() }
+            self.catalog = catalog; problem = nil
+        } else if let result = state.result {
+            if pending.control.operation == .query {
+                _ = model.receiveReadback(result, hostKey: incoming.hostKey, device: incoming.device)
+            } else { _ = model.receive(result, context: context, now: clock()) }
+            problem = nil
+        } else if let error = state.error {
+            problem = "음성 명령 결과 미확인 (" + error + ")"
+            if pending.control.operation == .invoke { execute(model.cancel()) }
+        }
+        refresh(); return true
+    }
+    private func submit(_ control: ConfiguredCraftActionControl, fence: Action.Fence?) {
+        guard pending == nil, capability, let scope, scope == readScope() else { return }
+        problem = nil
+        pending = .init(control: control, scope: scope, until: clock() + Action.responseBudget)
+        if !send(control, scope, fence) {
+            clearPending(); problem = "음성 명령 요청을 보내지 못했습니다."
+            if control.operation == .invoke { execute(model.cancel()) }
+        }
+        objectWillChange.send()
+    }
+    private func clearPending() {
+        let id = pending?.control.requestId
+        pending = nil
+        if let id { cancelSend(id) }
+    }
+    func sendCancelled(_ id: UUID) {
+        guard pending?.control.requestId == id else { return }
+        let invoke = pending?.control.operation == .invoke
+        clearPending()
+        if invoke { execute(model.cancel()) }
+        problem = "음성 명령 요청의 전송을 확인하지 못했습니다."
+        scheduleDeadline()
+    }
+    private func execute(_ effect: Action.Effect?) {
+        guard let effect else { return }
+        switch effect {
+        case .prepare(let operation):
+            guard context.fence == operation.fence, let revision = prepare(operation) else {
+                execute(model.cancel()); return
+            }
+            if context.fence != operation.fence {
+                guard model.recordPreparedSelection(operationId: operation.request.operationId,
+                    revision: revision, context: context) else { execute(model.cancel()); return }
+            }
+            execute(model.advance(context: context, now: clock()))
+        case .invoke(let operation):
+            guard pending == nil, let request = model.takeInvocation(operation, context: context, now: clock()) else {
+                cancelPreparation(operation); execute(model.cancel()); return
+            }
+            submit(.init(requestId: UUID(), client: request), fence: operation.fence)
+            if pending?.control.client?.operationId == request.operationId { finishPreparation(operation) }
+        case .cancelPreparation(let operation):
+            cancelPreparation(operation)
+            if pending?.control.targetOperationId == operation.request.operationId { clearPending() }
+        }
+    }
+    private func scheduleDeadline() {
+        let next: Double?
+        switch model.phase {
+        case .preparing(_, _, let until), .ready(_, _, let until), .awaiting(_, _, let until): next = until
+        default: next = nil
+        }
+        let effective = [next, pending?.until].compactMap { $0 }.min()
+        let id = pending?.control.requestId ?? model.operation?.request.operationId
+        guard effective != deadline || id != deadlineOperation else { return }
+        deadlineWork?.cancel(); deadlineWork = nil; deadline = effective; deadlineOperation = id
+        guard let effective else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.deadline == effective, self.deadlineOperation == id else { return }
+            self.refresh()
+        }
+        deadlineWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + max(0, effective - clock()), execute: work)
+    }
+}
+
+#if os(visionOS)
+extension StreamClient {
+    var visionConfiguredCraftContext: VisionConfiguredCraftAction.Context { visionConfiguredCraftAction.context }
+    var visionConfiguredCraftReadScope: VisionConfiguredCraftActionExecutor.ReadScope? {
+        guard visionAudioIntentContext.connected, visionStartupForeground, appInForeground, microphoneAdmission.active,
+              let key = visionAudioTrustedHostKey, let lease = visionDisplaySelection.lease,
+              lease == microphoneAdmission.lease,
+              let fingerprint = DeviceIdentity.existing()?.fingerprint,
+              let device = AudioForwardingDeviceID(fingerprint: fingerprint) else { return nil }
+        return .init(hostKey: key, connection: visionAudioIntentConnection, window: lease.window,
+            admission: lease.admission, foreground: visionAudioIntentForeground,
+            video: visionAudioIntentContext.scope?.video, device: device)
+    }
+    var visionConfiguredCraftMediaContext: VisionConfiguredCraftAction.Context {
+        let audioContext = visionAudioIntentContext
+        var context = VisionConfiguredCraftAction.Context()
+        context.hostKey = audioContext.hostKey; context.scope = audioContext.scope
+        context.admitted = audioContext.admitted && visionConfiguredCraftFocused
+        context.invocationAllowed = visionSentrySnapshot.permitsConfiguredCraftInvocation
+        context.selection = visionStoredAudioSelection?.desire
+        context.selectionRevision = visionStoredAudioSelection?.revision ?? 0
+        let routes = visionMacAudioRoutes
+        context.otherDeviceSelected = routes.hasExplicitSelection
+        context.deviceRouteRevision = context.otherDeviceSelected ? routes.model.catalogToken?.revision : nil
+        if context.otherDeviceSelected && (routes.scope == nil || routes.catalogInvalid || routes.model.pending != nil) {
+            context.admitted = false
+        }
+        if let snapshot = visionForwarding?.providerCallSnapshot, let intent = snapshot.intent {
+            let speakerReady: Bool
+            switch visionAudio.presentation.phase {
+            case .waiting, .rendering: speakerReady = true
+            default: speakerReady = false
+            }
+            context.readback = .init(desire: .init(playback: intent.outputDesired, microphone: intent.inputDesired),
+                microphoneReady: audioContext.eligible && microphonePhase == .live && visionForwarding?.permits(.microphone) == true,
+                speakerReady: audioContext.eligible && speakerReady && visionForwarding?.permits(.playback) == true,
+                microphoneOff: (microphonePhase == .off || microphonePhase == .unavailable) && microphoneCleanupProblem == nil,
+                speakerOff: visionAudio.presentation.phase == .off && visionAudio.cleanupProblem == nil)
+        }
+        return context
+    }
+}
+#endif

@@ -44,6 +44,11 @@ final class VisionSentryController {
         var accepted: Bool?
         var operationState: SentryControlResponse.OperationState?
         var operationCode: SentryControlResponse.Code?
+        var permitsConfiguredCraftInvocation: Bool {
+            available && state?.phase == .inactive && state?.requested == false && pendingID == nil &&
+                problem == nil && operationState != .unknown && !readbackNeedsNewSession &&
+                !(storedRequestID != nil && accepted == nil)
+        }
 
         var canActivate: Bool {
             guard pendingID == nil, let state else { return false }
