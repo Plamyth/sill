@@ -98,6 +98,7 @@ extension StreamClient {
 
     func setDesiredAudioSelection(_ selection: IPadDesiredAudio.Selection,
                                   confirming directions: [IPadDesiredAudio.Direction] = IPadDesiredAudio.Direction.allCases) {
+        desiredAudioSelectionGeneration = UUID()
         if selection.microphone || selection.playback { audioForwardingStopDiagnostic = nil }
         refreshDesiredAudioIdentity()
         guard audioForwardingContext != nil || (!selection.microphone && !selection.playback) else { return }

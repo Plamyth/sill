@@ -113,6 +113,7 @@ final class StreamClient {
  var desiredAudio = IPadDesiredAudio()
  lazy var desiredAudioStore = IPadDesiredAudioStore(defaults: UserDefaults(suiteName: suite)!)
  var desiredAudioSelection = IPadDesiredAudio.Selection()
+ var desiredAudioSelectionGeneration = UUID()
  var audioPrivacyState: AudioPrivacyState?
  var audioPendingMicrophonePermission: (() -> Void)?
  var audioAutomaticDirections: Set<IPadDesiredAudio.Direction> = []
@@ -204,6 +205,34 @@ def method(file, name):
     return select_platform(s[start:end], vision=False, ios=True)
 transport = 'extension StreamClient {\n' + method('StreamClient+Audio.swift', 'sendRemoteAudio') + '\n' + method('StreamClient+Microphone.swift', 'sendMicrophoneControl') + '\n' + method('StreamClient+Microphone.swift', 'microphoneInterrupted') + '\n}\n'
 timer_mode = sys.argv[3] if len(sys.argv) > 3 else ''
+if timer_mode == 'preparation-boundaries':
+    fixture += '''
+enum ScenePhase { case active, inactive, background }
+@MainActor final class ChooserFixture {
+ let client: StreamClient
+ var context: IPadAudioRoutePolicy.Context?
+ var acknowledgedMac: IPadAudioRouteAcknowledgments.Identity?
+ var selection = IPadAudioRoutePolicy.Selection()
+ var selectionEdited = false
+ var problem: String?
+ var operation: Task<Void, Never>?
+ var operationID: UUID? = UUID()
+ var preparingCall = true
+ init(_ client: StreamClient) { self.client = client; context = client.audioRouteContext }
+ CHOOSER_METHODS
+}
+'''.replace('CHOOSER_METHODS', '\n'.join(method('IPadAudioRouteChooser.swift', name).replace('private func ', 'func ', 1)
+                                       for name in ['handleScenePhase', 'handleRouteContext', 'cancelOperation']))
+    baseline = subprocess.check_output(['git', 'show', '6b82e77f:iOSClient/StreamClient+ProviderCall.swift'], cwd=root, text=True)
+    start = baseline.index('    @MainActor func prepareAndStartIPadProviderCall(')
+    end = baseline.index('\n    }', start) + len('\n    }')
+    legacy = baseline[start:end].replace('prepareAndStartIPadProviderCall(', 'legacyPrepareAndStartIPadProviderCall(', 1)
+    fixture += '\nextension StreamClient {\n' + legacy + '\n}\n'
+    baseline = subprocess.check_output(['git', 'show', '6b82e77f:iOSClient/IPadAudioRouteChooser.swift'], cwd=root, text=True)
+    start = baseline.index('.onChange(of: scenePhase)')
+    start = baseline.index(' in\n', start) + len(' in\n')
+    end = baseline.index('\n        }', start)
+    fixture += '\nextension ChooserFixture { func legacyHandleScenePhase(_ next: ScenePhase) {\n' + baseline[start:end] + '\n} }\n'
 if timer_mode in ('microphone-timers', 'microphone-timers-legacy'):
     microphone = (root/'iOSClient/StreamClient+Microphone.swift').read_text()
     start = microphone.index('            case .send(let peer, let control):')
@@ -236,6 +265,7 @@ for event, name in [('routeChangeNotification', 'routeChanged'), ('interruptionN
     callbacks += ' func ' + name + '(_ note: Notification) {\n' + body + '\n }\n'
 (out/'Adapter.swift').write_text(fixture + forward + desired + routes + transport + extension('StreamClient+ProviderCall.swift') + '\nextension StreamClient {\n' + callbacks + '}\n')
 flags=['-module-cache-path',str(out/'cache'),'-I',str(out),'-L',str(out),'-lStreamProtocol','-Xlinker','-rpath','-Xlinker',str(out)]
+if timer_mode == 'preparation-boundaries': flags += ['-D', 'PREPARATION_BOUNDARIES', '-whole-module-optimization']
 files=['IPadProviderCall.swift','IPadAudioForwarding.swift','IPadDesiredAudio.swift','IPadAudioAdmission.swift','IPadMicrophonePolicy.swift','IPadRemoteAudioController.swift','IPadAudioRoutePolicy.swift']
 subprocess.run(['xcrun','swiftc','-parse-as-library',*flags,*[str(root/'iOSClient'/f) for f in files],str(out/'Adapter.swift'),str(Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).with_name('adapter-main.swift')),'-o',str(out/'adapter-check')],check=True)
 subprocess.run([str(out/'adapter-check'), *(['--expect-six'] if timer_mode == 'microphone-timers-legacy' else [])],check=True)

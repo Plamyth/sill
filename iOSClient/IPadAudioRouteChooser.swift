@@ -114,19 +114,10 @@ struct IPadAudioRouteChooser: View {
         .onDisappear {
             cancelOperation(stopPreparingAudio: true)
         }
-        .onChange(of: client.audioRouteContext) { _, next in
-            cancelOperation(stopPreparingAudio: false)
-            context = next
-            acknowledgedMac = client.audioRouteTrustedMac
-            selection = client.audioRouteSelection
-            selectionEdited = selection != .init() || client.providerCall.activeCall != nil
-            problem = "연결이나 화면이 바뀌었습니다. 현재 연결에서 다시 시작하세요."
-        }
+        .onChange(of: client.audioRouteContext) { _, next in handleRouteContext(next) }
         .onChange(of: client.providerCall.target) { _, _ in cancelOperation(stopPreparingAudio: true) }
         .onChange(of: client.providerCallConnection) { _, _ in cancelOperation(stopPreparingAudio: true) }
-        .onChange(of: scenePhase) { _, next in
-            if next != .active { cancelOperation(stopPreparingAudio: true) }
-        }
+        .onChange(of: scenePhase) { _, next in handleScenePhase(next) }
         .onChange(of: client.audioForwardingPhase) { _, next in
             if next == .blocked && preparingCall {
                 cancelOperation(stopPreparingAudio: true)
@@ -276,6 +267,7 @@ struct IPadAudioRouteChooser: View {
                 try await client.prepareAndStartIPadProviderCall(chosen, context: displayed, target: target)
             } catch {
                 guard operationID == id, !Task.isCancelled else { return }
+                selection = client.audioRouteSelection
                 problem = error.localizedDescription
             }
         }
@@ -301,6 +293,26 @@ struct IPadAudioRouteChooser: View {
         }
     }
 
+    private func handleRouteContext(_ next: IPadAudioRoutePolicy.Context?) {
+        if preparingCall, let current = context, let next,
+           current.peer == next.peer, current.source == next.source {
+            context = next
+            return
+        }
+        cancelOperation(stopPreparingAudio: false)
+        context = next
+        acknowledgedMac = client.audioRouteTrustedMac
+        selection = client.audioRouteSelection
+        selectionEdited = selection != .init() || client.providerCall.activeCall != nil
+        problem = "연결이나 화면이 바뀌었습니다. 현재 연결에서 다시 시작하세요."
+    }
+
+    private func handleScenePhase(_ next: ScenePhase) {
+        if next == .inactive, operationID != nil, let authorization = client.audioRouteAuthorization,
+           authorization.context == context { return }
+        if next != .active { cancelOperation(stopPreparingAudio: true) }
+    }
+
     private func cancelOperation(stopPreparingAudio: Bool) {
         let wasPreparing = preparingCall
         operation?.cancel()
@@ -311,6 +323,7 @@ struct IPadAudioRouteChooser: View {
         if stopPreparingAudio && wasPreparing && context == client.audioRouteContext {
             client.cancelDesiredAudioRequest()
         }
+        selection = client.audioRouteSelection
     }
 
     private func close() {

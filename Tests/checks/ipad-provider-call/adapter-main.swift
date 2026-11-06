@@ -8,13 +8,13 @@ struct ProviderAdapterChecks {
     @MainActor static func flush() async {
         await withCheckedContinuation { c in DispatchQueue.main.async { c.resume() } }
     }
-    @MainActor static func ready(activate: Bool = true) async throws -> StreamClient {
+    @MainActor static func ready(activate: Bool = true, protected: Bool = true) async throws -> StreamClient {
         let client = StreamClient(), generation = UUID(), peer = client.connection!
         let epoch = VideoEpoch(generation: generation.uuidString, source: .desktop,
             geometry: .init(x: 0, y: 0, width: 800, height: 600), width: 800, height: 600)
         let list = WindowList(macName: "fixture", windows: [], active: .desktop, remoteAudio: 1,
             inputGeneration: generation.uuidString, videoEpoch: epoch,
-            audioPrivacy: .init(version: 2, protected: true), providerCalls: 1)
+            audioPrivacy: .init(version: 2, protected: protected), providerCalls: 1)
         client.desiredAudioSetConnection(peer)
         _ = client.microphonePolicy.setConnection(ObjectIdentifier(peer))
         client.remoteAudioControl.setConnection(ObjectIdentifier(peer))
@@ -91,6 +91,12 @@ struct ProviderAdapterChecks {
     }
     @MainActor static func main() async throws {
         try await preparationChecks()
+        #if PREPARATION_BOUNDARIES
+        try await permissionBoundaryChecks()
+        try await scopeBoundaryChecks()
+        print("PASS \(checks) preparation/permission/scope checks, including baseline P2 reproductions; Host/device/audio/network effects0")
+        return
+        #endif
         let client = try await ready(), peer = client.connection!
         client.performIPadProviderCall(.start, target: .nativeCodex)
         client.performIPadProviderCall(.start, target: .grokBot)
@@ -299,4 +305,214 @@ struct ProviderAdapterChecks {
                    "unsupported native neither prepares audio nor falls back to Dots")
         }
     }
+
+    #if PREPARATION_BOUNDARIES
+    @MainActor static func scopeList(_ client: StreamClient, microphone: MicrophoneCapability?, protected: Bool = true) -> WindowList {
+        let scope = client.desiredAudio.scope!
+        let epoch = VideoEpoch(id: scope.videoEpoch, generation: scope.generation.uuidString, source: scope.source,
+            geometry: .init(x: 0, y: 0, width: 800, height: 600), width: 800, height: 600)
+        return WindowList(macName: "fixture", windows: [], active: scope.source, remoteAudio: 1,
+            inputGeneration: epoch.generation, videoEpoch: epoch, microphone: microphone,
+            audioPrivacy: .init(version: 2, protected: protected), providerCalls: 1)
+    }
+
+    @MainActor static func permissionBoundaryChecks() async throws {
+        let selection = IPadAudioRoutePolicy.Selection(input: .iPadMicrophone, output: .iPadPlayback)
+        for legacy in [true, false] {
+            let client = try await ready(activate: false, protected: false), peer = client.connection!
+            let catalog = client.audioForwarding.catalog!
+            let chooser = ChooserFixture(client)
+            var success = false
+            var failure: NSError?
+            AVCaptureDevice.status = .notDetermined
+            AVCaptureDevice.holdPermission = true
+            let task = Task { @MainActor in
+                do {
+                    if legacy {
+                        try await client.legacyPrepareAndStartIPadProviderCall(selection, context: chooser.context, target: .chatGPTDots)
+                    } else {
+                        try await client.prepareAndStartIPadProviderCall(selection, context: chooser.context, target: .chatGPTDots)
+                    }
+                    success = true
+                } catch { failure = error as NSError }
+            }
+            chooser.operation = task
+            for _ in 0..<1000 where AVCaptureDevice.permissionWaiter == nil { await Task.yield() }
+            expect(AVCaptureDevice.permissionWaiter != nil && client.audioRouteAuthorization != nil,
+                   "actual apply reaches held OS permission")
+            UIApplication.shared.applicationState = .inactive
+            NotificationCenter.default.post(name: UIApplication.willResignActiveNotification, object: nil)
+            if !legacy { chooser.handleScenePhase(.inactive) }
+            expect(chooser.operationID != nil && client.audioRouteAuthorization != nil,
+                   "own permission inactivity preserves chooser and existing Authorization")
+            try await Task.sleep(for: .milliseconds(8100))
+            expect(controls(peer).isEmpty && client.audioRouteSelection == .init(), "permission wait sends no provider or media intent")
+            AVCaptureDevice.status = .authorized
+            AVCaptureDevice.holdPermission = false
+            AVCaptureDevice.permissionWaiter?.resume(returning: true)
+            AVCaptureDevice.permissionWaiter = nil
+            for _ in 0..<1000 where client.audioPendingMicrophonePermission == nil { await Task.yield() }
+            expect(client.audioPendingMicrophonePermission != nil, "granted inactive result waits on existing active-return continuation")
+            UIApplication.shared.applicationState = .active
+            NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
+            chooser.handleScenePhase(.active)
+            await flush()
+            if legacy {
+                await task.value
+                expect(!success && failure?.domain == "IPadProviderCall" && failure?.code == 1,
+                       "6b82e77f reproduces deadline P2 after 8.1 seconds of permission wait")
+            } else {
+                for _ in 0..<1000 where client.audioRouteSelection != selection { await Task.yield() }
+                expect(client.audioRouteSelection == selection && failure == nil && controls(peer).isEmpty,
+                       "fixed helper starts fresh preparation budget after permission, never early call success")
+                let observe = client.command()
+                expect(observe.operation == .observe, "OS permission resumes through existing fresh 218 requirement")
+                client.clock.now = 0.2
+                client.receive(try .init(requestID: observe.requestID, operation: .observe, catalog: catalog, result: nil))
+                try await Task.sleep(for: .milliseconds(5500))
+                let list = scopeList(client, microphone: .init(peer: UUID(), destination: UUID(), generation: UUID()))
+                client.fixtureObserve(list)
+                chooser.handleRouteContext(client.audioRouteContext)
+                try acceptPreparation(client)
+                await task.value
+                expect(success && failure == nil && controls(peer).count == 1,
+                       "8.1 second permission plus 5.5 second preparation sends exactly one guarded start")
+                expect(client.providerCall.result == nil, "route readiness still cannot manufacture provider success")
+            }
+            chooser.operation = nil
+            client.audioResumeObserver = nil
+        }
+
+        for event in ["legacy-inactive", "denied", "background", "peer", "source", "cancel", "unrelated-inactive"] {
+            UIApplication.shared.applicationState = .active
+            AVCaptureDevice.status = .notDetermined
+            AVCaptureDevice.holdPermission = true
+            let client = try await ready(activate: false), peer = client.connection!
+            let chooser = ChooserFixture(client)
+            var success = false
+            var failure: Error?
+            let task = Task { @MainActor in
+                do {
+                    try await client.prepareAndStartIPadProviderCall(selection, context: chooser.context, target: .chatGPTDots)
+                    success = true
+                } catch { failure = error }
+            }
+            chooser.operation = task
+            for _ in 0..<1000 where AVCaptureDevice.permissionWaiter == nil { await Task.yield() }
+            expect(AVCaptureDevice.permissionWaiter != nil, "\(event): permission reached")
+            switch event {
+            case "legacy-inactive": chooser.legacyHandleScenePhase(.inactive)
+            case "background":
+                UIApplication.shared.applicationState = .background
+                client.appInForeground = false
+                NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+                chooser.handleScenePhase(.background)
+            case "peer":
+                client.connection = NWConnection()
+                client.desiredAudioSetConnection(client.connection)
+                chooser.handleRouteContext(client.audioRouteContext)
+            case "source":
+                client.active = .none
+                client.desiredAudio.sourceWillChange()
+                client.suspendDesiredAudio()
+                chooser.handleRouteContext(client.audioRouteContext)
+            case "cancel": chooser.cancelOperation(stopPreparingAudio: true)
+            case "unrelated-inactive":
+                client.audioRouteAuthorization = nil
+                chooser.handleScenePhase(.inactive)
+            default: break
+            }
+            AVCaptureDevice.status = event == "denied" ? .denied : .authorized
+            AVCaptureDevice.holdPermission = false
+            AVCaptureDevice.permissionWaiter?.resume(returning: event != "denied")
+            AVCaptureDevice.permissionWaiter = nil
+            await task.value
+            expect(!success && failure != nil && controls(peer).isEmpty && controls(client.connection!).isEmpty,
+                   "\(event): no late provider start after denied/cancelled permission")
+            expect(client.audioRouteSelection == .init(), "\(event): rejected permission never stores ON intent")
+            if event == "legacy-inactive" || event == "unrelated-inactive" || event == "background" {
+                expect(chooser.operationID == nil, "\(event): chooser really cancels operation")
+            }
+            if event == "denied" {
+                expect(failure?.localizedDescription.contains("마이크 권한") == true, "permission denial keeps actual localized failure")
+            }
+            client.audioResumeObserver = nil
+        }
+        UIApplication.shared.applicationState = .active
+        AVCaptureDevice.status = .authorized
+    }
+
+    @MainActor static func scopeBoundaryChecks() async throws {
+        let selection = IPadAudioRoutePolicy.Selection(input: .iPadMicrophone, output: .iPadPlayback)
+        for legacy in [true, false] {
+            let client = try await ready(activate: false, protected: false), peer = client.connection!
+            let chooser = ChooserFixture(client)
+            let context = chooser.context
+            var success = false
+            let task = Task { @MainActor in
+                do {
+                    if legacy { try await client.legacyPrepareAndStartIPadProviderCall(selection, context: context, target: .chatGPTDots) }
+                    else { try await client.prepareAndStartIPadProviderCall(selection, context: context, target: .chatGPTDots) }
+                    success = true
+                } catch {}
+            }
+            chooser.operation = task
+            await flush()
+            let revision = client.desiredAudio.revision(for: .microphone)
+            let selectionGeneration = client.desiredAudioSelectionGeneration
+            client.fixtureObserve(scopeList(client, microphone: .init(peer: UUID(), destination: UUID(), generation: UUID())))
+            chooser.handleRouteContext(client.audioRouteContext)
+            expect(context?.microphone == nil && client.audioRouteContext?.microphone != nil &&
+                   client.desiredAudio.revision(for: .microphone) != revision &&
+                   client.desiredAudioSelectionGeneration == selectionGeneration,
+                   "normal protected catalog adds scope and invalidates media revision, not explicit selection identity")
+            expect(chooser.operationID != nil, "normal same-peer/source scope addition does not cancel chooser")
+            try await Task.sleep(for: .milliseconds(100))
+            try acceptPreparation(client)
+            await task.value
+            expect(success == !legacy && controls(peer).count == (legacy ? 0 : 1),
+                   "baseline rejects normal scope enrichment; fixed helper accepts only fresh guarded binding")
+            chooser.operation = nil
+            client.audioResumeObserver = nil
+        }
+
+        for event in ["microphone-replaced", "microphone-lost", "source", "input-generation", "video-epoch", "superseded-with-catalog", "privacy-lost"] {
+            let client = try await ready(activate: false), peer = client.connection!
+            let microphone = MicrophoneCapability(peer: UUID(), destination: UUID(), generation: UUID())
+            client.fixtureObserve(scopeList(client, microphone: microphone))
+            let context = client.audioRouteContext
+            var success = false
+            let task = Task { @MainActor in
+                do { try await client.prepareAndStartIPadProviderCall(selection, context: context, target: .chatGPTDots); success = true }
+                catch {}
+            }
+            await flush()
+            var list = scopeList(client, microphone: microphone)
+            switch event {
+            case "microphone-replaced": list.microphone = .init(peer: microphone.peer, destination: UUID(), generation: UUID())
+            case "microphone-lost": list.microphone = nil
+            case "source": list.active = .none
+            case "input-generation":
+                let epoch = list.videoEpoch!
+                let generation = UUID().uuidString
+                list.inputGeneration = generation
+                list.videoEpoch = .init(id: epoch.id, generation: generation, source: epoch.source,
+                    geometry: epoch.geometry, width: epoch.width, height: epoch.height)
+            case "video-epoch":
+                let epoch = list.videoEpoch!
+                list.videoEpoch = .init(generation: epoch.generation, source: epoch.source,
+                    geometry: epoch.geometry, width: epoch.width, height: epoch.height)
+            case "superseded-with-catalog":
+                client.cancelDesiredAudioRequest()
+                try await client.applyAudioRoutes(selection, context: context)
+                list.microphone = .init(peer: microphone.peer, destination: UUID(), generation: UUID())
+            default: list.audioPrivacy = .init(version: 2, protected: false)
+            }
+            client.fixtureObserve(list)
+            await task.value
+            expect(!success && controls(peer).isEmpty, "\(event): replacement and supersession still reject start")
+            client.audioResumeObserver = nil
+        }
+    }
+    #endif
 }

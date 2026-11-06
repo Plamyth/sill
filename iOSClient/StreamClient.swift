@@ -264,6 +264,8 @@ final class StreamClient: ObservableObject {
     var desiredAudio = IPadDesiredAudio()
     let desiredAudioStore = IPadDesiredAudioStore()
     @Published var desiredAudioSelection = IPadDesiredAudio.Selection()
+    // Explicit choices retire preparation; catalog and media invalidation do not.
+    var desiredAudioSelectionGeneration = UUID()
     var audioAutomaticDirections: Set<IPadDesiredAudio.Direction> = []
     var audioResumeObserver: IPadAudioResumeObserver?
     var audioPendingMicrophonePermission: (() -> Void)?

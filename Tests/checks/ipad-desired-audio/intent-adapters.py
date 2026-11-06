@@ -76,6 +76,7 @@ final class StreamClient {
  let suite = "IntentAdapter." + UUID().uuidString
  lazy var desiredAudioStore = IPadDesiredAudioStore(defaults: UserDefaults(suiteName: suite)!)
  var desiredAudioSelection = IPadDesiredAudio.Selection()
+ var desiredAudioSelectionGeneration = UUID()
  var audioPrivacyState: AudioPrivacyState?
  var audioPendingMicrophonePermission: (() -> Void)?
  var audioAutomaticDirections: Set<IPadDesiredAudio.Direction> = []

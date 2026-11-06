@@ -67,41 +67,50 @@ extension StreamClient {
             throw IPadAudioRoutePolicy.Problem.changedConnection
         }
         let generation = providerCallConnection
-        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
         var submitted = false
-        var preparedRevisions: [UUID]?
+        var preparedSelection: UUID?
+        var microphone = context.microphone
         defer {
-            if !submitted, connection === peer, context == audioRouteContext,
+            if !submitted, connection === peer, context.peer == audioRouteContext?.peer,
+               context.source == audioRouteContext?.source, microphone == audioRouteContext?.microphone,
                forwarding == audioForwardingContext, providerCallConnection == generation,
                providerCallTrustedHostKey == hostKey, target == providerCall.target,
-               preparedRevisions == IPadDesiredAudio.Direction.allCases.map({ desiredAudio.revision(for: $0) }),
+               preparedSelection == desiredAudioSelectionGeneration,
                selection == audioRouteSelection {
                 cancelDesiredAudioRequest()
             }
         }
         func validate() throws {
             try Task.checkCancellation()
-            guard connection === peer, context == audioRouteContext, forwarding == audioForwardingContext,
+            guard connection === peer, let current = audioRouteContext,
+                  context.peer == current.peer, context.source == current.source,
+                  forwarding == audioForwardingContext,
                   providerCallConnection == generation, providerCallTrustedHostKey == hostKey,
                   target == providerCall.target, iPadProviderCanPrepareCall else {
                 throw IPadAudioRoutePolicy.Problem.changedConnection
             }
-            if let preparedRevisions,
-               preparedRevisions != IPadDesiredAudio.Direction.allCases.map({ desiredAudio.revision(for: $0) }) {
-                throw IPadAudioRoutePolicy.Problem.changedConnection
+            if microphone == nil, let next = current.microphone,
+               next.source == forwarding.source, next.inputGeneration == forwarding.generation,
+               next.videoEpoch == forwarding.videoEpoch {
+                microphone = next
             }
-            guard ContinuousClock.now < deadline else {
-                throw NSError(domain: "IPadProviderCall", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: "음성 입출력 준비 시간이 지났습니다. 통화는 시작하지 않았습니다."])
+            guard current.microphone == microphone else { throw IPadAudioRoutePolicy.Problem.changedConnection }
+            if let preparedSelection, preparedSelection != desiredAudioSelectionGeneration {
+                throw IPadAudioRoutePolicy.Problem.changedConnection
             }
         }
         try validate()
         if selection != audioRouteSelection || !iPadProviderCanStart {
             try await applyAudioRoutes(selection, context: context)
         }
-        preparedRevisions = IPadDesiredAudio.Direction.allCases.map { desiredAudio.revision(for: $0) }
+        preparedSelection = desiredAudioSelectionGeneration
+        let deadline = ContinuousClock.now.advanced(by: .seconds(8))
         while true {
             try validate()
+            guard ContinuousClock.now < deadline else {
+                throw NSError(domain: "IPadProviderCall", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "음성 입출력 준비 시간이 지났습니다. 통화는 시작하지 않았습니다."])
+            }
             guard selection == audioRouteSelection, audioForwarding.phase != .blocked,
                   microphoneCleanupProblem == nil else { throw IPadAudioRoutePolicy.Problem.changedConnection }
             if case .failed(let reason) = microphonePhase {
