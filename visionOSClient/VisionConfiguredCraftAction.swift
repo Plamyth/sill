@@ -23,10 +23,20 @@ struct VisionConfiguredCraftAction {
         let trigger: String
         let expectedAssignmentSha256: String
 
-        private enum CodingKeys: String, CodingKey {
+        private enum CodingKeys: String, CodingKey, CaseIterable {
             case schemaVersion, supported, expectedProfileId, inputID, trigger, expectedAssignmentSha256
         }
+        private struct FieldKey: CodingKey {
+            let stringValue: String
+            var intValue: Int? { nil }
+            init?(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { return nil }
+        }
         init(from decoder: Decoder) throws {
+            let keys = try decoder.container(keyedBy: FieldKey.self).allKeys.map(\.stringValue)
+            guard Set(keys) == Set(CodingKeys.allCases.map(\.rawValue)) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "공통 Craft catalog의 필드가 일치하지 않습니다."))
+            }
             let values = try decoder.container(keyedBy: CodingKeys.self)
             schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
             supported = try values.decode(Bool.self, forKey: .supported)
