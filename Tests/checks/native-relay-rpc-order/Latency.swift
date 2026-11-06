@@ -10,6 +10,7 @@ extension Checks {
         }
     }
     @MainActor static func latencyDiagnostics() async {
+        await serverLatencyDiagnostics()
         let f = await Fixture.make("latency"), relay = f.relay
         HostLog.shared.configure(keepLines: 2048, fileURL: nil)
         for _ in 0..<80 {
@@ -37,6 +38,7 @@ extension Checks {
         let successes = lines.filter { $0["success"] == "true" }
         expect(successes.count == 2 && successes.contains { (Double($0["queueMs"] ?? "") ?? -1) >= 250 } &&
             successes.contains { (Double($0["writeToReadMs"] ?? "") ?? -1) >= 250 }, "FIFO 대기와 자식 응답 지연을 분리")
+        print("LATENCY_PHASE_METRICS queueMaxMs=\(successes.compactMap { Double($0["queueMs"] ?? "") }.max() ?? -1) writeToReadMaxMs=\(successes.compactMap { Double($0["writeToReadMs"] ?? "") }.max() ?? -1)")
         expect(Set(lines.compactMap { $0["request"] }).count == 4 && lines.allSatisfy { UUID(uuidString: $0["request"] ?? "") != nil }, "유효한 개별 RPC requestID로 상관 관계 유지")
 
         let hop = Task { await relay.checkedTrace(delay: 0.04, until: .now.advanced(by: .seconds(2))) }
@@ -44,6 +46,7 @@ extension Checks {
         Thread.sleep(forTimeInterval: 0.4)
         expect(await hop.value == 1, "MainActor 지연 뒤 실제 pipe 응답은 기존 기한 안에서 수용")
         expect(latencyLines().contains { (Double($0["readHopMs"] ?? "") ?? -1) >= 200 }, "비격리 stdio 읽기부터 MainActor 진입까지 지연 기록")
+        print("LATENCY_HOP_METRICS maxMs=\(latencyLines().compactMap { Double($0["readHopMs"] ?? "") }.max() ?? -1)")
         let count = f.requests().count
         expect(await relay.checkedTrace("TRACE_METHOD_SECRET", until: .now.advanced(by: .seconds(2)), admission: { false }) == nil,
                "최종 admission 실패 시 전송0")
@@ -58,6 +61,7 @@ extension Checks {
 
         for cancel in [false, true] {
             let active = await Fixture.make("latency")
+            LocalAudioRelay.checkResetRPCTraceBudget()
             HostLog.shared.configure(keepLines: 128, fileURL: nil)
             let task = Task { await active.relay.checkedTrace(delay: 0.4,
                 until: .now.advanced(by: .milliseconds(cancel ? 2000 : 60))) }
@@ -68,5 +72,22 @@ extension Checks {
                 latencyLines()[0]["sent"] == "true", "전송된 호출 실패 단계 구분")
             active.finish()
         }
+        let late = await Fixture.make("latency")
+        LocalAudioRelay.checkResetRPCTraceBudget()
+        HostLog.shared.configure(keepLines: 128, fileURL: nil)
+        let deadline = ContinuousClock.now.advanced(by: .milliseconds(140))
+        let task = Task { await late.relay.checkedTrace(delay: 0.04, until: deadline) }
+        await wait { late.relay.checkPending }
+        Thread.sleep(forTimeInterval: 0.4)
+        expect(await task.value == nil && late.relay.checkClosed, "read가 이미 끝나도 MainActor 진입이 기한 뒤이면 원래 deadline대로 거절")
+        for _ in 0..<20 { await Task.yield() }
+        let lateLines = HostLog.shared.lines(after: 0).map(\.text)
+        expect(lateLines.contains { $0.hasPrefix("audio.trace relayRPC ") && !$0.contains("readNs=unobserved") },
+               "timer가 receive를 추월해도 비격리 read 시각 보존")
+        expect(lateLines.contains { ($0.hasPrefix("audio.trace relayRead ") || $0.hasPrefix("audio.trace relayRPC ")) &&
+            $0.split(separator: " ").contains { field in
+                field.hasPrefix("readHopMs=") && (Double(field.dropFirst("readHopMs=".count)) ?? -1) >= 200
+            } }, "완료와 receive 순서에 무관하게 실제 MainActor hop을 유한 관측")
+        late.finish()
     }
 }

@@ -1,4 +1,5 @@
 extension LocalAudioRelay {
+    static func checkResetRPCTraceBudget() { rpcTracesRemaining = 64 }
     func checkedTrace(_ method: String = "forwardingSnapshot", delay: Double = 0,
                       until deadline: ContinuousClock.Instant,
                       admission: (@MainActor () -> Bool)? = nil) async -> Int? {

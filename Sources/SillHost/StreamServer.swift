@@ -193,11 +193,19 @@ final class StreamServer {
         private let lock = NSLock()
         private var valid = true
         let startedAt = DispatchTime.now().uptimeNanoseconds
+        private var firstMainCheckAt: UInt64?
         private var deadline: UInt64 { startedAt + 10_000_000_000 }
         init(control: AudioForwardingControl) { self.control = control }
         var isCurrent: Bool {
             lock.lock(); defer { lock.unlock() }
+            // handleForwarding's first authority check is its first MainActor access.
+            if Thread.isMainThread, firstMainCheckAt == nil { firstMainCheckAt = DispatchTime.now().uptimeNanoseconds }
             return valid && DispatchTime.now().uptimeNanoseconds < deadline
+        }
+        func timingFields(replyQueuedAt: UInt64, endedAt: UInt64) -> String {
+            lock.lock(); defer { lock.unlock() }
+            func ms(_ end: UInt64, _ start: UInt64) -> Double { Double(end >= start ? end - start : 0) / 1_000_000 }
+            return "receivedNs=\(startedAt) endedNs=\(endedAt) firstMainCheckMs=\(firstMainCheckAt.map { String(ms($0, startedAt)) } ?? "unobserved") handlerToReplyMs=\(firstMainCheckAt.map { String(ms(replyQueuedAt, $0)) } ?? "unobserved") replyQueueMs=\(ms(endedAt, replyQueuedAt))"
         }
         func invalidate() { lock.lock(); defer { lock.unlock() }; valid = false }
     }
@@ -2108,14 +2116,16 @@ final class StreamServer {
     }
 
     func sendForwardingState(_ state: AudioForwardingState?, to connection: NWConnection, ticket: UUID) {
+        let replyQueuedAt = DispatchTime.now().uptimeNanoseconds
         queue.async { [self] in
             guard let client = clients[ObjectIdentifier(connection)],
                   let exchange = client.forwardingExchange, exchange.ticket == ticket else { return }
-            if forwardingTracesRemaining > 0 {
+            let now = DispatchTime.now().uptimeNanoseconds
+            let elapsedMs = Double(now >= exchange.startedAt ? now - exchange.startedAt : 0) / 1_000_000
+            let current = exchange.isCurrent
+            if forwardingTracesRemaining > 0, state == nil || !current || elapsedMs >= 250 {
                 forwardingTracesRemaining -= 1
-                let now = DispatchTime.now().uptimeNanoseconds
-                let elapsedMs = Double(now >= exchange.startedAt ? now - exchange.startedAt : 0) / 1_000_000
-                HostLog.shared.append("audio.trace forwardingReply request=\(exchange.control.requestID) operation=\(exchange.control.operation.rawValue) elapsedMs=\(elapsedMs) responsePresent=\(state != nil) current=\(exchange.isCurrent)")
+                HostLog.shared.append("audio.trace forwardingReply request=\(exchange.control.requestID) operation=\(exchange.control.operation.rawValue) elapsedMs=\(elapsedMs) responsePresent=\(state != nil) current=\(current) \(exchange.timingFields(replyQueuedAt: replyQueuedAt, endedAt: now))")
             }
             guard connection.state == .ready, client.route.encrypted && client.route.pairedName != nil, exchange.isCurrent, let state,
                   state.requestID == exchange.control.requestID, state.operation == exchange.control.operation,
