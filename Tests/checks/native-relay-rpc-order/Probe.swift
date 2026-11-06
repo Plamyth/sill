@@ -1,4 +1,11 @@
 extension LocalAudioRelay {
+    func checkedTrace(_ method: String = "forwardingSnapshot", delay: Double = 0,
+                      until deadline: ContinuousClock.Instant,
+                      admission: (@MainActor () -> Bool)? = nil) async -> Int? {
+        let reply: Reply<Int>? = await call(method, payload: ["delay": String(delay),
+            "credential": "TRACE_CREDENTIAL_SECRET", "PCM": "TRACE_PCM_SECRET"], until: deadline, admission: admission)
+        return reply?.result
+    }
     func checkedCall(_ method: String, until deadline: ContinuousClock.Instant, admission: (@MainActor () -> Bool)? = nil) async -> Int? {
         let reply: Reply<Int>? = await call(method, payload: Empty(), until: deadline, admission: admission)
         return reply?.result

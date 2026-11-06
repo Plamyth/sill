@@ -8,7 +8,7 @@ import sys
 import tempfile
 
 root = Path(sys.argv[1]).resolve()
-assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered'], ['bootstrap'], ['evidence']]
+assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered'], ['bootstrap'], ['evidence'], ['latency']]
 check = root / 'Tests/checks/native-relay-rpc-order'
 names = ['Sources/SillHost/LocalAudioRelay.swift', 'Sources/SillHost/LocalAudioParticipants.swift',
          'Sources/SillHost/AudioForwardingContract.swift', 'Sources/SillHost/RemoteAccess.swift',
@@ -51,7 +51,7 @@ extension LocalAudioRelay {
         compile_result = subprocess.run(shared + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol',
             '-Xlinker', '-rpath', '-Xlinker', str(out), str(out / 'Relay.swift'), str(out / 'Registry.swift'),
             str(root / names[2]), str(root / names[4]), str(root / names[5]), str(out / 'Models.swift'),
-            str(out / 'Paired.swift'), str(check / 'Main.swift'),
+            str(out / 'Paired.swift'), str(check / 'Main.swift'), str(check / 'Latency.swift'),
             '-o', str(binary)], timeout=120, capture_output=True, text=True)
         print(compile_result.stdout + compile_result.stderr, end='')
     executed = None
