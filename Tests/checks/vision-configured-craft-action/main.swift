@@ -256,6 +256,14 @@ func catalog(_ object: [String: Any]) -> Action.Catalog? {
     try? JSONDecoder().decode(Action.Catalog.self, from: JSONSerialization.data(withJSONObject: object))
 }
 expect(catalog(catalogObject)?.expectedProfileId == profile, "Catalog6는 settings SHA나 deviceSession 없이 수용함")
+let extraCatalogKeys = ["deviceSessionId", "settingsSha256"].map { key -> (String, Bool) in
+    var extra = catalogObject
+    extra[key] = "unexpected-advertised-value"
+    return (key, catalog(extra) != nil)
+}
+for (key, accepted) in extraCatalogKeys {
+    expect(!accepted, "Catalog exact6 추가 키 \(key)를 거절함; 관측=\(extraCatalogKeys)")
+}
 for key in catalogObject.keys {
     var missing = catalogObject; missing.removeValue(forKey: key)
     expect(catalog(missing) == nil, "Catalog 필수 6필드는 생략할 수 없음")
