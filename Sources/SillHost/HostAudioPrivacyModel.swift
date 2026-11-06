@@ -266,6 +266,7 @@ package final class HostAudioPrivacy {
     private let saveLocal: (LocalAudioState?) -> Bool
     private let prepareLatchClear: () -> Bool
     private let clearLatch: () -> Bool
+    private let finishLatchClear: () -> Void
     private let authenticateLocal: (UUID) async -> Bool
     private let cancelAuthentication: () -> Void
     private let authenticationChallengeID: () -> UUID?
@@ -308,12 +309,14 @@ package final class HostAudioPrivacy {
     init(hal: any HostAudioPrivacyHAL, latched: Bool = false, persist: @escaping () -> Bool = { true },
          localState: LocalAudioState? = nil, saveLocal: @escaping (LocalAudioState?) -> Bool = { _ in true },
          prepareLatchClear: @escaping () -> Bool = { true },
-         clearLatch: @escaping () -> Bool = { false }, authenticateLocal: @escaping (UUID) async -> Bool = { _ in false },
+         clearLatch: @escaping () -> Bool = { false }, finishLatchClear: @escaping () -> Void = {},
+         authenticateLocal: @escaping (UUID) async -> Bool = { _ in false },
          cancelAuthentication: @escaping () -> Void = {}, authenticationChallengeID: @escaping () -> UUID? = { nil },
          nativeStartup: NativeAudioStartup? = nil) {
         self.hal = hal; self.latched = latched; self.persist = persist
         self.localState = localState; self.saveLocal = saveLocal; self.clearLatch = clearLatch
         self.prepareLatchClear = prepareLatchClear
+        self.finishLatchClear = finishLatchClear
         localAudioDisposition = latched || localState != nil ? .restorationRequired : .unmodified
         self.authenticateLocal = authenticateLocal; self.cancelAuthentication = cancelAuthentication
         self.authenticationChallengeID = authenticationChallengeID
@@ -416,14 +419,19 @@ package final class HostAudioPrivacy {
         do {
             var snapshot = try readSnapshot()
             lastSnapshot = snapshot
-            let original = try localState.recordingStreams(snapshot)
-            if original != localState {
-                if !saveLocal(original) {
-                    guard allowUnpersistedProtection else { throw PrivacyAudioFailure.persistence }
-                    persistenceHealthy = false
-                    localStateNeedsSave = true
+            do {
+                let original = try localState.recordingStreams(snapshot)
+                if original != localState {
+                    if !saveLocal(original) {
+                        guard allowUnpersistedProtection else { throw PrivacyAudioFailure.persistence }
+                        persistenceHealthy = false
+                        localStateNeedsSave = true
+                    }
+                    self.localState = original
                 }
-                self.localState = original
+            } catch {
+                guard allowUnpersistedProtection else { throw error }
+                persistenceHealthy = false
             }
             watching = hal.observe(snapshot, changed: { [weak self] in self?.propertyChanged() })
             guard watching else { throw PrivacyAudioFailure.listeners }
@@ -546,7 +554,7 @@ package final class HostAudioPrivacy {
     /// Host-owned admission must continuously prove the last current voice owner disconnected,
     /// Sentry is off, and no other session/window or new owner exists. Never derive it from a wire bool.
     /// This restores audio only; it preserves Node intent and does not release Sentry surfaces.
-    /// Admission is a pure MainActor snapshot. Its final check and the synchronous journal clear
+    /// Admission is a pure MainActor snapshot. Its final check and synchronous journal completion
     /// form one authority commit; owner/Sentry/generation mutations must use that same actor.
     func requestNormalDisconnectReturn(budgetMilliseconds: Int = 30_000,
                                        while admission: @escaping @MainActor () -> Bool) async -> Bool {
@@ -687,6 +695,15 @@ package final class HostAudioPrivacy {
                   await participants.inspectAll(operationId: request, privacyGeneration: generation, membership: membership),
                   admission() else { return failedReturn("공통 오디오 intent 해제") }
         }
+        var restorationAttempted = false
+        var localReturnCommitted = false
+        defer {
+            if restorationAttempted && !localReturnCommitted {
+                returningLocal = false
+                _ = reconcile(allowUnpersistedProtection: true)
+                if !persistenceHealthy { fail(.persistence) }
+            }
+        }
         switch audioPlan {
         case .restoreOriginal(let original):
             print("[로컬 복귀 단계] 오디오 계획 mode=restoreOriginal")
@@ -703,6 +720,7 @@ package final class HostAudioPrivacy {
                   localReturnID == request, privacyGeneration == generation,
                   participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership),
                   admission() else { return failedReturn("원본 HAL·요청 재검증") }
+            restorationAttempted = true
             let restorationApplied = hal.restoreLocal(original)
             guard restorationApplied, let restored = try? readSnapshot(), original.matches(restored),
                   !Task.isCancelled, ContinuousClock.now < deadline,
@@ -710,8 +728,6 @@ package final class HostAudioPrivacy {
                   participants.proofCurrent(operationId: request, privacyGeneration: generation, membership: membership),
                   admission() else {
                 fail(.readback)
-                returningLocal = false
-                _ = reconcile()
                 print("[로컬 복귀 단계] HAL 복원 반환 applied=\(restorationApplied)")
                 return failedReturn("원본 HAL 복원·재조회")
             }
@@ -741,10 +757,9 @@ package final class HostAudioPrivacy {
         if trigger.requiresAuthentication {
             completed = await localReturnDidComplete?(deadline, admission, commitAudio) ?? commitAudio()
         } else {
-            // Keep the durable original through preparation and the final authority check.
-            // A successful clear is the commit point, with no await or reentrant authority work.
+            // The primary clear remains recoverable until the final authority check accepts it.
             if commitAudio() && admission() {
-                if case .restoreOriginal = audioPlan { completed = clearLatch() }
+                if case .restoreOriginal = audioPlan { completed = clearLatch() && admission() }
                 else { completed = true }
             } else { completed = false }
         }
@@ -753,20 +768,16 @@ package final class HostAudioPrivacy {
         guard completed, let receipt = audioCommitReceipt, receipt == ticket else {
             if case .restoreOriginal(let original) = audioPlan {
                 let originalSaved = trigger.requiresAuthentication ? (!audioCommitted || saveLocal(original)) : saveLocal(original)
+                if !originalSaved { localStateNeedsSave = true }
                 persistenceHealthy = persist() && originalSaved
             }
             fail(.persistence)
-            returningLocal = false
-            if trigger.requiresAuthentication {
-                if persistenceHealthy { _ = reconcile() }
-            } else {
-                _ = reconcile(allowUnpersistedProtection: true)
-                if !persistenceHealthy { fail(.persistence) }
-            }
             print("[로컬 복귀 단계] 최종 commit 반환 surfacesCompleted=\(completed) audioAttempted=\(audioAttempted) audioCommitted=\(audioCommitted)")
             return failedReturn(trigger.requiresAuthentication ? "화면·입력 보호 해제와 완료 저장" : "로컬 오디오 복귀 완료 저장")
         }
         if case .restoreOriginal = audioPlan {
+            localReturnCommitted = true
+            finishLatchClear()
             latched = false
             localState = nil
             localAudioDisposition = .unmodified

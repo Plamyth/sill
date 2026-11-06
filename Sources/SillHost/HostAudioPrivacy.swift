@@ -362,16 +362,9 @@ extension HostAudioPrivacy {
             persist: { journal.write(latched: true, original: journal.original) },
             localState: journal.original, saveLocal: { original in
                 journal.write(latched: original != nil, original: original)
-            }, prepareLatchClear: { journal.write(latched: true, original: journal.original) },
-            clearLatch: {
-                let original = journal.original
-                guard journal.write(latched: false, original: nil) else {
-                    // A failed synchronize/readback can still have replaced the stored bytes.
-                    _ = journal.write(latched: true, original: original)
-                    return false
-                }
-                return true
-            },
+            }, prepareLatchClear: { journal.prepareLocalReturn() },
+            clearLatch: { journal.write(latched: false, original: nil) },
+            finishLatchClear: { journal.finishLocalReturn() },
             authenticateLocal: { attempt in await authentication.evaluate(operationId: attempt) }, cancelAuthentication: { authentication.cancel() },
             authenticationChallengeID: { authentication.activeChallengeID },
             nativeStartup: nativeStartup)

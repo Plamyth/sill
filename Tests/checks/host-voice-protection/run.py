@@ -45,9 +45,12 @@ journal_arguments = 'persist: production_persist, localState: journal.original, 
 prepare = 'prepareLatchClear: '
 if prepare in production_privacy:
     journal_callbacks.append('let production_prepareLatchClear = ' + block(production_privacy, prepare).split(': ', 1)[1])
-    journal_arguments += 'prepareLatchClear: { [unowned self] in let result = production_prepareLatchClear(); clearHook?(); return result }, clearLatch: production_clearLatch, '
+    journal_arguments += 'prepareLatchClear: { [unowned self] in let result = production_prepareLatchClear(); clearHook?(); return result }, clearLatch: { [unowned self] in let result = production_clearLatch(); afterClearHook?(); return result }, '
 else:
     journal_arguments += 'clearLatch: { [unowned self] in let result = production_clearLatch(); clearHook?(); return result }, '
+if 'finishLatchClear: ' in production_privacy:
+    journal_callbacks.append('let production_finishLatchClear: () -> Void = ' + block(production_privacy, 'finishLatchClear: ').split(': ', 1)[1])
+    journal_arguments += 'finishLatchClear: production_finishLatchClear, '
 (output / 'LocalReturn.swift').write_text((here / 'LocalReturn.swift').read_text()
     .replace('// PRODUCTION_JOURNAL_CALLBACKS', '\n'.join(journal_callbacks))
     .replace('// PRODUCTION_JOURNAL_ARGUMENTS', journal_arguments)
@@ -70,6 +73,8 @@ if not modules.is_dir():
 assert objects and modules.is_dir()
 command = ['xcrun', 'swiftc', '-whole-module-optimization', '-parse-as-library', '-package-name', 'Sill', '-module-cache-path', str(output.parent / 'sdk-cache'),
            '-I', str(modules), '-Xcc', '-fmodule-map-file=' + str(modulemap), *map(str, sources), *map(str, objects), '-o', str(output / 'checks')]
+if 'recoveryData:' in (root / 'Sources/SillHost/LocalAudioReturn.swift').read_text():
+    command[2:2] = ['-D', 'JOURNAL_RECOVERY']
 record = {'scope': '생산 HAL 어댑터와 모델, 현재 coordinator 경계, 주입 HAL과 비활성 전송만 실행',
           'sourceSHA256': hashes, 'objectSHA256': {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in objects}, 'actualHardwareOrMediaActions': 0, 'commands': []}
 for name, command in [('compile', command), ('checks', [str(output / 'checks')])]:
