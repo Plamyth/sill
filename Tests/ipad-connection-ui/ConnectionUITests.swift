@@ -493,10 +493,12 @@ final class ConnectionUITests: XCTestCase {
             throw NSError(domain: "ConnectionUI", code: 52,
                           userInfo: [NSLocalizedDescriptionKey: "통화 메인 화면이 아니거나 준비 중입니다."])
         }
+        let callLabels = ["iPadProviderCallStart": "통화 시작", "iPadProviderCallStop": "통화 종료",
+                          "iPadConfiguredCraftAction": "음성 대화"]
         let call = try unique(app.buttons.matching(NSPredicate(
-            format: "identifier IN %@", ["iPadProviderCallStart", "iPadProviderCallStop"])))
-        guard call.isHittable,
-              call.label == (call.identifier == "iPadProviderCallStart" ? "통화 시작" : "통화 종료") else {
+            format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@", "iPadProviderCall", "iPadConfiguredCraft")))
+        guard let expectedLabel = callLabels[call.identifier], call.isHittable,
+              call.label == expectedLabel else {
             throw NSError(domain: "ConnectionUI", code: 53)
         }
         let microphone = try unique(app.switches.matching(identifier: "iPadCallMicrophone"))
