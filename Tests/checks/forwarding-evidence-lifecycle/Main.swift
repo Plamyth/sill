@@ -91,7 +91,7 @@ import StreamProtocol
 @main struct Checks {
     @MainActor static func main() async throws {
         var assertions = 0
-        func check(_ value: Bool) { precondition(value); assertions += 1 }
+        func check(_ value: Bool, line: UInt = #line) { precondition(value, "check \(assertions + 1), source line \(line)"); assertions += 1 }
         if CommandLine.arguments.contains("--normal-disconnect") || CommandLine.arguments.contains("--normal-disconnect-failed") {
             let failedPreparation = CommandLine.arguments.contains("--normal-disconnect-failed")
             let f = try Fixture("normal-disconnect"), owner = Peer("ab")
@@ -135,7 +135,16 @@ import StreamProtocol
             check(originalIntent.isEqual(after["intent"]))
             check(!f.events(1).contains("\"method\":\"forwardingLocalReturn\""))
             let reconnected = Peer("ab", generation: owner.generation)
-            check(await f.observe(reconnected) != nil)
+            let reconnect = await f.observe(reconnected)
+            check(reconnect != nil)
+            let resume = try AudioForwardingIntentRequest(pairedDeviceId: reconnected.id, intentId: request.intentId,
+                intentRevision: reconnect!.ownCursor.intentRevision, action: .resume,
+                inputDesired: !failedPreparation, outputDesired: !failedPreparation,
+                expectedRevision: reconnect!.snapshot.revision, transportId: UUID(), transportKind: .native,
+                bindingRevision: .init(reconnect!.ownCursor.bindingRevision.value + 1))
+            let response = await f.runtime.exchange(try .init(requestID: UUID(), operation: .submit, intent: resume), context: reconnected.context)
+            if case .refused(let code, _) = response?.result { print("RECONNECT_RESUME_REFUSED \(code)") }
+            if case .accepted = response?.result { check(true) } else { check(false) }
             let reconnectDeadline = ContinuousClock.now.advanced(by: .seconds(6))
             while f.runtime.snapshot?.binding?.phase != (failedPreparation ? .off : .active), ContinuousClock.now < reconnectDeadline {
                 await f.runtime.checkRefresh();try? await Task.sleep(for: .milliseconds(20))

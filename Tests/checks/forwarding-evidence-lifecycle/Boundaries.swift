@@ -18,6 +18,7 @@ struct AudioForwardingPairedDevice {
     var forwardingPrivacyGeneration = UUID()
     init(_ participants: LocalAudioParticipantRegistry) { self.participants = participants }
     func armAndVerify() -> Bool { arms += 1; latched = true; forwardingPrivacyGeneration = UUID(); return forwardingIntentAllowed }
+    func forwardingHealth() -> Bool { forwardingProof() != nil }
     func forwardingProof() -> ForwardingProof? {
         guard latched, forwardingIntentAllowed else { return nil }
         return .init(privacyGeneration: forwardingPrivacyGeneration, membership: participants.snapshot)

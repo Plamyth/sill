@@ -160,7 +160,7 @@ final class HostAudioForwardingRuntime {
         guard privacy.forwardingIntentAllowed, let intent = control.intent, intent.pairedDeviceId == context.peer.id,
               intent.transportKind == .native, let session = sessions[context.connectionID],
               context.isCurrent() else { return nil }
-        if (intent.inputDesired || intent.outputDesired), !privacy.latched { _ = privacy.armAndVerify() }
+        if (intent.inputDesired || intent.outputDesired), !privacy.forwardingHealth() { _ = privacy.armAndVerify() }
         let configured = await relay.forwardingConfigure(privacyGeneration: privacy.forwardingPrivacyGeneration)
         guard context.isCurrent(), privacy.forwardingIntentAllowed,
               accepted(configured, phase: "submit_configuration") != nil,
@@ -208,6 +208,9 @@ final class HostAudioForwardingRuntime {
         sessions[context.connectionID] = session
         recordResponsibility(value, session: session)
         retained = true
+        // Attach is confirmed. Our ensuing privacy fence must not treat this enrollment
+        // as an uncertain in-flight submission and retire the newly accepted relay.
+        enrollments.removeValue(forKey: context.connectionID)
         observe(value)
         return try? AudioForwardingBootstrap(credential: bootstrap.credential,
             ownCursor: bootstrap.ownCursor, snapshot: value)
@@ -408,7 +411,7 @@ final class HostAudioForwardingRuntime {
             for session in sessions.values { recordResponsibility(value, session: session) }
         }
         invalidate()
-        if scope.requiresAudioIsolation, !privacy.latched, !privacy.armAndVerify() {
+        if scope.requiresAudioIsolation, !privacy.forwardingHealth(), !privacy.armAndVerify() {
             print("[원격 오디오 준비] phase=privacy_configuration code=isolation_unverified")
             return
         }
