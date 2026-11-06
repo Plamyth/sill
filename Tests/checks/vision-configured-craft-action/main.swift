@@ -1,4 +1,5 @@
 import Foundation
+import StreamProtocol
 
 typealias Action = VisionConfiguredCraftAction
 var checks = 0
@@ -6,9 +7,9 @@ func expect(_ value: Bool, _ name: String) {
     checks += 1
     if !value { fputs("FAIL \(name)\n", stderr); exit(1) }
 }
-let assignment = String(repeating: "Ab", count: 32)
+let assignment = String(repeating: "ab", count: 32)
 let profile = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
-let binding = Action.Binding(deviceId: "device", profileId: profile, assignmentSha256: assignment)
+let binding = Action.Binding(deviceId: String(repeating: "d", count: 64), profileId: profile, assignmentSha256: assignment)
 let scope = VisionRemoteAudioIntent.Scope(connection: UUID(), window: UUID(), admission: UUID(),
     video: UUID(), foreground: UUID(), privacy: 1)
 var context = Action.Context(hostKey: "trusted-host", scope: scope, binding: binding,
@@ -29,9 +30,9 @@ func invocation(_ effect: Action.Effect?) -> Action.Operation {
     return op
 }
 func result(_ outcome: Action.Result.Outcome, invoked: Bool, operation: UUID = id,
-            device: String = "device", hash: String? = assignment, confirmed: Bool = false) -> Action.Result {
-    .init(outcome: outcome, operationId: operation, deviceId: device, bindingSha256: hash,
-          invoked: invoked, effectConfirmed: confirmed, reason: "fixture")
+            device: String = String(repeating: "d", count: 64), hash: String? = assignment) -> Action.Result {
+    try! .init(outcome: outcome, operationId: operation, deviceId: AudioForwardingDeviceID(hex: device)!, bindingSha256: hash,
+          invoked: invoked, reason: "fixture")
 }
 expect(Action.holdDuration == 0.5, "500ms를 사용함")
 for held in [0, 0.1, 0.499, Double.nan, Double.infinity] {
@@ -55,7 +56,7 @@ guard case .prepare(let preparing) = begin(&model, context) else { fatalError("p
 expect(issued == 1 && preparing.request.operationId == id, "명시적 길게 누르기당 ID 하나")
 expect(preparing.request.schemaVersion == 1 && preparing.request.inputID == "speed.button.stop-play" &&
        preparing.request.trigger == "longPress" && preparing.request.operation == "invoke-configured-craft-action" &&
-       preparing.request.expectedProfileId == binding.profileId && preparing.request.issuedAt == 1_793_900_000_000,
+       preparing.request.expectedProfileId == binding.profileId.uuidString.lowercased() && preparing.request.issuedAt == 1_793_900_000_000,
        "초안 필드를 그대로 결속함")
 expect(preparing.request.expectedAssignmentSha256 == assignment, "광고 assignment SHA를 불투명하게 보존함")
 expect(model.advance(context: context, now: 101) == nil && begin(&model, context) == nil,
@@ -67,8 +68,7 @@ expect(op == preparing && model.advance(context: context, now: 102.1) == nil,
 expect(model.takeInvocation(op, context: context, now: 102.2)?.operationId == id,
        "전송 직전에 현재 fence와 입출력 준비를 재확인함")
 expect(model.takeInvocation(op, context: context, now: 102.3) == nil, "같은 invoke effect를 중복 소비하지 않음")
-for invalid in [result(.invoked, invoked: true, operation: UUID()), result(.invoked, invoked: true, device: "other"),
-                result(.invoked, invoked: true, confirmed: true),
+for invalid in [result(.invoked, invoked: true, operation: UUID()), result(.invoked, invoked: true, device: String(repeating: "e", count: 64)),
                 result(.invoked, invoked: false), result(.rejected, invoked: true)] {
     expect(!model.receive(invalid, context: context, now: 103), "다른 요청·기기·통화 ACK·모순 상태를 거절함")
 }
@@ -99,10 +99,10 @@ var notAdmitted = context; notAdmitted.admitted = false
 var noRoute = context; noRoute.routeImplemented = false
 var newRoute = context; newRoute.routeGeneration = UUID()
 var newBinding = context
-newBinding.binding = .init(deviceId: "other-device", profileId: binding.profileId,
+newBinding.binding = .init(deviceId: String(repeating: "e", count: 64), profileId: binding.profileId,
     assignmentSha256: binding.assignmentSha256)
 var assignmentChanged = context
-assignmentChanged.binding = .init(deviceId: "device", profileId: UUID(),
+assignmentChanged.binding = .init(deviceId: String(repeating: "d", count: 64), profileId: UUID(),
     assignmentSha256: "new-advertised-hash")
 let changed = [changedScope(context, connection: UUID()), changedScope(context, window: UUID()),
     changedScope(context, admission: UUID()), changedScope(context, video: UUID()),
@@ -147,7 +147,7 @@ _ = begin(&privacyPreparation, unready)
 expect(privacyPreparation.advance(context: changedScope(context, privacy: 2), now: 101) != nil,
        "입출력 준비의 정상 privacy revision 갱신은 연결 세대 변경으로 오판하지 않음")
 
-let object: [String: Any] = ["outcome": "unknown", "operationId": id.uuidString, "deviceId": "device",
+let object: [String: Any] = ["outcome": "unknown", "operationId": id.uuidString.lowercased(), "deviceId": String(repeating: "d", count: 64),
     "bindingSha256": assignment, "invoked": true, "effectConfirmed": false]
 func decode(_ object: [String: Any]) -> Action.Result? {
     try? JSONDecoder().decode(Action.Result.self, from: JSONSerialization.data(withJSONObject: object))
@@ -245,17 +245,17 @@ expect(Set(clientObject.keys) == ["schemaVersion", "operation", "operationId", "
 expect(clientObject["operation"] as? String == "invoke-configured-craft-action", "Core가 확정한 operation을 인코딩함")
 expect(String(data: encoded, encoding: .utf8)!.contains("\"issuedAt\":1793900000000"),
        "issuedAt는 초나 실수가 아닌 UTC epoch milliseconds JSON 정수임")
-expect(clientObject["expectedProfileId"] as? String == profile.uuidString &&
+expect(clientObject["expectedProfileId"] as? String == profile.uuidString.lowercased() &&
        clientObject["expectedAssignmentSha256"] as? String == assignment, "UUID profile과 불투명 SHA를 그대로 인코딩함")
-let catalogRequest = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Action.CatalogRequest())) as! [String: Any]
-expect(Set(catalogRequest.keys) == ["schemaVersion", "operation"] &&
-       catalogRequest["operation"] as? String == "get-configured-craft-action", "Catalog request는 확정한 2필드만 인코딩함")
-let catalogObject: [String: Any] = ["schemaVersion": 1, "supported": true, "expectedProfileId": profile.uuidString,
+let catalogRequest = try JSONSerialization.jsonObject(with: JSONEncoder().encode(ConfiguredCraftActionControl(requestId: UUID()))) as! [String: Any]
+expect(Set(catalogRequest.keys) == ["schemaVersion", "requestId", "operation"] &&
+       catalogRequest["operation"] as? String == "catalog", "외부 catalog는 공통 codec의 exact3를 사용함")
+let catalogObject: [String: Any] = ["schemaVersion": 1, "supported": true, "expectedProfileId": profile.uuidString.lowercased(),
     "inputID": "speed.button.stop-play", "trigger": "longPress", "expectedAssignmentSha256": String(repeating: "a", count: 64)]
 func catalog(_ object: [String: Any]) -> Action.Catalog? {
     try? JSONDecoder().decode(Action.Catalog.self, from: JSONSerialization.data(withJSONObject: object))
 }
-expect(catalog(catalogObject)?.expectedProfileId == profile, "Catalog6는 settings SHA나 deviceSession 없이 수용함")
+expect(catalog(catalogObject)?.expectedProfileId == profile.uuidString.lowercased(), "Catalog6는 settings SHA나 deviceSession 없이 수용함")
 let extraCatalogKeys = ["deviceSessionId", "settingsSha256"].map { key -> (String, Bool) in
     var extra = catalogObject
     extra[key] = "unexpected-advertised-value"
@@ -268,16 +268,16 @@ for key in catalogObject.keys {
     var missing = catalogObject; missing.removeValue(forKey: key)
     expect(catalog(missing) == nil, "Catalog 필수 6필드는 생략할 수 없음")
 }
-for (key, value) in [("schemaVersion", 2 as Any), ("supported", false), ("inputID", "other"),
+for (key, value) in [("schemaVersion", 2 as Any), ("supported", false), ("inputID", String(repeating: "e", count: 64)),
                      ("trigger", "tap"), ("expectedProfileId", "not-a-uuid"),
                      ("expectedAssignmentSha256", String(repeating: "A", count: 64))] {
     var invalid = catalogObject; invalid[key] = value
     expect(catalog(invalid) == nil, "다른 스키마·입력·trigger·형식의 Catalog를 활성화하지 않음")
 }
-for receipt in [decode(nullableRejection)!, result(.rejected, invoked: false, hash: "different-host-assignment"),
+for receipt in [decode(nullableRejection)!, result(.rejected, invoked: false, hash: String(repeating: "c", count: 64)),
                 result(.unknown, invoked: false), result(.unknown, invoked: true),
-                result(.unknown, invoked: true, hash: "different-host-assignment"),
-                result(.invoked, invoked: true, hash: "different-host-assignment")] {
+                result(.unknown, invoked: true, hash: String(repeating: "c", count: 64)),
+                result(.invoked, invoked: true, hash: String(repeating: "c", count: 64))] {
     var receiver = Action(); let candidate = invocation(begin(&receiver, context))
     _ = receiver.takeInvocation(candidate, context: context, now: 100)
     expect(receiver.receive(receipt, context: context, now: 101), "null·다른 hash·unknown을 응답 전체 폐기로 처리하지 않음")
@@ -288,4 +288,199 @@ for receipt in [decode(nullableRejection)!, result(.rejected, invoked: false, ha
     if receipt.outcome != .rejected { expect(receiver.message?.contains("미확인") == true || receiver.message?.contains("확인하지 못") == true,
         "hash 불일치나 unknown을 executor 실행·통화 성공으로 표시하지 않음") }
 }
+
+let host = "executor-host"
+var intent = VisionRemoteAudioIntent()
+let preparedSelection = intent.prepareSelection(.init(playback: true, microphone: true), hostKey: host, operationId: UUID())!
+expect(intent.desires[host] == .init(playback: true, microphone: true), "처음 명시 동작만 기본 두 방향을 준비함")
+intent.setDesired(false, direction: .microphone, hostKey: host)
+let changedRevision = intent.desiredRevision(.microphone, hostKey: host)
+expect(intent.cancelPreparation(preparedSelection) == [.playback], "취소는 준비가 소유한 방향 revision만 반환함")
+expect(intent.desires[host] == .init() && intent.desiredRevision(.microphone, hostKey: host) == changedRevision,
+       "사용자의 나중 마이크 OFF와 그 revision을 보존함")
+expect(intent.cancelPreparation(preparedSelection).isEmpty, "같은 준비 취소를 반복해도 새 선택에 영향이 없음")
+var pristine = VisionRemoteAudioIntent()
+let oldPreparation = pristine.prepareSelection(.init(playback: true, microphone: true), hostKey: host, operationId: UUID())!
+expect(pristine.cancelPreparation(oldPreparation).count == 2 && pristine.desires[host] == nil,
+       "아무 명시 선택도 없던 준비를 취소하면 미선택 상태를 복원함")
+let newPreparation = pristine.prepareSelection(.init(playback: true, microphone: true), hostKey: host, operationId: UUID())!
+expect(pristine.cancelPreparation(oldPreparation).isEmpty && pristine.desires[host]?.microphone == true,
+       "이전 operation의 늦은 취소가 새 준비를 지우지 않음")
+expect(newPreparation.revision > oldPreparation.revision, "선택 제거 뒤 새 준비도 증가한 revision을 받음")
+for desire in [VisionRemoteAudioIntent.Desire(), .init(playback: true, microphone: false),
+               .init(playback: false, microphone: true), .init(playback: true, microphone: true)] {
+    var saved = VisionRemoteAudioIntent(desires: [host: desire])
+    let ticket = saved.prepareSelection(desire, hostKey: host, operationId: UUID())!
+    expect(ticket.revision == 0 && saved.cancelPreparation(ticket).isEmpty && saved.desires[host] == desire,
+           "기존 네 가지 명시 선택은 준비·취소가 변경하지 않음")
+    if desire != .init(playback: true, microphone: true) {
+        expect(saved.prepareSelection(.init(playback: true, microphone: true), hostKey: host, operationId: UUID()) == nil,
+               "기존 OFF를 기본 ON으로 덮는 준비를 거절함")
+    }
+}
+
+var executorContext = Action.Context(hostKey: "trusted-host", scope: scope, binding: binding,
+    routeGeneration: UUID(), capabilityPresent: true, routeImplemented: true, admitted: true)
+var executorClock = 100.0
+var preparationCalls = 0, cancellationCalls = 0, finishCalls = 0, sends = 0
+var preparationIDs: [UUID] = [], sentIDs: [UUID] = []
+var lastControl: ConfiguredCraftActionControl?
+var querySends = 0
+func fixtureReadScope() -> VisionConfiguredCraftActionExecutor.ReadScope? {
+    guard let scope = executorContext.scope else { return nil }
+    return .init(hostKey: executorContext.hostKey!, connection: scope.connection, window: scope.window,
+        admission: scope.admission, foreground: scope.foreground, video: scope.video,
+        device: AudioForwardingDeviceID(hex: binding.deviceId)!)
+}
+let executor = VisionConfiguredCraftActionExecutor(context: { executorContext }, readScope: fixtureReadScope, prepare: { operation in
+    preparationCalls += 1; preparationIDs.append(operation.request.operationId)
+    executorContext.selection = operation.mediaSelection; executorContext.selectionRevision += 1
+    return executorContext.selectionRevision
+}, cancelPreparation: { _ in cancellationCalls += 1 }, finishPreparation: { _ in finishCalls += 1 },
+    send: { control, _, _ in
+        lastControl = control
+        if let request = control.client { sends += 1; sentIDs.append(request.operationId) }
+        if control.operation == .query { querySends += 1 }
+        return true
+    }, cancelSend: { _ in }, clock: { executorClock })
+func acceptFixtureCatalog() {
+    guard executor.context.binding == nil else { return }
+    guard let control = lastControl, control.operation == .catalog else { return }
+    let state = try! ConfiguredCraftActionState(control: control, deviceId: fixtureReadScope()!.device,
+        catalog: .init(expectedProfileId: profile, expectedAssignmentSha256: assignment))
+    expect(executor.receive(try! JSONEncoder().encode(state), in: fixtureReadScope()!), "격리 common catalog envelope를 상관 ID와 함께 수용함")
+}
+executor.begin(heldFor: 0.499, issuedAt: date)
+expect(preparationCalls == 0 && sends == 0, "executor에서도 짧은 누름은 미디어·송신0")
+executor.observe(capability: nil)
+executor.begin(heldFor: 0.5, issuedAt: date)
+expect(preparationCalls == 0 && sends == 0, "미지원 capability에서 실제 준비 closure도 호출0")
+executor.observe(capability: 1)
+executor.begin(heldFor: 0.5, issuedAt: date)
+expect(preparationCalls == 0 && sends == 0, "catalog 성공 전 route flag만으로 준비하지 않음")
+acceptFixtureCatalog()
+executor.begin(heldFor: 0.5, issuedAt: date)
+expect(preparationCalls == 1 && sends == 0 && executorContext.readback == nil,
+       "prepare 실행은 준비 영수증만 반환하며 mediaReady를 만들지 않음")
+executor.refresh(); executor.begin(heldFor: 0.5, issuedAt: date)
+expect(preparationCalls == 1 && sends == 0, "같은 준비를 반복 실행하거나 invoke를 선행하지 않음")
+executorContext = changedScope(executorContext, foreground: UUID())
+executor.refresh()
+expect(cancellationCalls == 1 && sends == 0, "전경 세대 상실은 해당 준비 취소1·송신0")
+executorContext.readback = readyReadback(.init(playback: true, microphone: true))
+executor.refresh()
+expect(sends == 0, "취소 뒤 늦은 readback은 invoke를 만들지 않음")
+executorContext.readback = nil
+acceptFixtureCatalog()
+executor.begin(heldFor: 0.5, issuedAt: date)
+executorContext.readback = readyReadback(.init(playback: true, microphone: true))
+executor.refresh(); executor.refresh()
+expect(sends == 1 && finishCalls == 1 && preparationIDs.last == sentIDs.last,
+       "현재 fresh readback 뒤 같은 operation을 단 한 번 송신·준비 인계함")
+executorClock = 111
+executor.refresh(); executor.refresh()
+expect(sends == 1, "응답 timeout과 unknown에서 자동 invoke 재시도0")
+let noResultPhase = executor.model.phase
+if case .unknown = noResultPhase {} else { fatalError("executor timeout unknown missing") }
+for mutate in [
+    { (c: inout Action.Context) in c = changedScope(c, connection: UUID()) },
+    { (c: inout Action.Context) in c = changedScope(c, window: UUID()) },
+    { (c: inout Action.Context) in c = changedScope(c, admission: UUID()) },
+    { (c: inout Action.Context) in c = changedScope(c, video: UUID()) },
+    { (c: inout Action.Context) in c.admitted = false },
+    { (c: inout Action.Context) in c.invocationAllowed = false },
+    { (c: inout Action.Context) in c.selectionRevision += 1 },
+    { (c: inout Action.Context) in c.otherDeviceSelected = true; c.deviceRouteRevision = UUID() }
+] {
+    executorContext = Action.Context(hostKey: "trusted-host", scope: scope, binding: binding,
+        routeGeneration: UUID(), capabilityPresent: true, routeImplemented: true, admitted: true)
+    executor.refresh(); acceptFixtureCatalog()
+    executor.begin(heldFor: 0.5, issuedAt: date)
+    let beforeCancel = cancellationCalls
+    mutate(&executorContext); executor.refresh()
+    expect(cancellationCalls == beforeCancel + 1 && sends == 1,
+           "연결·창·admission·video·focus·Sentry·선택·장치 변경은 준비 취소 후 늦은 명령0")
+}
+executorContext.invocationAllowed = false
+let beforeBlocked = preparationCalls
+executor.begin(heldFor: 0.5, issuedAt: date)
+expect(preparationCalls == beforeBlocked && executor.message?.contains("센트리") == true,
+       "Sentry active/unknown 차단을 표시하고 준비·invoke0")
+executorContext = Action.Context(hostKey: "trusted-host", scope: scope, binding: binding,
+    routeGeneration: UUID(), capabilityPresent: true, routeImplemented: true, admitted: true)
+executor.refresh(); acceptFixtureCatalog()
+executor.begin(heldFor: 0.5, issuedAt: date)
+let cancelBefore = cancellationCalls
+executor.cancel(); executor.cancel()
+executorContext.readback = readyReadback(.init(playback: true, microphone: true))
+executor.refresh()
+expect(cancellationCalls == cancelBefore + 1 && sends == 1, "명시 취소는 operation별 한 번이며 이후 readback 송신0")
+
+
+executorContext.readback = nil
+executor.refresh(); acceptFixtureCatalog()
+executor.begin(heldFor: 0.5, issuedAt: date)
+executorContext.readback = readyReadback(.init(playback: true, microphone: true)); executor.refresh()
+let invokedControl = lastControl!
+expect(invokedControl.operation == .invoke && sends == 2, "제품 executor는 공통 invoke envelope를 한 번 작성함")
+let uncertain = try ConfiguredCraftActionState(control: invokedControl, deviceId: fixtureReadScope()!.device, error: "unavailable")
+expect(executor.receive(try JSONEncoder().encode(uncertain), in: fixtureReadScope()!), "invoke 외부 error union을 수용함")
+if case .unknown = executor.model.phase {} else { fatalError("외부 unavailable을 rejected로 승격했습니다") }
+expect(executor.canQuery && sends == 2, "외부 error는 원 operation UNKNOWN이며 자동 invoke0")
+executor.query()
+let originalQuery = lastControl!
+expect(originalQuery.operation == .query && originalQuery.operationId == invokedControl.client!.operationId && querySends == 1,
+       "복구는 원 operationId의 read-only query만 전송함")
+let unknownResult = try ConfiguredCraftActionResult(outcome: .unknown, operationId: originalQuery.operationId!,
+    deviceId: fixtureReadScope()!.device, bindingSha256: nil, invoked: true)
+let queryResponse = try ConfiguredCraftActionState(control: originalQuery, deviceId: fixtureReadScope()!.device, result: unknownResult)
+expect(executor.receive(try JSONEncoder().encode(queryResponse), in: fixtureReadScope()!), "query의 unknown+invoked true/null을 원형 보존함")
+executor.refresh()
+expect(sends == 2 && querySends == 1, "unknown 결과 뒤 자동 invoke/query 반복0")
+executorContext = changedScope(executorContext, connection: UUID())
+executor.refresh()
+let reconnectCatalog = lastControl!
+let catalogUnavailable = try ConfiguredCraftActionState(control: reconnectCatalog, deviceId: fixtureReadScope()!.device, error: "unavailable")
+_ = executor.receive(try JSONEncoder().encode(catalogUnavailable), in: fixtureReadScope()!)
+executorContext.invocationAllowed = false
+expect(executor.canQuery, "같은 인증 기기 reconnect 및 Sentry 미확인에서도 원 결과 query는 읽기 전용으로 허용함")
+executor.query()
+let reconnectQuery = lastControl!
+expect(reconnectQuery.operation == .query && reconnectQuery.operationId == originalQuery.operationId && sends == 2,
+       "reconnect는 이전 session echo·새 invoke 없이 같은 operation을 조회함")
+let typedRejected = try ConfiguredCraftActionResult(outcome: .rejected, operationId: reconnectQuery.operationId!,
+    deviceId: fixtureReadScope()!.device, bindingSha256: nil, invoked: false)
+let typedState = try ConfiguredCraftActionState(control: reconnectQuery, deviceId: fixtureReadScope()!.device, result: typedRejected)
+var wrongCorrelation = try JSONSerialization.jsonObject(with: JSONEncoder().encode(typedState)) as! [String: Any]
+wrongCorrelation["requestId"] = UUID().uuidString.lowercased()
+expect(!executor.receive(try JSONSerialization.data(withJSONObject: wrongCorrelation), in: fixtureReadScope()!),
+       "다른 requestId 응답은 현재 query를 완료하지 않음")
+expect(executor.receive(try JSONEncoder().encode(typedState), in: fixtureReadScope()!), "Core typed rejected는 UNKNOWN과 구별해 보존함")
+if case .completed(_, let saved) = executor.model.phase { expect(saved == typedRejected, "typed result 원문 필드를 보존함") }
+else { fatalError("typed query result missing") }
+expect(!executor.canQuery && sends == 2, "terminal rejected 결과의 읽기가 자동 재토글을 만들지 않음")
+let catalogControl = ConfiguredCraftActionControl(requestId: UUID())
+let catalogEnvelope = try ConfiguredCraftActionState(control: catalogControl, deviceId: fixtureReadScope()!.device,
+    catalog: .init(expectedProfileId: profile, expectedAssignmentSha256: assignment))
+for key in ["deviceSessionId", "settingsSha256"] {
+    var extra = try JSONSerialization.jsonObject(with: JSONEncoder().encode(catalogEnvelope)) as! [String: Any]
+    var nested = extra["catalog"] as! [String: Any]; nested[key] = "unexpected"; extra["catalog"] = nested
+    expect((try? ConfiguredCraftActionState.decode(JSONSerialization.data(withJSONObject: extra))) == nil,
+           "현재 실제 공통 raw codec도 Catalog exact6 추가 키 반례를 거절함")
+}
+
+
+var pendingLoss = Action()
+var live = context
+live.selection = .init(playback: true, microphone: true)
+live.readback = readyReadback(live.selection!)
+let liveOperation = invocation(begin(&pendingLoss, live))
+_ = pendingLoss.takeInvocation(liveOperation, context: live, now: 100)
+live.readback = nil
+expect(pendingLoss.advance(context: live, now: 101) == .cancelPreparation(liveOperation),
+       "writer 대기 중 fresh 준비 상실은 같은 operation의 큐 취소 directive를 반환함")
+if case .unknown(let saved) = pendingLoss.phase { expect(saved == liveOperation, "미디어 소실 뒤 원 operation UNKNOWN 보존") }
+else { fatalError("pending media loss unknown missing") }
+expect(pendingLoss.advance(context: context, now: 102) == nil, "늦은 mediaReady 복귀는 자동 invoke를 만들지 않음")
+
 print("PASS \(checks) configured Craft action checks; actual Host/Core/device/media/input actions 0")
