@@ -698,16 +698,16 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         }
         let cancel = MicrophoneControl(operation: .stop, requestID: request.requestID, scope: binding)
         h.microphoneIngress.offer(StreamMessage(kind: .microphoneControl, timestamp: 0, isKeyframe: false, payload: Wire.encode(cancel)), from: connection, now: f.now)
-        h.drainMicrophoneIngress(); await settle()
+        await h.drainMicrophoneIngress(); await settle()
         h.microphoneIngress.offer(start, from: connection, now: f.now)
-        h.drainMicrophoneIngress(); await settle()
+        await h.drainMicrophoneIngress(); await settle()
         expect(f.prepares == 0, "full-ingress-cancel-pending-start")
         let liveRequest = MicrophoneControl(operation: .start, requestID: UUID(), scope: binding)
         let liveStart = StreamMessage(kind: .microphoneControl, timestamp: 0, isKeyframe: false, payload: Wire.encode(liveRequest))
         wakes = 0
         connection.inbound = [Data(liveStart.serialized().prefix(14)), liveStart.payload]
         reader.receiveLoop(client)
-        h.drainMicrophoneIngress(); await settle()
+        await h.drainMicrophoneIngress(); await settle()
         expect(f.prepares == 1 && ordinary == 0, "dispatch-bounded-before-task")
         let grantID = f.states.first(where: { $0.phase == .active })!.grantID!
         let catalogClient = ReaderHarness.Client(connection)
@@ -758,9 +758,9 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         let overflow = MicrophoneControl(operation: .stop, requestID: UUID(), scope: binding)
         h.microphoneIngress.offer(StreamMessage(kind: .microphoneControl, timestamp: 0, isKeyframe: false, payload: Wire.encode(overflow)), from: connection, now: f.now)
         expect(h.microphoneIngress.peer(connection) == nil && connection.state == .cancelled, "full-cancel-quarantines-peer")
-        h.drainMicrophoneIngress(); await settle()
+        await h.drainMicrophoneIngress(); await settle()
         h.microphoneIngress.offer(liveStart, from: connection, now: f.now)
-        h.drainMicrophoneIngress(); await settle()
+        await h.drainMicrophoneIngress(); await settle()
         expect(f.prepares == 1, "quarantined-late-on-refused")
         let replacement = NWConnection()
         _ = h.microphoneIngress.authorize(replacement, fingerprint: Data([1]))

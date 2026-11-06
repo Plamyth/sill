@@ -80,6 +80,8 @@ final class CloseHarness {
     // BROADCAST
     // PUBLISHCATALOG
     let microphoneIngress = MicrophoneIngress()
+    var microphoneIngressDraining = false
+    var microphoneIngressDrainTask: Task<Void, Never>?
     let microphoneReceiver: HostMicrophoneReceiver
     var connections: [ObjectIdentifier: NWConnection] = [:]
     var routes: [ObjectIdentifier: ClientRoute] = [:]
