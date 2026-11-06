@@ -7,8 +7,8 @@ func expect(_ value: Bool, _ name: String) {
     if !value { fputs("FAIL \(name)\n", stderr); exit(1) }
 }
 let assignment = String(repeating: "Ab", count: 32)
-let binding = Action.Binding(deviceId: "device", deviceSessionId: "host-session", profileId: "profile-3",
-    assignmentSha256: assignment, settingsSha256: String(repeating: "c", count: 64))
+let profile = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+let binding = Action.Binding(deviceId: "device", profileId: profile, assignmentSha256: assignment)
 let scope = VisionRemoteAudioIntent.Scope(connection: UUID(), window: UUID(), admission: UUID(),
     video: UUID(), foreground: UUID(), privacy: 1)
 var context = Action.Context(hostKey: "trusted-host", scope: scope, binding: binding,
@@ -29,7 +29,7 @@ func invocation(_ effect: Action.Effect?) -> Action.Operation {
     return op
 }
 func result(_ outcome: Action.Result.Outcome, invoked: Bool, operation: UUID = id,
-            device: String = "device", hash: String = assignment, confirmed: Bool = false) -> Action.Result {
+            device: String = "device", hash: String? = assignment, confirmed: Bool = false) -> Action.Result {
     .init(outcome: outcome, operationId: operation, deviceId: device, bindingSha256: hash,
           invoked: invoked, effectConfirmed: confirmed, reason: "fixture")
 }
@@ -54,8 +54,8 @@ var model = Action()
 guard case .prepare(let preparing) = begin(&model, context) else { fatalError("prepare missing") }
 expect(issued == 1 && preparing.request.operationId == id, "명시적 길게 누르기당 ID 하나")
 expect(preparing.request.schemaVersion == 1 && preparing.request.inputID == "speed.button.stop-play" &&
-       preparing.request.trigger == "longPress" && preparing.request.deviceSessionId == binding.deviceSessionId &&
-       preparing.request.expectedProfileId == binding.profileId && preparing.request.issuedAt == date,
+       preparing.request.trigger == "longPress" && preparing.request.operation == "invoke-configured-craft-action" &&
+       preparing.request.expectedProfileId == binding.profileId && preparing.request.issuedAt == 1_793_900_000_000,
        "초안 필드를 그대로 결속함")
 expect(preparing.request.expectedAssignmentSha256 == assignment, "광고 assignment SHA를 불투명하게 보존함")
 expect(model.advance(context: context, now: 101) == nil && begin(&model, context) == nil,
@@ -68,9 +68,9 @@ expect(model.takeInvocation(op, context: context, now: 102.2)?.operationId == id
        "전송 직전에 현재 fence와 입출력 준비를 재확인함")
 expect(model.takeInvocation(op, context: context, now: 102.3) == nil, "같은 invoke effect를 중복 소비하지 않음")
 for invalid in [result(.invoked, invoked: true, operation: UUID()), result(.invoked, invoked: true, device: "other"),
-                result(.invoked, invoked: true, hash: assignment.lowercased()), result(.invoked, invoked: true, confirmed: true),
+                result(.invoked, invoked: true, confirmed: true),
                 result(.invoked, invoked: false), result(.rejected, invoked: true)] {
-    expect(!model.receive(invalid, context: context, now: 103), "다른 요청·기기·hash·통화 ACK·모순 상태를 거절함")
+    expect(!model.receive(invalid, context: context, now: 103), "다른 요청·기기·통화 ACK·모순 상태를 거절함")
 }
 expect(model.receive(result(.unknown, invoked: true), context: context, now: 103),
        "unknown+invoked true는 executor 인계·효과 미확인으로 수용함")
@@ -99,11 +99,11 @@ var notAdmitted = context; notAdmitted.admitted = false
 var noRoute = context; noRoute.routeImplemented = false
 var newRoute = context; newRoute.routeGeneration = UUID()
 var newBinding = context
-newBinding.binding = .init(deviceId: "device", deviceSessionId: "new-session", profileId: binding.profileId,
-    assignmentSha256: binding.assignmentSha256, settingsSha256: binding.settingsSha256)
+newBinding.binding = .init(deviceId: "other-device", profileId: binding.profileId,
+    assignmentSha256: binding.assignmentSha256)
 var assignmentChanged = context
-assignmentChanged.binding = .init(deviceId: "device", deviceSessionId: binding.deviceSessionId, profileId: "new-profile",
-    assignmentSha256: "new-advertised-hash", settingsSha256: "new-settings-hash")
+assignmentChanged.binding = .init(deviceId: "device", profileId: UUID(),
+    assignmentSha256: "new-advertised-hash")
 let changed = [changedScope(context, connection: UUID()), changedScope(context, window: UUID()),
     changedScope(context, admission: UUID()), changedScope(context, video: UUID()),
     changedScope(context, foreground: UUID()), notAdmitted, noRoute, newRoute, newBinding, assignmentChanged]
@@ -159,6 +159,12 @@ for key in object.keys {
 }
 var absentOutcome = object; absentOutcome["outcome"] = "started"
 expect(decode(absentOutcome) == nil, "통화 started ACK를 shortcut 결과로 파싱하지 않음")
+var nullableRejection = object
+nullableRejection["outcome"] = "rejected"
+nullableRejection["invoked"] = false
+nullableRejection["bindingSha256"] = NSNull()
+expect(decode(nullableRejection)?.outcome == .rejected,
+       "비교 전 거절의 필수 nullable bindingSha256를 보존함")
 
 for desire in [VisionRemoteAudioIntent.Desire(), .init(playback: true, microphone: false),
                .init(playback: false, microphone: true), .init(playback: true, microphone: true)] {
@@ -231,4 +237,47 @@ expect(!delayed.recordPreparedSelection(operationId: id, revision: 7, context: s
        "준비 영수증도 창 owner 세대를 넘어오지 못함")
 _ = delayed.cancel()
 expect(!delayed.recordPreparedSelection(operationId: id, revision: 7, context: preparedContext), "취소 뒤 준비 callback도 무효임")
+
+let encoded = try JSONEncoder().encode(preparing.request)
+let clientObject = try JSONSerialization.jsonObject(with: encoded) as! [String: Any]
+expect(Set(clientObject.keys) == ["schemaVersion", "operation", "operationId", "deviceId", "inputID", "trigger",
+       "expectedProfileId", "expectedAssignmentSha256", "issuedAt"], "최종 client는 정확한 9필드이며 session echo가 없음")
+expect(clientObject["operation"] as? String == "invoke-configured-craft-action", "Core가 확정한 operation을 인코딩함")
+expect(String(data: encoded, encoding: .utf8)!.contains("\"issuedAt\":1793900000000"),
+       "issuedAt는 초나 실수가 아닌 UTC epoch milliseconds JSON 정수임")
+expect(clientObject["expectedProfileId"] as? String == profile.uuidString &&
+       clientObject["expectedAssignmentSha256"] as? String == assignment, "UUID profile과 불투명 SHA를 그대로 인코딩함")
+let catalogRequest = try JSONSerialization.jsonObject(with: JSONEncoder().encode(Action.CatalogRequest())) as! [String: Any]
+expect(Set(catalogRequest.keys) == ["schemaVersion", "operation"] &&
+       catalogRequest["operation"] as? String == "get-configured-craft-action", "Catalog request는 확정한 2필드만 인코딩함")
+let catalogObject: [String: Any] = ["schemaVersion": 1, "supported": true, "expectedProfileId": profile.uuidString,
+    "inputID": "speed.button.stop-play", "trigger": "longPress", "expectedAssignmentSha256": String(repeating: "a", count: 64)]
+func catalog(_ object: [String: Any]) -> Action.Catalog? {
+    try? JSONDecoder().decode(Action.Catalog.self, from: JSONSerialization.data(withJSONObject: object))
+}
+expect(catalog(catalogObject)?.expectedProfileId == profile, "Catalog6는 settings SHA나 deviceSession 없이 수용함")
+for key in catalogObject.keys {
+    var missing = catalogObject; missing.removeValue(forKey: key)
+    expect(catalog(missing) == nil, "Catalog 필수 6필드는 생략할 수 없음")
+}
+for (key, value) in [("schemaVersion", 2 as Any), ("supported", false), ("inputID", "other"),
+                     ("trigger", "tap"), ("expectedProfileId", "not-a-uuid"),
+                     ("expectedAssignmentSha256", String(repeating: "A", count: 64))] {
+    var invalid = catalogObject; invalid[key] = value
+    expect(catalog(invalid) == nil, "다른 스키마·입력·trigger·형식의 Catalog를 활성화하지 않음")
+}
+for receipt in [decode(nullableRejection)!, result(.rejected, invoked: false, hash: "different-host-assignment"),
+                result(.unknown, invoked: false), result(.unknown, invoked: true),
+                result(.unknown, invoked: true, hash: "different-host-assignment"),
+                result(.invoked, invoked: true, hash: "different-host-assignment")] {
+    var receiver = Action(); let candidate = invocation(begin(&receiver, context))
+    _ = receiver.takeInvocation(candidate, context: context, now: 100)
+    expect(receiver.receive(receipt, context: context, now: 101), "null·다른 hash·unknown을 응답 전체 폐기로 처리하지 않음")
+    if case .completed(_, let saved) = receiver.phase {
+        expect(saved == receipt && !saved.effectConfirmed, "6필드 결과와 invoked false/true를 효과 미확인으로 보존함")
+    } else { fatalError("result not retained") }
+    expect(receiver.advance(context: context, now: 102) == nil, "거절·unknown 수용이 자동 재토글을 만들지 않음")
+    if receipt.outcome != .rejected { expect(receiver.message?.contains("미확인") == true || receiver.message?.contains("확인하지 못") == true,
+        "hash 불일치나 unknown을 executor 실행·통화 성공으로 표시하지 않음") }
+}
 print("PASS \(checks) configured Craft action checks; actual Host/Core/device/media/input actions 0")

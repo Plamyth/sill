@@ -7,23 +7,50 @@ struct VisionConfiguredCraftAction {
 
     struct Binding: Equatable {
         let deviceId: String
-        let deviceSessionId: String
-        let profileId: String
+        let profileId: UUID
         let assignmentSha256: String
-        let settingsSha256: String
     }
 
-    // Local draft only. issuedAt encoding and the transport are not specified yet.
-    struct Request: Equatable {
+    struct CatalogRequest: Encodable {
         let schemaVersion = 1
+        let operation = "get-configured-craft-action"
+    }
+    struct Catalog: Decodable {
+        let schemaVersion: Int
+        let supported: Bool
+        let expectedProfileId: UUID
+        let inputID: String
+        let trigger: String
+        let expectedAssignmentSha256: String
+
+        private enum CodingKeys: String, CodingKey {
+            case schemaVersion, supported, expectedProfileId, inputID, trigger, expectedAssignmentSha256
+        }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try values.decode(Int.self, forKey: .schemaVersion)
+            supported = try values.decode(Bool.self, forKey: .supported)
+            expectedProfileId = try values.decode(UUID.self, forKey: .expectedProfileId)
+            inputID = try values.decode(String.self, forKey: .inputID)
+            trigger = try values.decode(String.self, forKey: .trigger)
+            expectedAssignmentSha256 = try values.decode(String.self, forKey: .expectedAssignmentSha256)
+            guard schemaVersion == 1, supported, inputID == "speed.button.stop-play", trigger == "longPress",
+                  expectedAssignmentSha256.utf8.count == 64,
+                  expectedAssignmentSha256.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "공통 Craft catalog를 확인하지 못했습니다."))
+            }
+        }
+    }
+    struct Request: Encodable, Equatable {
+        let schemaVersion = 1
+        let operation = "invoke-configured-craft-action"
         let operationId: UUID
         let deviceId: String
-        let deviceSessionId: String
         let inputID = "speed.button.stop-play"
         let trigger = "longPress"
-        let expectedProfileId: String
+        let expectedProfileId: UUID
         let expectedAssignmentSha256: String
-        let issuedAt: Date
+        let issuedAt: Int64
     }
 
     struct Result: Decodable, Equatable {
@@ -31,10 +58,13 @@ struct VisionConfiguredCraftAction {
         let outcome: Outcome
         let operationId: UUID
         let deviceId: String
-        let bindingSha256: String
+        let bindingSha256: String?
         let invoked: Bool
         let effectConfirmed: Bool
         let reason: String?
+        private enum CodingKeys: String, CodingKey {
+            case outcome, operationId, deviceId, bindingSha256, invoked, effectConfirmed, reason
+        }
     }
 
     struct Fence: Equatable {
@@ -86,9 +116,7 @@ struct VisionConfiguredCraftAction {
         var fence: Fence? {
             guard capabilityPresent, routeImplemented, admitted,
                   let hostKey, !hostKey.isEmpty, let scope, let binding, let routeGeneration,
-                  !binding.deviceId.isEmpty, !binding.deviceSessionId.isEmpty,
-                  !binding.profileId.isEmpty, !binding.assignmentSha256.isEmpty,
-                  !binding.settingsSha256.isEmpty,
+                  !binding.deviceId.isEmpty, !binding.assignmentSha256.isEmpty,
                   !otherDeviceSelected || deviceRouteRevision != nil else { return nil }
             return .init(hostKey: hostKey, connection: scope.connection, window: scope.window,
                 admission: scope.admission, video: scope.video, foreground: scope.foreground,
@@ -129,11 +157,13 @@ struct VisionConfiguredCraftAction {
 
     mutating func begin(heldFor: Double, context: Context, now: Double, issuedAt: Date,
                         operationId: () -> UUID = UUID.init) -> Effect? {
+        let epochMilliseconds = issuedAt.timeIntervalSince1970 * 1000
         guard heldFor.isFinite, heldFor >= Self.holdDuration, now.isFinite, now >= 0,
-              issuedAt.timeIntervalSince1970.isFinite, canBegin(context), let fence = context.fence else { return nil }
+              epochMilliseconds.isFinite, epochMilliseconds >= 0, epochMilliseconds < Double(Int64.max),
+              canBegin(context), let fence = context.fence else { return nil }
         let request = Request(operationId: operationId(), deviceId: fence.binding.deviceId,
-            deviceSessionId: fence.binding.deviceSessionId, expectedProfileId: fence.binding.profileId,
-            expectedAssignmentSha256: fence.binding.assignmentSha256, issuedAt: issuedAt)
+            expectedProfileId: fence.binding.profileId,
+            expectedAssignmentSha256: fence.binding.assignmentSha256, issuedAt: Int64(epochMilliseconds))
         let operation = Operation(request: request, fence: fence, mediaSelection: context.mediaSelection)
         if context.mediaReady {
             phase = .ready(operation, since: now, until: now + Self.responseBudget)
@@ -212,7 +242,6 @@ struct VisionConfiguredCraftAction {
               context.fence == operation.fence, now.isFinite, now >= since, now < until,
               result.operationId == operation.request.operationId,
               result.deviceId == operation.request.deviceId,
-              result.bindingSha256 == operation.request.expectedAssignmentSha256,
               !result.effectConfirmed,
               result.outcome != .invoked || result.invoked,
               result.outcome != .rejected || !result.invoked else { return false }
@@ -228,12 +257,32 @@ struct VisionConfiguredCraftAction {
         case .awaiting: return "음성 명령의 호출 결과를 확인하고 있습니다."
         case .cancelled: return "음성 명령 준비를 취소했습니다."
         case .unknown: return "호출 결과를 확인하지 못했습니다. 자동으로 다시 실행하지 않습니다."
-        case .completed(_, let result):
+        case .completed(let operation, let result):
             switch result.outcome {
-            case .invoked: return "음성 명령을 호출했습니다. 실제 대화 상태는 미확인입니다."
+            case .invoked:
+                return result.bindingSha256 == operation.request.expectedAssignmentSha256 ?
+                    "음성 명령의 응답을 받았습니다. 실제 실행·대화 효과는 미확인입니다." :
+                    "할당 확인 값이 달라 호출 효과는 미확인입니다."
             case .rejected: return "음성 명령이 거절됐습니다."
             case .unknown: return "호출 효과를 확인하지 못했습니다. 자동으로 다시 실행하지 않습니다."
             }
         }
+    }
+}
+
+extension VisionConfiguredCraftAction.Result {
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        guard values.contains(.bindingSha256) else {
+            throw DecodingError.keyNotFound(CodingKeys.bindingSha256,
+                .init(codingPath: decoder.codingPath, debugDescription: "bindingSha256 필드는 null이어도 필요합니다."))
+        }
+        outcome = try values.decode(Outcome.self, forKey: .outcome)
+        operationId = try values.decode(UUID.self, forKey: .operationId)
+        deviceId = try values.decode(String.self, forKey: .deviceId)
+        bindingSha256 = try values.decodeIfPresent(String.self, forKey: .bindingSha256)
+        invoked = try values.decode(Bool.self, forKey: .invoked)
+        effectConfirmed = try values.decode(Bool.self, forKey: .effectConfirmed)
+        reason = try values.decodeIfPresent(String.self, forKey: .reason)
     }
 }
