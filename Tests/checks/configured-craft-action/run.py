@@ -1,5 +1,6 @@
 """Compile production wire/runtime in an inert process without app or audio startup."""
 import os
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -37,9 +38,11 @@ with tempfile.TemporaryDirectory(prefix='configured-craft-') as temporary:
         '-Xlinker', '-rpath', '-Xlinker', str(out),
         str(root / 'Sources/SillHost/HostConfiguredCraftRuntime.swift'),
         str(root / 'Sources/SillHost/SentryAdmission.swift'),
-        str(support), str(here / 'Main.swift'), str(fixture), '-o', str(out / 'checks')], check=True)
-    subprocess.run([str(out / 'checks')], check=True, timeout=40,
+        str(support), str(here / 'Main.swift'), str(here / 'OutcomeChecks.swift'), str(fixture), '-o', str(out / 'checks')], check=True)
+    outcomes = subprocess.run([str(out / 'checks')], check=False, timeout=40,
                    env={**os.environ, 'DYLD_LIBRARY_PATH': str(out)})
+    if '--runtime-only' in sys.argv:
+        raise SystemExit(outcomes.returncode)
     relay = (root / 'Sources/SillHost/LocalAudioRelay.swift').read_text()
     socket_support = out / 'SocketSupport.swift'
     socket_support.write_text(bridge[:bridge.index('enum ProviderCallTarget:')] + '\n' +
@@ -75,5 +78,7 @@ import Darwin
         str(root / 'Sources/SillHost/HostConfiguredCraftRuntime.swift'),
         str(here / 'TransportChecks.swift'), '-o', str(out / 'transport-checks')], check=True)
     with tempfile.TemporaryDirectory(prefix='.ccr-craft-transport-', dir=Path.home()) as socket_directory:
-        subprocess.run([str(out / 'transport-checks'), socket_directory], check=True, timeout=30)
+        transport = subprocess.run([str(out / 'transport-checks'), socket_directory], check=False, timeout=30)
+    if outcomes.returncode or transport.returncode:
+        raise SystemExit(1)
 print('configured-craft scratch removed; app/device/audio effects=0')

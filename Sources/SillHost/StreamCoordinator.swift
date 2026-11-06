@@ -4178,12 +4178,6 @@ extension StreamCoordinator {
         let context = AudioForwardingConnectionContext(peer: peer,
             principal: .init(kind: kind, id: peer.id, authorizationGeneration: peer.pairingGeneration), role: .viewer,
             connectionID: session.generation, connectionIsCurrent: current, isCurrent: current)
-        let protected = sentryRequested || sentryState?.phase != .inactive
-        if exchange.control.operation == .invoke, protected {
-            let refused = try? ConfiguredCraftActionState(control: exchange.control, deviceId: peer.id, error: "sentry_protected")
-            server.sendConfiguredCraftState(current() ? refused : nil, to: connection, ticket: exchange.ticket)
-            return
-        }
         let audio = exchange.control.operation == .invoke ? await forwardingRuntime?.providerSession(context) : nil
         guard current() else { server.sendConfiguredCraftState(nil, to: connection, ticket: exchange.ticket); return }
         let craftSession = HostConfiguredCraftSession(deviceId: peer.id, deviceSessionId: session.generation,
@@ -4192,10 +4186,14 @@ extension StreamCoordinator {
                 guard let self else { return true }
                 return self.server.sentryAdmission.isRequested || self.server.sentryAdmission.status(for: id)?.phase != .inactive
             },
-            isCurrent: { current() && (audio?.admitted() ?? true) },
+            isCurrent: current,
+            currentSelection: { [weak self, weak runtime = forwardingRuntime] in
+                guard let self, let runtime, self.forwardingRuntime === runtime else { return nil }
+                return runtime.snapshot
+            },
             readSnapshot: { await audio?.readSnapshot() },
             withSendAdmission: { [weak self] requiresInactive, write in
-                guard let self, current(), audio?.admitted() ?? true else { throw ProviderCallFailure.superseded }
+                guard let self, current(), !requiresInactive || audio?.admitted() == true else { throw ProviderCallFailure.superseded }
                 guard try self.server.withConfiguredCraftWrite(to: connection, ticket: exchange.ticket,
                     deviceId: peer.id, inactive: sentryState, requiresInactive: requiresInactive, write) else {
                     throw ProviderCallFailure.superseded

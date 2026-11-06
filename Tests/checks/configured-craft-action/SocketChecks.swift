@@ -68,8 +68,7 @@ final class CraftSocketCore: @unchecked Sendable {
         let runtime = HostConfiguredCraftRuntime(open: { deadline in
             try await ProviderCallSocket.open(path: core.path, until: deadline, frameLimit: 16385)
         })
-        let session = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: UUID(),
-            sentryProtected: { false }, isCurrent: { true }, readSnapshot: {
+        let selection: () -> AudioForwardingSnapshot = {
                 let generation = sessionID
                 let configuration = try! AudioForwardingConfiguration(controllerBootId: generation, privacyGeneration: generation,
                     registryRevision: .init(1), members: [
@@ -79,7 +78,9 @@ final class CraftSocketCore: @unchecked Sendable {
                 let binding = AudioForwardingBinding(pairedDeviceId: peer, intentGeneration: generation, bindingEpoch: generation,
                     transportId: generation, transportKind: .native, operationId: generation, phase: .off, configuration: configuration)
                 return try! AudioForwardingSnapshot(revision: .init(1), intent: intent, binding: binding)
-            }, withSendAdmission: { _, write in try write() })
+        }
+        let session = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: UUID(),
+            sentryProtected: { false }, isCurrent: { true }, currentSelection: selection, readSnapshot: { selection() }, withSendAdmission: { _, write in try write() })
         let catalog = await runtime.exchange(ConfiguredCraftActionControl(requestId: UUID()), session: session)
         precondition(catalog?.catalog?.supported == true, "catalog fixture failed: \(catalog?.error ?? "no reply")")
         let op = UUID()

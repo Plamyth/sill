@@ -4,10 +4,12 @@ import StreamProtocol
 
 final class Flags: @unchecked Sendable {
     let lock = NSLock()
-    private var liveValue = true, protectedValue = false
+    private var liveValue = true, protectedValue = false, audioChangedValue = false
     private var stampValue: Int64 = 1793910000010
     var live: Bool { lock.lock(); defer { lock.unlock() }; return liveValue }
     var protected: Bool { lock.lock(); defer { lock.unlock() }; return protectedValue }
+    var audioChanged: Bool { lock.lock(); defer { lock.unlock() }; return audioChangedValue }
+    func changeAudio() { lock.lock(); audioChangedValue = true; lock.unlock() }
     var stamp: Int64 { lock.lock(); defer { lock.unlock() }; return stampValue }
     func advanceStamp() { lock.lock(); stampValue += 750; lock.unlock() }
     func change(live: Bool? = nil, protected: Bool? = nil) {
@@ -74,16 +76,16 @@ final class FakeCore: @unchecked Sendable {
     static func invoke(_ id: UUID = UUID()) throws -> ConfiguredCraftActionControl {
         .init(requestId: UUID(), client: try .init(operationId: id, deviceId: peer, catalog: catalog(), issuedAt: 1793910000000))
     }
-    static func snapshot(revision: UInt64 = 1) throws -> AudioForwardingSnapshot {
+    static func snapshot(revision: UInt64 = 1, deviceId: AudioForwardingDeviceID = peer) throws -> AudioForwardingSnapshot {
         let g = profile
         let config = try AudioForwardingConfiguration(controllerBootId: g, privacyGeneration: g, registryRevision: .init(1), members: [.init(participantId: "native.sill", bootId: g), .init(participantId: "s23.audio.relay", bootId: g)])
-        let intent = try AudioForwardingSnapshot.Intent(pairedDeviceId: peer, intentId: g, intentRevision: .init(1), intentGeneration: g, inputDesired: false, outputDesired: false)
-        let binding = AudioForwardingBinding(pairedDeviceId: peer, intentGeneration: g, bindingEpoch: g, transportId: g, transportKind: .native, operationId: g, phase: .off, configuration: config)
+        let intent = try AudioForwardingSnapshot.Intent(pairedDeviceId: deviceId, intentId: g, intentRevision: .init(1), intentGeneration: g, inputDesired: false, outputDesired: false)
+        let binding = AudioForwardingBinding(pairedDeviceId: deviceId, intentGeneration: g, bindingEpoch: g, transportId: g, transportKind: .native, operationId: g, phase: .off, configuration: config)
         return try .init(revision: .init(revision), intent: intent, binding: binding)
     }
-    @MainActor static func session(_ flags: Flags = Flags(), generation: UUID = profile, sessionID: UUID = UUID()) throws -> HostConfiguredCraftSession {
+    @MainActor static func session(_ flags: Flags = Flags(), generation: UUID = profile, sessionID: UUID = UUID(), revisionOnly: Bool = false) throws -> HostConfiguredCraftSession {
         let snap = try snapshot()
-        return .init(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: generation, sentryProtected: { flags.protected }, isCurrent: { flags.live }, readSnapshot: { snap }, withSendAdmission: { _, write in try write() })
+        return .init(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: generation, sentryProtected: { flags.protected }, isCurrent: { flags.live }, currentSelection: { flags.audioChanged ? try? snapshot(revision: 2, deviceId: revisionOnly ? peer : AudioForwardingDeviceID(hex: String(repeating: "cd", count: 32))!) : snap }, readSnapshot: { flags.audioChanged ? try? snapshot(revision: 2, deviceId: revisionOnly ? peer : AudioForwardingDeviceID(hex: String(repeating: "cd", count: 32))!) : snap }, withSendAdmission: { _, write in try write() })
     }
     static func reply(_ c: [String: Any], outcome: String = "unknown", reason: String? = nil) throws -> Data {
         let body = c["client"] as? [String: Any]
@@ -94,9 +96,10 @@ final class FakeCore: @unchecked Sendable {
     }
     @MainActor static func main() async throws {
         let dir = CommandLine.arguments[1]
-        for mode in ["ownership_before_write", "sentry_before_write", "exponent_schema", "fraction_schema", "duplicate_schema", "invalid_json", "nested_reason", "valid", "legacy_exponent", "stamp_before_write"] {
+        for mode in ["ownership_before_write", "sentry_before_write", "audio_before_write", "audio_revision_before_write", "exponent_schema", "fraction_schema", "duplicate_schema", "invalid_json", "nested_reason", "valid", "legacy_exponent", "stamp_before_write"] {
             let flags = Flags()
             ProviderPeerAnchor.reset(mode == "ownership_before_write" ? { flags.change(live:false) } : mode == "sentry_before_write" ? { flags.change(protected:true) } : nil)
+            if mode == "audio_before_write" || mode == "audio_revision_before_write" { ProviderPeerAnchor.reset { flags.changeAudio() } }
             if mode == "stamp_before_write" { ProviderPeerAnchor.reset { flags.advanceStamp() } }
             let core = try FakeCore(path:dir + "/c.sock") { c in
                 let body = c["client"] as? [String: Any]
@@ -124,9 +127,10 @@ final class FakeCore: @unchecked Sendable {
                 check("legacy generic provider JSON semantics unchanged",result.schemaVersion == 1)
             } else {
                 let runtime = HostConfiguredCraftRuntime(open:{ deadline in try await ProviderCallSocket.open(path:core.path,until:deadline,frameLimit:16385) }, now: { flags.stamp })
-                let result = await runtime.exchange(try invoke(),session:try session(flags))
-                if mode == "ownership_before_write" || mode == "sentry_before_write" {
+                let result = await runtime.exchange(try invoke(),session:try session(flags, revisionOnly: mode == "audio_revision_before_write"))
+                if mode == "ownership_before_write" || mode == "sentry_before_write" || mode == "audio_before_write" || mode == "audio_revision_before_write" {
                     check("actual first write blocks \(mode)", core.observed == nil)
+                    if mode.hasPrefix("audio") { check("zero-byte audio rejection is terminal typed rejected", result?.result?.outcome == .rejected && result?.result?.invoked == false) }
                 } else if ["exponent_schema","fraction_schema","duplicate_schema","invalid_json"].contains(mode) {
                     check("raw Core reply rejected without success: \(mode)",result == nil)
                 } else {

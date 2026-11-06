@@ -185,11 +185,11 @@ import StreamProtocol
             return 1793910000010
         })
         let session = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: generation,
-            sentryProtected: { false }, isCurrent: { current }, readSnapshot: { reads += 1; return observed }, withSendAdmission: { _, write in try write() })
+            sentryProtected: { false }, isCurrent: { current }, currentSelection: { observed }, readSnapshot: { reads += 1; return observed }, withSendAdmission: { _, write in try write() })
         let request = try ConfiguredCraftActionControl.decode(control())
         let protected = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: generation,
-            sentryProtected: { true }, isCurrent: { true }, readSnapshot: { reads += 1; return observed }, withSendAdmission: { _, write in try write() })
-        check("Sentry protected closes without audio or input", await runtime.exchange(request, session: protected)?.error == "sentry_protected" && sends == 0 && reads == 0)
+            sentryProtected: { true }, isCurrent: { true }, currentSelection: { observed }, readSnapshot: { reads += 1; return observed }, withSendAdmission: { _, write in try write() })
+        check("Sentry protected closes without audio or input", await runtime.exchange(ConfiguredCraftActionControl(requestId: UUID(), client: try ConfiguredCraftActionRequest(operationId: UUID(), deviceId: peer, catalog: catalog, issuedAt: 1793910000000)), session: protected)?.result?.outcome == .rejected && sends == 0 && reads == 0)
         let answer = await runtime.exchange(request, session: session)
         check("both OFF invokes configured action", answer?.result?.outcome == .invoked && sends == 1 && reads == 3)
         _ = await runtime.exchange(request, session: session)
@@ -217,12 +217,12 @@ import StreamProtocol
         current = true; invalidateAfter = false
         var protectedNow = false, dispatches = 0
         let protectedSession = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: generation,
-            sentryProtected: { protectedNow }, isCurrent: { true }, readSnapshot: { off }, withSendAdmission: { _, write in try write() })
+            sentryProtected: { protectedNow }, isCurrent: { true }, currentSelection: { off }, readSnapshot: { off }, withSendAdmission: { _, write in try write() })
         let blockedSocket = CraftFixtureTransport { _ in dispatches += 1; throw FixtureFailure.timeout }
         let switching = HostConfiguredCraftRuntime(open: { _ in protectedNow = true; return blockedSocket })
-        check("Sentry changes during socket open block sender", await switching.exchange(request, session: protectedSession) == nil && dispatches == 0)
+        check("Sentry changes during socket open block sender", await switching.exchange(request, session: protectedSession)?.result?.outcome == .rejected && dispatches == 0)
         let drift = HostConfiguredCraftRuntime(open: { _ in observed = try snapshot(input: false, output: false, phase: .off, revision: 2); return blockedSocket })
-        check("fresh audio changes during open block sender", await drift.exchange(request, session: session) == nil && dispatches == 0)
+        check("fresh audio changes during open block sender", await drift.exchange(request, session: session)?.result?.outcome == .rejected && dispatches == 0)
         observed = off
         let wrongIDSocket = CraftFixtureTransport { _ in
             try JSONSerialization.data(withJSONObject: ["op":"configuredCraftAction.reply", "schemaVersion":1,
@@ -243,11 +243,12 @@ import StreamProtocol
         check("first command reaches socket open", release != nil)
         let parallel = ConfiguredCraftActionControl(requestId: UUID(), client: try ConfiguredCraftActionRequest(
             operationId: UUID(), deviceId: peer, catalog: catalog, issuedAt: 1793910000000))
-        check("single invocation while open awaits", await blocked.exchange(parallel, session: session)?.error == "busy")
+        check("single invocation while open awaits", await blocked.exchange(parallel, session: session)?.result?.outcome == .rejected)
         release!.resume(returning: socket)
         _ = await first.value
     }
     @MainActor static func main() async throws {
+        try await craftOutcomeChecks(check)
         try craftFirstWriteAdmissionChecks(check)
         try await craftCoordinatorReplyChecks(check)
         try await reasonChecks()
@@ -279,7 +280,7 @@ import StreamProtocol
             }
             let runtime = HostConfiguredCraftRuntime(open: { _ in socket })
             let session = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: UUID(), pairingGeneration: UUID(),
-                sentryProtected: { false }, isCurrent: { true }, readSnapshot: { nil }, withSendAdmission: { _, write in try write() })
+                sentryProtected: { false }, isCurrent: { true }, currentSelection: { nil }, readSnapshot: { nil }, withSendAdmission: { _, write in try write() })
             let control = ConfiguredCraftActionControl(requestId: UUID(), operationId: op)
             let response = await runtime.exchange(control, session: session)
             check("Core actionResult transported without replacement", response?.result == decoded)
@@ -340,11 +341,11 @@ import StreamProtocol
         }
         let runtime = HostConfiguredCraftRuntime(open: { _ in core })
         let first = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: firstSession, pairingGeneration: generation,
-            sentryProtected: { false }, isCurrent: { oldCurrent }, readSnapshot: { off }, withSendAdmission: { _, write in try write() })
+            sentryProtected: { false }, isCurrent: { oldCurrent }, currentSelection: { off }, readSnapshot: { off }, withSendAdmission: { _, write in try write() })
         check("original invoke recorded once", await runtime.exchange(original, session: first)?.result?.outcome == .invoked && invokes == 1 && journalWrites == 1)
         oldCurrent = false
         let connected = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: nextSession, pairingGeneration: generation,
-            sentryProtected: { false }, isCurrent: { true }, readSnapshot: { nil }, withSendAdmission: { _, write in try write() })
+            sentryProtected: { false }, isCurrent: { true }, currentSelection: { nil }, readSnapshot: { nil }, withSendAdmission: { _, write in try write() })
         let recovered = await runtime.exchange(query, session: connected)
         check("reconnect new server session recovers durable result", recovered?.result == journal && queries == 1 && invokes == 1)
         check("query carries current new session only", querySessions == [nextSession.uuidString.lowercased()])
@@ -352,10 +353,10 @@ import StreamProtocol
         let restarted = HostConfiguredCraftRuntime(open: { _ in core })
         check("Host cache absent still query only recovery", await restarted.exchange(query, session: connected)?.result == journal && queries == 2 && invokes == 1)
         let repaired = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: UUID(), pairingGeneration: UUID(),
-            sentryProtected: { false }, isCurrent: { true }, readSnapshot: { nil }, withSendAdmission: { _, write in try write() })
+            sentryProtected: { false }, isCurrent: { true }, currentSelection: { nil }, readSnapshot: { nil }, withSendAdmission: { _, write in try write() })
         check("cached operation rejects changed pairing identity", await runtime.exchange(query, session: repaired)?.error == "operation_owner_mismatch" && queries == 2)
         let foreign = HostConfiguredCraftSession(deviceId: other, deviceSessionId: UUID(), pairingGeneration: UUID(),
-            sentryProtected: { false }, isCurrent: { true }, readSnapshot: { nil }, withSendAdmission: { _, write in try write() })
+            sentryProtected: { false }, isCurrent: { true }, currentSelection: { nil }, readSnapshot: { nil }, withSendAdmission: { _, write in try write() })
         check("Host cached owner rejects other device", await runtime.exchange(query, session: foreign)?.error == "operation_owner_mismatch" && queries == 2)
         check("cache absent defers durable owner check to Core", await restarted.exchange(query, session: foreign)?.error == "operation_owner_mismatch" && queries == 3)
         check("queries never rewrite journal or invoke", journalWrites == 1 && invokes == 1)

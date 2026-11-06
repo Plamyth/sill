@@ -117,7 +117,7 @@ private final class CraftServerFixture: @unchecked Sendable {
         let runtime = mode == "missing_runtime" ? nil : HostConfiguredCraftRuntime(open: { _ in transport })
         let coordinator = CraftCoordinatorReplyFixture(server: server, runtime: runtime)
         let session = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: UUID(), pairingGeneration: UUID(),
-            sentryProtected: { false }, isCurrent: { current }, readSnapshot: { off }, withSendAdmission: { _, write in try write() })
+            sentryProtected: { false }, isCurrent: { current }, currentSelection: { off }, readSnapshot: { off }, withSendAdmission: { _, write in try write() })
         await coordinator.forward(ticket, connection: client.connection, peer: .init(id: peer), craftSession: session, current: { current })
         server.drain()
         if ["wrong_request", "malformed", "stale", "missing_runtime"].contains(mode) {
@@ -125,7 +125,7 @@ private final class CraftServerFixture: @unchecked Sendable {
         } else {
             check("explicit response \(mode) preserved", server.sent.count == 1 && client.connection.state == .ready)
             let state = try ConfiguredCraftActionState.decode(Data(server.sent[0].dropFirst(StreamMessage.headerLength)))
-            if mode == "explicit_rejected" { check("Core notSent rejected remains distinct", state.error == "unsupported" && state.result == nil) }
+            if mode == "explicit_rejected" { check("Core notSent rejected remains distinct", state.error == nil && state.result?.outcome == .rejected && state.result?.reason == "unsupported" && state.result?.invoked == false) }
             if mode == "timeout" || mode == "explicit_unknown" { check("post-send uncertainty stays typed unknown", state.result?.outcome == .unknown && state.error == nil) }
         }
         check("other TLS connection remains ready", other.connection.state == .ready)

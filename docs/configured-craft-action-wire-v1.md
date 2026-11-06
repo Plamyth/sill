@@ -1,6 +1,6 @@
 # 공통 configured Craft action wire v1
 
-2026-11-06 Root가 확정한 Host246 소스 계약이다. 실제 Host244/Core3337/iPad88의 설치·실행 수용 기록이 아니다. 구현 정본은 `Sources/StreamProtocol/ConfiguredCraftAction.swift`다.
+2026-11-06 Root가 확정한 Host246 소스 계약이다. 실제 Host245/Core551 및 연결기기의 설치·실행 수용 기록이 아니다. 구현 정본은 `Sources/StreamProtocol/ConfiguredCraftAction.swift`다.
 
 ## 전송과 식별
 
@@ -66,7 +66,7 @@ Core COMMAND_SOCKET 요청의 공통 필드는 정확히 `op`, `schemaVersion:1`
 
 Host는 기존 ProviderCallSocket.open의 설치된 Core 서명 peer 검증을 마친 뒤 현재 TLS 등록·연결·pairing·Sentry inactive와 fresh 선택을 다시 검사하고 sender 호출 직전에 acceptedAt을 stamp한다. Core는 Host 서명 peer 및 acceptedAt의 500ms 이내 freshness를 확인한다. inactive가 아닌 Sentry 상태나 미확인은 invoke를 허용하지 않는다. Core query는 기존 operationId에 대한 읽기만 수행하고 조회 자체로 journal을 쓰지 않는다.
 
-configured Craft는 socket의 writable 대기와 Core peer 재검사 뒤 MainActor의 현재 admission을 평가한다. 첫 nonblocking send는 서버 connection/ticket queue와 Sentry inactive 잠금 안에서 실행하고 그 구간에서 acceptedAt을 stamp한다. 소유권·pairing 변경은 MainActor와, 연결 변경은 서버 queue와, Sentry 전환은 같은 잠금과 직렬화된다. 아직 byte를 보내지 않은 요청만 현재성 변경으로 취소한다. 첫 send 뒤 결과가 모호하면 원 operation의 UNKNOWN 또는 해당 TLS 종료로 남기며 재invoke하지 않는다. 기존 provider의 일반 exchange/JSON 규칙은 유지한다.
+configured Craft는 socket의 writable 대기와 Core peer 재검사 뒤 MainActor의 현재 admission을 평가한다. 첫 nonblocking send는 서버 connection/ticket queue와 Sentry inactive 잠금 안에서 실행하고 그 구간에서 acceptedAt을 stamp한다. 최초 fresh snapshot의 intent·binding·selection revision을 실제 pre-write 구간에서 현재 HostAudioForwardingRuntime.snapshot과 비교한다. 같은 기기로 돌아왔어도 revision이 바뀌면 거절한다. 이 동기 검사와 첫 write 사이에는 await가 없으며 오디오 선택·소유권·pairing 변경은 MainActor와, 연결 변경은 서버 queue와, Sentry 전환은 같은 잠금과 직렬화된다. audio.admitted()만으로 선택의 현재성을 대신하지 않는다. 송신 표시는 첫 send가 양수 byte를 반환한 뒤에만 설정한다. 0-byte EAGAIN/EINTR은 admission과 stamp를 다시 확인한다. 아직 byte를 보내지 않은 요청만 현재성 변경으로 취소한다. 첫 send 뒤 결과가 모호하면 원 operation의 UNKNOWN 또는 해당 TLS 종료로 남기며 재invoke하지 않는다. 기존 provider의 일반 exchange/JSON 규칙은 유지한다.
 
 Core 응답 공통 필드는 `op:"configuredCraftAction.reply"`, `schemaVersion:1`, 같은 `requestId`, `outcome`이다.
 
@@ -79,13 +79,17 @@ Core 응답 공통 필드는 `op:"configuredCraftAction.reply"`, `schemaVersion:
 
 성공에 notSent/error/reason 등의 외피 필드를 추가하지 않는다. 잘못된 requestId, 잘못된 union 또는 다른 device/operation의 actionResult는 socket을 닫고 외부 응답을 보내지 않는다.
 
-configured Core reply도 raw JSON 토큰부터 검증한다. `schemaVersion:1e0`, `1.0`, 중복 키와 깨진 JSON은 typed decode 실패와 동일하게 외부 응답 없이 해당 요청 TLS를 닫는다. 기존 provider의 일반 JSON decoder를 전역 변경하지 않는다.
+configured Core reply도 raw JSON 토큰부터 검증한다. `schemaVersion:1e0`, `1.0`, 중복 키와 깨진 JSON은 typed decode 실패와 동일하게 해당 요청 TLS를 닫는다. 다만 read-only query에서 이미 소유권을 확인한 캐시 결과가 있으면 불명 결과를 새로 해석하지 않고 기존 결과를 반환할 수 있다. 기존 provider의 일반 JSON decoder를 전역 변경하지 않는다.
 
-Core local rejected는 외부 error union의 reason으로 매핑한다. Core local unknown과 송신 후 transport timeout은 외부 result unknown으로 매핑하며 bindingSha256은 null, invoked는 false, effectConfirmed는 false다. catalog의 unknown은 외부 error다. Core ok actionResult는 상관 device/operation을 확인한 뒤 그대로 운반한다.
+확정 pre-dispatch 실패와 최초 invoke에 대한 Core local rejected/notSent:true는 원 operationId/deviceId의 typed result.rejected로 종결한다. invoked=false, effectConfirmed=false이며 bindingSha256은 아직 검증 전이면 null이다. socket open·실제 first-write admission 실패도 여기에 포함한다. 첫 byte 전에 이전 TLS가 만료되면 그 연결에는 응답하지 않되 확정 거절을 캐시에 남겨 같은 identity의 재접속에서 회수할 수 있게 한다. TLS/등록 identity·상관이 유효하지 않으면 해당 TLS를 닫거나 outer error로 거절하며 다른 operation의 종결 결과를 만들지 않는다.
+
+첫 byte를 보낸 뒤 Core local unknown 또는 transport timeout은 typed result.unknown으로 반환한다. 처음 불명이면 bindingSha256=null, invoked=false, effectConfirmed=false다. 잘못된 응답·상관 실패는 해당 TLS만 닫을 수 있다. catalog의 rejected/unknown은 outer error다. Core ok actionResult는 상관 device/operation을 확인한 뒤 그대로 운반한다.
+
+기존 operation의 내부 query 또는 명시 query가 rejected/notSent:true, unknown 또는 transport/decode 실패가 되어도 이는 조회의 실패일 뿐 원 invoke의 미실행 증거가 아니다. 다른 현재 연결의 조회가 더 최신 invoked 사실을 확인했다면 늦은 이전 조회 실패로 그 결과를 덮지 않는다. Host가 소유권을 확인한 기존 결과를 가지고 있으면 그 결과를 보존하며, UNKNOWN의 이미 확인된 invoked=true·binding·reason을 false/null로 낮추지 않는다. query ok 결과도 이미 확인된 invoked 사실을 취소하지 않는다. 캐시가 없으면 조회 실패를 outer error로 반환하거나 해당 TLS를 닫고 원 invoke 결과를 추정하지 않는다. 기기는 기존 UNKNOWN과 알고 있는 invoked 값을 유지한다. query 실패로 새 invoke를 자동 발행하지 않는다.
 
 runtime이 잘못된 Core 응답·상관 실패·현재성 상실 등으로 nil을 반환하면 Coordinator는 unavailable error로 치환하지 않고 해당 요청의 TLS 연결만 닫는다. 다른 연결은 유지한다. 외부 error에는 Core local의 notSent 필드가 없으므로 외부 error만으로 미송신·미실행을 증명할 수 없다. invoke 송신 뒤 결과가 모호하면 기기는 UNKNOWN을 보존하고 원 operationId의 query로 확인한다. 새 ID 발급이나 자동 재invoke를 하지 않는다. Core의 명확한 local rejected/notSent:true와 송신 후 모호한 결과는 구분한다.
 
-Host의 결과 캐시는 최대 128개이며 오래된 항목부터 회수한다. terminal 결과는 같은 client9/pairing generation의 재요청에 재사용한다. 캐시에 남아 있는 unknown의 명시적 재요청은 같은 operationId의 Core query로 보낸다. Host가 timeout 뒤 자동 재시도하거나 새 ID를 생성하지 않는다. 캐시에서 회수된 ID의 명시적 invoke 재요청은 Core의 durable once journal이 원래 결과를 재사용해야 한다. 캐시는 durable once의 대체물이 아니다. Core 재시작/Host 재시작 및 캐시 회수 후 중복 효과 방지는 Core 원담당의 필수 계약이다.
+Host의 결과 캐시는 최대 128개이며 오래된 항목부터 회수한다. 확정 미송신의 typed rejected를 포함한 terminal 결과는 같은 client9/pairing generation의 재요청에 재사용하며 새 invoke/query를 만들지 않는다. 진행 중인 invoke 항목은 다른 busy 거절의 캐시 회수로 제거하지 않는다. 캐시에 남아 있는 unknown의 명시적 재요청은 같은 operationId의 Core query로 보낸다. Host가 timeout 뒤 자동 재시도하거나 새 ID를 생성하지 않는다. 캐시에서 회수된 ID의 명시적 invoke 재요청은 Core의 durable once journal이 원래 결과를 재사용해야 한다. Host에서 송신 전에 종결된 rejected가 캐시 회수된 뒤 Core query에 operation_not_found가 나와도 이전 거절이나 UNKNOWN을 다른 결과로 추정하지 않는다. 기기는 terminal operation을 새 ID나 재invoke로 복구하지 않는다. 캐시는 durable once의 대체물이 아니다. Core 재시작/Host 재시작 및 캐시 회수 후 중복 효과 방지는 Core 원담당의 필수 계약이다.
 
 같은 인증 deviceId와 pairing identity의 reconnect는 새 Host session generation으로 원래 operationId를 query할 수 있다. Host의 이전 session ID를 echo하거나 새 invoke를 보내지 않는다. 캐시에 원래 operation이 있으면 소유 deviceId/pairing generation도 확인하며, 오래된 session만을 이유로 조회를 거절하지 않는다. Host 캐시가 없으면 현재 TLS/session 외피로 Core durable query를 수행한다. Core는 원 operation 소유 deviceId를 검증하며 다른 device 또는 재페어링으로 바뀐 identity를 거절한다. query는 durable journal을 쓰거나 원 invoke를 재전송하지 않는다.
 

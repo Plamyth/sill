@@ -8,6 +8,7 @@ struct HostConfiguredCraftSession {
     let pairingGeneration: UUID
     let sentryProtected: @MainActor () -> Bool
     let isCurrent: @MainActor () -> Bool
+    let currentSelection: @MainActor () -> AudioForwardingSnapshot?
     let readSnapshot: @MainActor () async -> AudioForwardingSnapshot?
     let withSendAdmission: @MainActor (_ requiresInactive: Bool, _ write: () throws -> Void) throws -> Void
 }
@@ -49,7 +50,9 @@ final class HostConfiguredCraftRuntime {
 
     private func remember(_ request: ConfiguredCraftActionRequest, generation: UUID, result: ConfiguredCraftActionResult) {
         if records[request.operationId] == nil {
-            if order.count == 128 { records.removeValue(forKey: order.removeFirst()) }
+            if order.count == 128, let index = order.firstIndex(where: { $0 != invoking }) {
+                records.removeValue(forKey: order.remove(at: index))
+            }
             order.append(request.operationId)
         }
         records[request.operationId] = Record(request: request, pairingGeneration: generation, result: result)
@@ -85,22 +88,38 @@ final class HostConfiguredCraftRuntime {
                 localOperation = .query
             }
         }
-        var initial: AudioForwardingSnapshot?
+        let prior = control.targetOperationId.flatMap { records[$0]?.result }
         let dispatching = localOperation == .invoke
+        func knownResult() -> ConfiguredCraftActionResult? {
+            if let id = control.targetOperationId, let record = records[id],
+               record.request.deviceId == session.deviceId, record.pairingGeneration == session.pairingGeneration,
+               control.client == nil || control.client == record.request { return record.result }
+            return prior
+        }
+        func rejected(_ reason: String) -> ConfiguredCraftActionState? {
+            if let known = knownResult(), known.invoked { return current() ? state(known) : nil }
+            guard let result = action(.rejected, reason), let request = control.client else { return nil }
+            // Retain a definite zero-byte outcome for reconnect even when the old TLS has expired.
+            remember(request, generation: session.pairingGeneration, result: result)
+            return current() ? state(result) : nil
+        }
+        func queryFailure(_ reason: String) -> ConfiguredCraftActionState? {
+            // A query's notSent says nothing about the original invocation.
+            knownResult().flatMap(state) ?? failure(reason)
+        }
         if dispatching {
-            guard !session.sentryProtected() else { return failure("sentry_protected") }
-            guard invoking == nil else { return failure("busy") }
+            guard !session.sentryProtected() else { return rejected("sentry_protected") }
+            guard invoking == nil else { return rejected("busy") }
             invoking = control.client!.operationId
             guard let uncertain = action(.unknown, "invocation_uncertain") else { invoking = nil; return nil }
             remember(control.client!, generation: session.pairingGeneration, result: uncertain)
         }
         defer { if dispatching { invoking = nil } }
+        var initial: AudioForwardingSnapshot?
         if dispatching {
             guard let snapshot = await session.readSnapshot(), current(), !session.sentryProtected(),
                   Self.eligible(snapshot, deviceId: session.deviceId) else {
-                guard let refused = action(.rejected, "audio_selection_unavailable") else { return nil }
-                remember(control.client!, generation: session.pairingGeneration, result: refused)
-                return current() ? state(refused) : nil
+                return rejected("audio_selection_unavailable")
             }
             initial = snapshot
         }
@@ -109,25 +128,34 @@ final class HostConfiguredCraftRuntime {
         do {
             let socket = try await open(min(deadline, ProcessInfo.processInfo.systemUptime + 1))
             defer { socket.invalidate() }
-            guard current() else { return nil }
+            guard current() else { return dispatching ? rejected("superseded") : nil }
             if let initial {
                 guard let latest = await session.readSnapshot(), current(), !session.sentryProtected(),
-                      Self.eligible(latest, deviceId: session.deviceId), Self.same(initial, latest) else { return nil }
+                      Self.eligible(latest, deviceId: session.deviceId), Self.same(initial, latest) else {
+                    return rejected("audio_selection_unavailable")
+                }
             }
-            guard current(), !dispatching || !session.sentryProtected() else { return nil }
+            guard current() else { return dispatching ? rejected("superseded") : nil }
             let clock = now, deviceId = session.deviceId, sessionId = session.deviceSessionId
-            sentInvoke = dispatching
             let reply = try await socket.exchange(admittedSend: { (write: (HostConfiguredCraftCommand) throws -> Void) in
                 guard current(), !dispatching || !session.sentryProtected() else { throw ProviderCallFailure.superseded }
                 try session.withSendAdmission(dispatching) {
+                    // No await from this selection proof through the first nonblocking send.
+                    // Host audio selection updates share MainActor with this transaction.
+                    if let initial {
+                        guard let latest = session.currentSelection(), Self.same(initial, latest),
+                              Self.eligible(latest, deviceId: deviceId) else { throw ProviderCallFailure.superseded }
+                    }
                     let acceptedAt = clock()
                     guard acceptedAt > 0, acceptedAt <= 9_007_199_254_740_991 else { throw ProviderCallFailure.invalidFields }
                     try write(HostConfiguredCraftCommand(control: control, operation: localOperation,
                         deviceId: deviceId, deviceSessionId: sessionId, acceptedAt: acceptedAt))
+                    // write returns only after a positive first send. EAGAIN/EINTR do not mark dispatch.
+                    sentInvoke = dispatching
                 }
             }, as: HostConfiguredCraftReply.self, until: deadline, decode: { try HostConfiguredCraftReply.decode($0) })
             guard current() else { return nil }
-            guard reply.requestId == control.requestId else { return nil }
+            guard reply.requestId == control.requestId else { return localOperation == .query ? knownResult().flatMap(state) : nil }
             let response: ConfiguredCraftActionState?
             switch reply.outcome {
             case .ok:
@@ -136,36 +164,49 @@ final class HostConfiguredCraftRuntime {
                     response = try? ConfiguredCraftActionState(control: control, deviceId: session.deviceId, catalog: catalog)
                 } else {
                     guard let result = reply.actionResult, reply.catalog == nil,
-                          result.deviceId == session.deviceId, result.operationId == control.targetOperationId else { return nil }
-                    response = state(result)
+                          result.deviceId == session.deviceId, result.operationId == control.targetOperationId else {
+                        return localOperation == .query ? knownResult().flatMap(state) : nil
+                    }
+                    if let known = knownResult(), known.invoked, !result.invoked {
+                        response = state(known)
+                    } else { response = state(result) }
                 }
             case .rejected:
                 guard let reason = reply.reason else { return nil }
-                response = failure(reason)
+                response = dispatching ? rejected(reason) : queryFailure(reason)
             case .unknown:
                 guard let reason = reply.reason else { return nil }
-                if control.operation == .catalog { response = failure(reason) }
-                else { response = action(.unknown, reason).flatMap(state) }
+                if localOperation == .query { response = queryFailure(reason) }
+                else if dispatching {
+                    if let known = knownResult(), known.invoked { response = state(known) }
+                    else { response = action(.unknown, reason).flatMap(state) }
+                }
+                else { response = failure(reason) }
             }
-            if let request = control.client, let result = response?.result {
-                remember(request, generation: session.pairingGeneration, result: result)
+            if let result = response?.result {
+                if let request = control.client {
+                    remember(request, generation: session.pairingGeneration, result: result)
+                } else if let record = records[result.operationId] {
+                    remember(record.request, generation: record.pairingGeneration, result: result)
+                }
             }
             if let initial {
                 guard let latest = await session.readSnapshot(), current(), !session.sentryProtected(),
                       Self.same(initial, latest) else { return nil }
             }
             return current() ? response : nil
-        } catch is DecodingError { return nil }
-        catch ProviderCallFailure.invalidFields { return nil }
-        catch is ConfiguredCraftActionFailure { return nil }
-        catch {
+        } catch {
+            if dispatching, !sentInvoke { return rejected("unavailable") }
             guard current() else { return nil }
+            if localOperation == .query { return queryFailure("unavailable") }
+            if error is DecodingError || error is ConfiguredCraftActionFailure { return nil }
+            if case ProviderCallFailure.invalidFields = error { return nil }
             if sentInvoke {
                 if let initial {
                     guard let latest = await session.readSnapshot(), current(), !session.sentryProtected(),
                           Self.same(initial, latest) else { return nil }
                 }
-                return action(.unknown, "invocation_uncertain").flatMap(state)
+                return (knownResult() ?? action(.unknown, "invocation_uncertain")).flatMap(state)
             }
             return failure("unavailable")
         }
