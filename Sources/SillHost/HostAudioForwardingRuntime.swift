@@ -52,6 +52,33 @@ final class HostAudioForwardingRuntime {
     private var running = false
     private var revision = UUID()
     private(set) var snapshot: AudioForwardingSnapshot?
+    private struct Responsibility {
+        let intent: AudioForwardingSnapshot.Intent
+        let pairingGeneration: UUID
+        var sessions: [UUID: UUID]
+        func matches(_ other: AudioForwardingSnapshot.Intent?) -> Bool {
+            other?.pairedDeviceId == intent.pairedDeviceId && other?.intentId == intent.intentId &&
+            other?.intentRevision == intent.intentRevision && other?.intentGeneration == intent.intentGeneration &&
+            other?.localMutedDesired == true
+        }
+    }
+    private var responsibility: Responsibility?
+    private final class NormalDisconnect {
+        let intent: AudioForwardingSnapshot.Intent
+        let session: Session
+        let relay: LocalAudioRelay
+        let ownership: UUID
+        var detached = false
+        init(intent: AudioForwardingSnapshot.Intent, session: Session, relay: LocalAudioRelay, ownership: UUID) {
+            self.intent = intent; self.session = session; self.relay = relay; self.ownership = ownership
+        }
+    }
+    private var ownershipRevision = UUID()
+    private var normalDisconnect: NormalDisconnect?
+    private var normalReturnID: UUID?
+    private var normalReturnWork: Task<Void, Never>?
+    var normalDisconnectReturn: ((@escaping @MainActor () -> Bool) async -> Bool)?
+    var normalDisconnectReturnInProgress: Bool { normalReturnID != nil }
 
     private lazy var coordinator = AudioForwardingCoordinator(dependencies: .init(
         configuration: { [weak self] in self?.configuration },
@@ -142,14 +169,18 @@ final class HostAudioForwardingRuntime {
                     context.isCurrent() && privacy?.forwardingIntentAllowed == true
                 }), context.isCurrent(), privacy.forwardingIntentAllowed else { return nil }
         switch result {
-        case .accepted(let value), .refused(_, let value): observe(value)
+        case .accepted(let value), .refused(_, let value):
+            recordResponsibility(value, session: session)
+            observe(value)
         }
         return try? AudioForwardingState(requestID: control.requestID, operation: .submit,
             catalog: nil, result: result)
     }
 
     private func enroll(_ context: AudioForwardingConnectionContext) async -> AudioForwardingBootstrap? {
-        guard context.isCurrent(), privacy.forwardingIntentAllowed, running else { return nil }
+        guard context.isCurrent(), running else { return nil }
+        ownershipWillChange()
+        guard privacy.forwardingIntentAllowed else { return nil }
         let owner = Enrollment(context, relay: relay)
         let generation = evidenceRevision
         enrollments[context.connectionID] = owner
@@ -173,7 +204,9 @@ final class HostAudioForwardingRuntime {
             connectionID: context.connectionID, operation: .attach, admission: admitted,
             onSubmission: { owner.submitted = true })
         guard admitted(), let value = accepted(attached, phase: "enrollment_attach") else { return nil }
-        sessions[context.connectionID] = Session(context: context, credential: bootstrap.credential)
+        let session = Session(context: context, credential: bootstrap.credential)
+        sessions[context.connectionID] = session
+        recordResponsibility(value, session: session)
         retained = true
         observe(value)
         return try? AudioForwardingBootstrap(credential: bootstrap.credential,
@@ -187,6 +220,8 @@ final class HostAudioForwardingRuntime {
 
     private func resetAfterUncertainEvidence() {
         guard running, !recoveryBlocked, relay !== retiredRelay else { return }
+        ownershipWillChange()
+        responsibility = nil
         retiredRelay = relay
         if recovering != nil {
             recoveryBlocked = true
@@ -252,11 +287,22 @@ final class HostAudioForwardingRuntime {
             resetAfterUncertainEvidence()
         }
         guard let session = sessions.removeValue(forKey: connectionID) else { return }
+        let intent = snapshot?.intent
+        let wasResponsible = responsibility?.matches(intent) == true &&
+            responsibility?.pairingGeneration == session.context.peer.pairingGeneration &&
+            responsibility?.sessions[connectionID] == session.generation
+        let wasVoiceOwner = !session.context.connectionIsCurrent() && intent?.localMutedDesired == true &&
+            intent?.pairedDeviceId == session.context.peer.id && wasResponsible
+        responsibility?.sessions.removeValue(forKey: connectionID)
+        ownershipWillChange()
         if (active?.binding.pairedDeviceId ?? preparingBinding?.pairedDeviceId) == session.context.peer.id,
            !sessions.values.contains(where: { $0.context.peer.id == session.context.peer.id && $0.context.connectionIsCurrent() }) {
             invalidate()
         }
         retiringSessions[connectionID] = session
+        if wasVoiceOwner, let intent, sessions.isEmpty, enrollments.isEmpty {
+            normalDisconnect = NormalDisconnect(intent: intent, session: session, relay: relay, ownership: ownershipRevision)
+        }
         Task { @MainActor [weak self] in await self?.retireEvidence(session) }
     }
 
@@ -264,7 +310,15 @@ final class HostAudioForwardingRuntime {
         let id = session.context.connectionID, previous = relay
         let result = await previous.forwardingEvidence(peer: session.context.peer, connectionID: id, operation: .detach)
         guard retiringSessions[id]?.generation == session.generation else { return }
-        if case .accepted = result { retiringSessions.removeValue(forKey: id) }
+        if case .accepted(let value) = result, relay === previous {
+            retiringSessions.removeValue(forKey: id)
+            if let candidate = normalDisconnect, candidate.session.generation == session.generation,
+               candidate.relay === previous, detachedSnapshot(value, matches: candidate) {
+                candidate.detached = true
+                snapshot = value
+            }
+            scheduleNormalDisconnectReturn()
+        }
         else if running, relay === previous { resetAfterUncertainEvidence() }
     }
 
@@ -301,6 +355,7 @@ final class HostAudioForwardingRuntime {
                 if result == nil { resetAfterUncertainEvidence(); return }
                 disconnected(id); continue
             }
+            recordResponsibility(value, session: session)
             observe(value)
         }
         guard running, privacy.forwardingIntentAllowed, evidenceRevision == generation else { return }
@@ -339,6 +394,9 @@ final class HostAudioForwardingRuntime {
 
     private func observe(_ value: AudioForwardingSnapshot) {
         guard running else { return }
+        if let responsibility, !responsibility.matches(value.intent) { self.responsibility = nil }
+        if snapshot?.intent?.intentGeneration != value.intent?.intentGeneration ||
+            (normalDisconnect != nil && value.binding != nil) { ownershipWillChange() }
         snapshot = value
         if let active, active.matches(value, committed: true), coordinator.isCurrent(active) { return }
         guard privacy.forwardingIntentAllowed, let scope = AudioForwardingCoordinator.Scope(value) else {
@@ -346,6 +404,9 @@ final class HostAudioForwardingRuntime {
             return
         }
         guard preparing != scope.binding.bindingEpoch else { return }
+        if scope.binding.transportKind == .native {
+            for session in sessions.values { recordResponsibility(value, session: session) }
+        }
         invalidate()
         if scope.requiresAudioIsolation, !privacy.latched, !privacy.armAndVerify() {
             print("[원격 오디오 준비] phase=privacy_configuration code=isolation_unverified")
@@ -436,6 +497,8 @@ final class HostAudioForwardingRuntime {
 
     func returnToLocal(admission: @escaping @MainActor () -> Bool) async -> Bool {
         guard running, recovering == nil, !recoveryNeeded, !recoveryBlocked, admission() else { return false }
+        ownershipWillChange()
+        responsibility = nil
         evidenceWillChange()
         guard !recoveryNeeded, recovering == nil, admission() else { return false }
         for (id, session) in sessions { retiringSessions[id] = session }
@@ -458,6 +521,8 @@ final class HostAudioForwardingRuntime {
     }
 
     func stop() {
+        ownershipWillChange()
+        responsibility = nil
         running = false
         polling?.cancel()
         polling = nil
@@ -469,5 +534,66 @@ final class HostAudioForwardingRuntime {
         sessions.removeAll()
         retiringSessions.removeAll()
         relay.lost()
+    }
+
+    private func ownershipWillChange() {
+        ownershipRevision = UUID()
+        normalDisconnect = nil
+        normalReturnWork?.cancel()
+    }
+
+    private func detachedSnapshot(_ value: AudioForwardingSnapshot, matches candidate: NormalDisconnect) -> Bool {
+        value.binding == nil && value.intent?.pairedDeviceId == candidate.intent.pairedDeviceId &&
+        value.intent?.intentId == candidate.intent.intentId && value.intent?.intentRevision == candidate.intent.intentRevision &&
+        value.intent?.intentGeneration == candidate.intent.intentGeneration
+    }
+
+    private func recordResponsibility(_ value: AudioForwardingSnapshot, session: Session) {
+        guard let intent = value.intent, intent.localMutedDesired, intent.pairedDeviceId == session.context.peer.id,
+              session.context.connectionIsCurrent(), sessions[session.context.connectionID]?.generation == session.generation else { return }
+        if responsibility?.matches(intent) != true || responsibility?.pairingGeneration != session.context.peer.pairingGeneration {
+            responsibility = Responsibility(intent: intent, pairingGeneration: session.context.peer.pairingGeneration, sessions: [:])
+        }
+        responsibility?.sessions[session.context.connectionID] = session.generation
+    }
+
+    private func normalReturnCurrent(_ candidate: NormalDisconnect) -> Bool {
+        running && recovering == nil && !recoveryNeeded && !recoveryBlocked && relay === candidate.relay &&
+        normalDisconnect === candidate && ownershipRevision == candidate.ownership && candidate.detached &&
+        !candidate.session.context.connectionIsCurrent() && sessions.isEmpty && enrollments.isEmpty && retiringSessions.isEmpty
+    }
+
+    private func scheduleNormalDisconnectReturn() {
+        guard normalReturnID == nil, let candidate = normalDisconnect, normalReturnCurrent(candidate),
+              let normalDisconnectReturn else { return }
+        let request = UUID()
+        normalReturnID = request
+        normalReturnWork = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if self.normalReturnID == request {
+                    self.normalReturnID = nil; self.normalReturnWork = nil
+                    if self.normalDisconnect === candidate { self.normalDisconnect = nil }
+                }
+            }
+            guard self.normalReturnCurrent(candidate), !Task.isCancelled,
+                  let latest = await self.readSnapshot(), self.normalReturnCurrent(candidate),
+                  self.detachedSnapshot(latest, matches: candidate) else { return }
+            self.snapshot = latest
+            let current: @MainActor () -> Bool = { [weak self] in
+                self?.normalReturnID == request && self?.normalReturnCurrent(candidate) == true && !Task.isCancelled
+            }
+            guard current() else { return }
+            _ = await normalDisconnectReturn(current)
+        }
+    }
+
+    /// Normal disconnect never detaches other sessions or clears the durable Node intent.
+    func quiesceForNormalDisconnect() async -> Bool {
+        guard let candidate = normalDisconnect, normalReturnID != nil, normalReturnCurrent(candidate),
+              !Task.isCancelled, let latest = await readSnapshot(), normalReturnCurrent(candidate),
+              detachedSnapshot(latest, matches: candidate), !Task.isCancelled else { return false }
+        snapshot = latest
+        return true
     }
 }

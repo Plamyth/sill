@@ -13,9 +13,9 @@ root = Path(__file__).resolve().parents[3]
 here = Path(__file__).resolve().parent
 node_repo, archive = [Path(p).resolve(strict=True) for p in sys.argv[1:3]]
 flags = sys.argv[3:]
-assert flags in [[], ['--observe-only'], ['--http-first'], ['--off-fresh'], ['--off-latched']]
+assert flags in [[], ['--observe-only'], ['--http-first'], ['--off-fresh'], ['--off-latched'], ['--normal-disconnect'], ['--normal-disconnect-failed']]
 commit = '0f24a70707ded2926eaaefbc658d82be5f500cb1'
-names = ['LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract', 'AudioForwardingCoordinator',
+names = ['HostLog', 'LocalAudioParticipants', 'LocalAudioRelay', 'AudioForwardingContract', 'AudioForwardingCoordinator',
          'AudioForwardingParticipants', 'AudioForwardingProtection', 'HostAudioForwardingRuntime']
 sources = [root / 'Sources/SillHost' / (name + '.swift') for name in names]
 protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
@@ -67,6 +67,7 @@ with tempfile.TemporaryDirectory(prefix='evidence-lifecycle-', dir=archive) as t
     runtime.write_text(sources[-1].read_text() + '''
 extension HostAudioForwardingRuntime {
     var checkSessionCount: Int { sessions.count }
+    var checkOwnerScopeEmpty: Bool { active == nil && preparingBinding == nil }
     var checkRecoveryBlocked: Bool { recoveryBlocked }
     func checkRefresh() async { await refresh() }
 }
