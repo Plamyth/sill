@@ -41,7 +41,7 @@ struct FixtureForwarding {
  var supported = true
  var phase = IPadAudioForwarding.Phase.ready
  var durable: IPadAudioForwarding.Durable?
- mutating func block() { phase = .blocked }
+ mutating func block(reason: String = "unknown", now: TimeInterval? = nil) { phase = .blocked }
 }
 final class StreamClient {
  var configuredCraftCapability: Int?
