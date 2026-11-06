@@ -226,6 +226,8 @@
 		F2170001000000000000A002 /* StreamClient+AudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */; };
 		F2170001000000000000B002 /* StreamClient+AudioForwarding.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */; };
 		F2210001000000000000A001 /* IPadProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F001 /* IPadProviderCall.swift */; };
+		FCCA0001000000000000A001 /* IPadConfiguredCraftAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCA0001000000000000F001 /* IPadConfiguredCraftAction.swift */; };
+		FCCA0001000000000000B001 /* IPadConfiguredCraftAction.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCCA0001000000000000F001 /* IPadConfiguredCraftAction.swift */; };
 		F2210001000000000000B001 /* IPadProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F001 /* IPadProviderCall.swift */; };
 		F2210001000000000000A002 /* StreamClient+ProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F002 /* StreamClient+ProviderCall.swift */; };
 		F2210001000000000000B002 /* StreamClient+ProviderCall.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2210001000000000000F002 /* StreamClient+ProviderCall.swift */; };
@@ -363,6 +365,7 @@
 		F2170001000000000000F001 /* IPadAudioForwarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadAudioForwarding.swift"; sourceTree = "<group>"; };
 		F2170001000000000000F002 /* StreamClient+AudioForwarding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+AudioForwarding.swift"; sourceTree = "<group>"; };
 		F2210001000000000000F001 /* IPadProviderCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadProviderCall.swift"; sourceTree = "<group>"; };
+		FCCA0001000000000000F001 /* IPadConfiguredCraftAction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IPadConfiguredCraftAction.swift"; sourceTree = "<group>"; };
 		F2210001000000000000F002 /* StreamClient+ProviderCall.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "StreamClient+ProviderCall.swift"; sourceTree = "<group>"; };
 		D4240001000000000000F001 /* IPadAppUpdate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppUpdate.swift; sourceTree = "<group>"; };
 		D4240001000000000000F002 /* IPadAppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppUpdateController.swift; sourceTree = "<group>"; };
@@ -443,6 +446,7 @@
 				F2170001000000000000F001 /* IPadAudioForwarding.swift */,
 				F2210001000000000000F002 /* StreamClient+ProviderCall.swift */,
 				F2210001000000000000F001 /* IPadProviderCall.swift */,
+				FCCA0001000000000000F001 /* IPadConfiguredCraftAction.swift */,
 				C3000001000000000000F001 /* RemoteAudioPlayer.swift */,
 				C3000001000000000000F004 /* IPadAudioSession.swift */,
 				D4000001000000000000F001 /* IPadAudioRoutePolicy.swift */,
@@ -805,6 +809,7 @@
 				F2170001000000000000A001 /* IPadAudioForwarding.swift in Sources */,
 				F2210001000000000000A002 /* StreamClient+ProviderCall.swift in Sources */,
 				F2210001000000000000A001 /* IPadProviderCall.swift in Sources */,
+				FCCA0001000000000000A001 /* IPadConfiguredCraftAction.swift in Sources */,
 				D5000001000000000000A002 /* StreamClient+DesiredAudio.swift in Sources */,
 				D4000001000000000000A007 /* IPadToolbarVisibility.swift in Sources */,
 				D4000001000000000000A002 /* IPadAudioRouteChooser.swift in Sources */,
@@ -929,6 +934,7 @@
 				F2170001000000000000B001 /* IPadAudioForwarding.swift in Sources */,
 				F2210001000000000000B002 /* StreamClient+ProviderCall.swift in Sources */,
 				F2210001000000000000B001 /* IPadProviderCall.swift in Sources */,
+				FCCA0001000000000000B001 /* IPadConfiguredCraftAction.swift in Sources */,
 				5A8A07B2D5BFF28BDA22E29B /* StreamClient+DesiredAudio.swift in Sources */,
 				F68DBB46179583E6A988EA6A /* IPadToolbarVisibility.swift in Sources */,
 				95EA8E74BE7D69CD717101D1 /* IPadAudioRouteChooser.swift in Sources */,
