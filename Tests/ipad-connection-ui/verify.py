@@ -328,9 +328,76 @@ assert 'guard audio.count <= 1' in simple_open
 simple_controls = simple88.split('private func simpleCallControls(', 1)[1].split('func test08', 1)[0]
 assert 'try tap' not in simple_controls
 assert 'captureMediaState(app, name: name)' in simple_controls
-assert 'guard call.isHittable,' in simple_controls
-assert 'identifier IN %@", ["iPadProviderCallStart", "iPadProviderCallStop"]' in simple_controls
-assert 'call.identifier == "iPadProviderCallStart" ? "통화 시작" : "통화 종료"' in simple_controls
+call_guard = simple_controls.split('        let callLabels = ', 1)[1].split('        let microphone = ', 1)[0]
+call_guard = '        let callLabels = ' + call_guard
+
+def verify_simple_call_guard(body):
+    assert hashlib.sha256(body.encode()).hexdigest() == '3a948a48d3723209af18339df150500186dcebf9658a0c3ba9c99e5bc29bd7ba'
+    pairs = re.findall(r'"(iPad\w+)": "([^"\n]+)"', body)
+    labels = dict(pairs)
+    assert len(pairs) == len(labels) == 3
+    assert labels == {'iPadProviderCallStart': '통화 시작', 'iPadProviderCallStop': '통화 종료',
+                      'iPadConfiguredCraftAction': '음성 대화'}
+    assert body.count('try unique(app.buttons.matching(NSPredicate(') == 1
+    assert 'format: "identifier BEGINSWITH %@ OR identifier BEGINSWITH %@", "iPadProviderCall", "iPadConfiguredCraft"' in body
+    assert 'guard let expectedLabel = callLabels[call.identifier], call.isHittable,' in body
+    assert 'call.label == expectedLabel else {' in body
+    assert re.search(r'\b(tap\w*|press\w*|longPress\w*|longpress\w*)\s*\(', body) is None
+    return labels
+
+call_labels = verify_simple_call_guard(call_guard)
+# 정적 입력 표 대조이며 XCUIElement 실행이나 실제 AX 재생이 아니다.
+def call_guard_accepts(records, preparing=False):
+    candidates = [(identifier, label, hittable) for identifier, label, hittable in records
+                  if identifier.startswith(('iPadProviderCall', 'iPadConfiguredCraft'))]
+    if preparing or len(candidates) != 1:
+        return False
+    identifier, label, hittable = candidates[0]
+    return identifier in call_labels and hittable and label == call_labels[identifier]
+
+call_guard_positive = 0
+call_guard_negative = 0
+for identifier, label in call_labels.items():
+    record = (identifier, label, True)
+    assert call_guard_accepts([record])
+    call_guard_positive += 1
+    for records, preparing in (([], False), ([record, record], False),
+                               ([(identifier, '잘못된 라벨', True)], False),
+                               ([(identifier, label, False)], False), ([record], True)):
+        assert not call_guard_accepts(records, preparing)
+        call_guard_negative += 1
+craft = ('iPadConfiguredCraftAction', '음성 대화', True)
+for records in ([('iPadProviderCallStart', '통화 시작', True), craft],
+                [('iPadProviderCallStop', '통화 종료', True), craft],
+                [('iPadProviderCallStart', '통화 시작', True), ('iPadProviderCallStop', '통화 종료', True)],
+                [('iPadConfiguredCraftActionUnknown', '음성 대화', True)],
+                [('iPadProviderCallUnknown', '통화 시작', True)],
+                [('iPadUnknownAction', '음성 대화', True)],
+                [craft, ('iPadConfiguredCraftActionUnknown', '음성 대화', True)],
+                [craft, ('iPadProviderCallCancelPreparation', '준비 취소', True)]):
+    assert not call_guard_accepts(records)
+    call_guard_negative += 1
+call_guard_mutations = 0
+for old, new in (('"음성 대화"', '"통화 시작"'),
+                 ('call.isHittable,', 'true,'),
+                 ('call.label == expectedLabel', 'true'),
+                 ('try unique(app.buttons.matching', 'app.buttons.matching'),
+                 ('OR identifier BEGINSWITH %@', 'AND identifier BEGINSWITH %@')):
+    assert old in call_guard
+    try:
+        verify_simple_call_guard(call_guard.replace(old, new, 1))
+    except AssertionError:
+        call_guard_mutations += 1
+    else:
+        raise AssertionError('unsafe voice guard mutation accepted: ' + new)
+for operation in ('call.tap()', 'try tapChecked(call)', 'call.press(forDuration: 1)',
+                  'call.longPress()', 'call.longpress()'):
+    try:
+        verify_simple_call_guard(call_guard + '        ' + operation + '\n')
+    except AssertionError:
+        call_guard_mutations += 1
+    else:
+        raise AssertionError('voice action insertion accepted: ' + operation)
 for identifier in ('iPadCallMicrophone', 'iPadCallSpeaker'):
     assert f'app.switches.matching(identifier: "{identifier}")' in simple_controls
 for expected in ('microphone.label == "마이크 사용", speaker.label == "스피커 사용", devices.label == "기기"',
@@ -353,7 +420,19 @@ assert 'sheetBar.waitForNonExistence(timeout: 5)' in simple08
 assert 'XCTAssertEqual' not in simple08 and '.value as? String' not in simple08
 assert simple08.count('try simpleCallControls(') == 2
 simple09 = simple88.split('func test09SetSimpleCallMediaToggles()', 1)[1]
-assert hashlib.sha256(candidate_swift.split('    func test09SetSimpleCallMediaToggles()', 1)[0].encode()).hexdigest() == '880e2dc3c7c4712139912ff1d3aa4fb5463542f544eeb9c6d17c6f45e6676e56'
+pre09 = candidate_swift.split('    func test09SetSimpleCallMediaToggles()', 1)[0]
+assert hashlib.sha256(pre09.encode()).hexdigest() == 'f3cb736d767c067662df73439d9016e557c0da3e99cfcddb57739d0fe39f63fb'
+base37_call_guard = '''        let call = try unique(app.buttons.matching(NSPredicate(
+            format: "identifier IN %@", ["iPadProviderCallStart", "iPadProviderCallStop"])))
+        guard call.isHittable,
+              call.label == (call.identifier == "iPadProviderCallStart" ? "통화 시작" : "통화 종료") else {
+            throw NSError(domain: "ConnectionUI", code: 53)
+        }
+'''
+assert pre09.count(call_guard) == 1
+assert hashlib.sha256(pre09.replace(call_guard, base37_call_guard, 1).encode()).hexdigest() == '880e2dc3c7c4712139912ff1d3aa4fb5463542f544eeb9c6d17c6f45e6676e56'
+assert hashlib.sha256(simple09.encode()).hexdigest() == '4fc8ae855bb5669c558717d4bb5e89415c509243517175b4bf32ca57fa14b18d'
+assert hashlib.sha256(FILES['prepare_destination.py'].encode()).hexdigest() == '3214435c0f8e284d32758f60e3a542088019f8524c77b716fe6194d457871e45'
 for expected in ('environment["CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED"] == "1"',
                  'environment["CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION"]', '["ON", "OFF"].contains(action)'):
     assert simple09.index(expected) < simple09.index('try existingMediaApp()')
@@ -487,5 +566,7 @@ for mode in ('--test08-only', '--test09-media-only'):
     assert f"selection.add_argument('{mode}', action='store_true')" in FILES['prepare_destination.py']
 assert plistlib.loads(plistlib.dumps(simple09_contract)) == simple09_contract
 print(json.dumps({'staticAccepted': True, 'deviceExecuted': False, 'popupReplay': popup_replay,
+                  'callGuardStatic': {'positive': call_guard_positive, 'negative': call_guard_negative,
+                                      'sourceMutationsRejected': call_guard_mutations},
                   'sha256': {k: hashlib.sha256(v.encode()).hexdigest()
                              for k, v in sorted(FILES.items())}}, sort_keys=True))

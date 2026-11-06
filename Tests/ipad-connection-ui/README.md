@@ -297,3 +297,26 @@ Pstack Feature의 how는 기존 test09·unique·tapChecked·simpleCallControls·
 검사는 기존 verify의 실제 Swift 본문 계약·변형 거절 방식을 확장한다. 중복 자식 허용·전역 검색·행으로 강제 대체·자식 수 분기 약화·값 불일치 허용·null 기본0 처리·unknown 허용·부모/leaf enabled/hittable 삭제·초기 검사 삭제·관측 누락·부모만 settled·최종 leaf 목표 검사 삭제·행 탭·재탭 등을 거절한다. 새 UI 모의 실행으로 효과를 주장하지 않는다. 첫 검증에서는 초기 검사 제거 반례가 assertion 전에 substring 조회의 ValueError를 일으켰다. 존재 assertion을 먼저 수행하도록 검증기를 수정한 뒤 통과했다.
 
 로컬 `python3 -B Tests/ipad-connection-ui/verify.py`는 `staticAccepted=true`, `deviceExecuted=false`로 통과했고 `swiftc -frontend -parse Tests/ipad-connection-ui/ConnectionUITests.swift`와 Python compile·`git diff --check`도 통과했다. 기준 커밋과 test09 이전 바이트·prepare 동일을 별도로 확인했다. 이는 정적 QA 결과이며 SDK typecheck·서명·설치·실제 leaf 탭·미디어 효과·가청 수용은 미검증이다. 다음 단계는 부모의 exact commit/tree 독립 검수와 SDK/sign이며, 새 ON 호출은 이 작업에서 승인하거나 실행하지 않는다. ARENA·Goal·추가 agent·실기기·키·오디오·네트워크 작업은0이다.
+
+
+## 2026-11-06 실제89 시험 진입용 음성 버튼 읽기 guard 보정
+
+기준은 `37c9846b45de6dd62205446a96f9b243414530e5`, tree `a8fd1ad8751fd91aead1db1f773fd59547ba904e`다. WT는 `/Users/ambrion/.codex/worktrees/ccr-ipad89-media-qa-20261106`, branch는 `codex/ipad89-media-qa-20261106`이다. 부모가 제공한 새89의 Host cap1 계약은 `iPadConfiguredCraftAction`/`음성 대화` 한 개다. 기존 helper가 legacy 두 ID만 허용해09 toggle 검사 전에 실패하므로, `simpleCallControls` 안의 해당 읽기 블록만 수정한다. 제품 소스·실제 AX를 새로 조사하거나 실기 결과를 생성하지 않는다. 기존 `CURRENT-RESUME.md`는 읽기만 했다.
+
+정확한 map은 `iPadProviderCallStart` → `통화 시작`, `iPadProviderCallStop` → `통화 종료`, `iPadConfiguredCraftAction` → `음성 대화`다. 두 버튼 namespace(`iPadProviderCall`, `iPadConfiguredCraft`)를 함께 조회해 기존 `unique`로 전체 정확히 한 개를 요구한 뒤, map에 존재하는 ID·hittable·정확한 label을 읽기 검사한다. namespace의 새 미확인 ID도 허용하지 않는다. 버튼이 없거나 둘 이상이거나 legacy와 Craft가 섞이거나 라벨이 다르면 실패한다. 기존 준비 취소·기기 sheet 보호도 유지한다. 음성 버튼의 enabled는 기존처럼 관측만 하며 tap·press·longpress를 실행하지 않는다.
+
+pre09의 새 SHA256은 `f3cb736d767c067662df73439d9016e557c0da3e99cfcddb57739d0fe39f63fb`다. 검증기는 이 새 hash를 확인하고, 정확히 한 번 존재하는 새 guard 블록을37c 원문으로 되돌린 읽기용 문자열의 과거 SHA256 `880e2dc3c7c4712139912ff1d3aa4fb5463542f544eeb9c6d17c6f45e6676e56`도 확인한다. 과거 hash 검사를 해제하지 않으며 이 블록 밖의01~07·08 본문·기존 helper 보존을 증명한다.09 본문 전체 SHA256 `4fc8ae855bb5669c558717d4bb5e89415c509243517175b4bf32ca57fa14b18d`, prepare SHA256 `3214435c0f8e284d32758f60e3a542088019f8524c77b716fe6194d457871e45`도 고정했다.09의 leaf·ON fresh both0·OFF 현재1만 한 번 탭·gate와 allowlist는 그대로다.
+
+`verify.py`는 실제 Swift guard의 SHA·map·통합 unique 조회·정확 label/hittable 조건을 검사한다. 소스에서 읽은 map의 정적 입력 표는 양성3건과 누락·동시 legacy/Craft·중복·오라벨·비hittable·준비 중·미확인 ID 등 음성23건을 대조한다. 조건 약화5종과 음성 버튼 tap·tapChecked·press·longPress·longpress 삽입5종도 거절한다. 이 표는 가짜 XCUIElement나 실기 AX 재생이 아니며 `deviceExecuted=false`다.
+
+Pstack Feature의 how는 기존 helper·unique·01~09·prepare·검증 계약과 부모의89 계약을 대조하는 순차 조사로 수행했다. architect는 사용자 ARENA 금지와 확정된 최소 범위에 따라 생략한다. 위임받은 이 writer가 세 파일만 구현하며 독립 검수는 부모가 맡는다. 소유 변경을 한 커밋으로 확정하고 clean·HEAD/tree와 검사 결과를 반환한다. 제품 설계 변경·PR·push·통합·배포는 이 범위에 없다.
+
+- Blocking first steps. 지정 branch/base·clean과 기존 원장을 확인했다. 재조사는 새 Craft ID에 대한 기존 읽기 guard 차이에 한정한다.
+- Independent workstreams. Python 정적 검사와 Swift 구문 확인은 독립으로 진행한다. 부모의 SDK·서명·독립 검수·기기 작업과 writer를 겹치지 않는다.
+- Shared mutable state. 이 writer는 ConnectionUITests.swift의 음성 읽기 블록·verify.py·README.md만 변경한다. 제품89·Host/Core·기기·오디오·키·공유 원장·prepare는 변경하지 않는다.
+- Smallest safe decomposition. 하나의 guard와 보존·반례 검증이 결합된 세 파일을 단일 writer가 처리한다. Ponytail full에 따라 기존 XCTest·Python 표준 도구만 사용하고 새 추상화·의존성·앱·하위 에이전트를 추가하지 않는다.
+
+정적 검증은 `python3 -B Tests/ipad-connection-ui/verify.py`로 수행하며 Swift 구문 확인과 Python compile·`git diff --check`를 별도로 확인한다. 기준37c와의 전체 Swift 비교에서 정확한 guard 블록만 달라졌는지도 확인한다. SDK typecheck·sign·독립 검수·설치·실제89 진입·09 토글·미디어·가청 수용은 이 writer가 수행하지 않으며 부모의 정확한 후보 검증으로 남긴다. ARENA와 순정 Goal은 사용하지 않는다.
+
+
+로컬 정적 검사는 `staticAccepted=true`, `deviceExecuted=false`, 양성3·거절23·소스 변형 거절10으로 통과했다. 별도의 전체 verifier 입력 변형8건도 거절했고 Swift 구문 확인·Python compile·정확히 세 소유 파일·37c와 guard 밖 전체 Swift 바이트 동일·prepare 동일·미추적0·diff 공백 검사도 통과했다. 이 결과는 독립 검수나 SDK 검사를 대신하지 않는다. 부모가 인계한 Host245의 capability 미광고 경로와 설치·첫 block 진단은 기존 legacy helper로 진행할 수 있으며 이 후속 Host246 대비 보정을 그 진단의 선행조건으로 두지 않는다.
