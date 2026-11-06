@@ -2,8 +2,8 @@ import Foundation
 import StreamProtocol
 
 @MainActor final class CraftFixtureTransport: ProviderCallTransport {
-    let handler: @MainActor (Data) throws -> Data
-    init(_ handler: @escaping @MainActor (Data) throws -> Data) { self.handler = handler }
+    let handler: @MainActor (Data) async throws -> Data
+    init(_ handler: @escaping @MainActor (Data) async throws -> Data) { self.handler = handler }
     nonisolated func exchange<Request: Encodable, Reply: Decodable>(_ request: Request, as: Reply.Type,
                                                                    until deadline: TimeInterval) async throws -> Reply {
         let data = try JSONEncoder().encode(request)
@@ -248,6 +248,8 @@ import StreamProtocol
         _ = await first.value
     }
     @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--cache-cas-only") { try await craftCacheCASChecks(); return }
+        try await craftCacheCASChecks()
         try await craftOutcomeChecks(check)
         try craftFirstWriteAdmissionChecks(check)
         try await craftCoordinatorReplyChecks(check)

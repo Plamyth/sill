@@ -15,10 +15,13 @@ struct HostConfiguredCraftSession {
 
 @MainActor
 final class HostConfiguredCraftRuntime {
-    private struct Record {
+    private final class Record {
         let request: ConfiguredCraftActionRequest
         let pairingGeneration: UUID
         var result: ConfiguredCraftActionResult
+        init(request: ConfiguredCraftActionRequest, pairingGeneration: UUID, result: ConfiguredCraftActionResult) {
+            self.request = request; self.pairingGeneration = pairingGeneration; self.result = result
+        }
     }
     private let open: @MainActor (TimeInterval) async throws -> any ProviderCallTransport
     private let now: () -> Int64
@@ -49,12 +52,15 @@ final class HostConfiguredCraftRuntime {
     }
 
     private func remember(_ request: ConfiguredCraftActionRequest, generation: UUID, result: ConfiguredCraftActionResult) {
-        if records[request.operationId] == nil {
-            if order.count == 128, let index = order.firstIndex(where: { $0 != invoking }) {
-                records.removeValue(forKey: order.remove(at: index))
-            }
-            order.append(request.operationId)
+        if let record = records[request.operationId] {
+            guard record.request == request, record.pairingGeneration == generation else { return }
+            record.result = result
+            return
         }
+        if order.count == 128, let index = order.firstIndex(where: { $0 != invoking }) {
+            records.removeValue(forKey: order.remove(at: index))
+        }
+        order.append(request.operationId)
         records[request.operationId] = Record(request: request, pairingGeneration: generation, result: result)
     }
 
@@ -88,12 +94,14 @@ final class HostConfiguredCraftRuntime {
                 localOperation = .query
             }
         }
-        let prior = control.targetOperationId.flatMap { records[$0]?.result }
+        let priorRecord = control.targetOperationId.flatMap { records[$0] }
+        let prior = priorRecord?.result
         let dispatching = localOperation == .invoke
         func knownResult() -> ConfiguredCraftActionResult? {
             if let id = control.targetOperationId, let record = records[id],
                record.request.deviceId == session.deviceId, record.pairingGeneration == session.pairingGeneration,
-               control.client == nil || control.client == record.request { return record.result }
+               control.client == nil || control.client == record.request,
+               localOperation != .query || record === priorRecord { return record.result }
             return prior
         }
         func rejected(_ reason: String) -> ConfiguredCraftActionState? {
@@ -184,10 +192,17 @@ final class HostConfiguredCraftRuntime {
                 else { response = failure(reason) }
             }
             if let result = response?.result {
-                if let request = control.client {
+                if localOperation == .query {
+                    // MainActor CAS: a readback may update only the original resident entry.
+                    // Eviction/reinsertion is a different object even with identical client9.
+                    if let priorRecord, let record = records[result.operationId], record === priorRecord,
+                       record.request == priorRecord.request, record.request.deviceId == session.deviceId,
+                       record.pairingGeneration == priorRecord.pairingGeneration,
+                       record.pairingGeneration == session.pairingGeneration {
+                        remember(record.request, generation: record.pairingGeneration, result: result)
+                    }
+                } else if let request = control.client {
                     remember(request, generation: session.pairingGeneration, result: result)
-                } else if let record = records[result.operationId] {
-                    remember(record.request, generation: record.pairingGeneration, result: result)
                 }
             }
             if let initial {

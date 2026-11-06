@@ -39,9 +39,9 @@ with tempfile.TemporaryDirectory(prefix='configured-craft-') as temporary:
         str(root / 'Sources/SillHost/HostConfiguredCraftRuntime.swift'),
         str(root / 'Sources/SillHost/SentryAdmission.swift'),
         str(support), str(here / 'Main.swift'), str(here / 'OutcomeChecks.swift'), str(fixture), '-o', str(out / 'checks')], check=True)
-    outcomes = subprocess.run([str(out / 'checks')], check=False, timeout=40,
+    outcomes = subprocess.run([str(out / 'checks')] + (['--cache-cas-only'] if '--cache-cas-only' in sys.argv else []), check=False, timeout=40,
                    env={**os.environ, 'DYLD_LIBRARY_PATH': str(out)})
-    if '--runtime-only' in sys.argv:
+    if '--runtime-only' in sys.argv or '--cache-cas-only' in sys.argv:
         raise SystemExit(outcomes.returncode)
     relay = (root / 'Sources/SillHost/LocalAudioRelay.swift').read_text()
     socket_support = out / 'SocketSupport.swift'

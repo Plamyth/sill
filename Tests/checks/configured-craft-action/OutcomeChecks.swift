@@ -68,6 +68,21 @@ import StreamProtocol
         expect("\(mode) internal query preserves original UNKNOWN/known invoked", internalQuery?.result == known)
         expect("\(mode) reconnect explicit query preserves original UNKNOWN/known invoked", explicitQuery?.result == known && queries == 2 && invokes == 1)
     }
+    for wasInvoked in [false, true] {
+        let initial = try invoke()
+        let uncertain = try ConfiguredCraftActionResult(outcome: .unknown, operationId: initial.client!.operationId,
+            deviceId: peer, bindingSha256: wasInvoked ? Checks.hash : nil, invoked: wasInvoked, reason: "prior_unknown")
+        let terminal = try ConfiguredCraftActionResult(outcome: .rejected, operationId: initial.client!.operationId,
+            deviceId: peer, bindingSha256: nil, invoked: false, reason: "not_dispatched")
+        let core = CraftFixtureTransport { data in
+            let body = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+            return try reply(data, outcome: "ok", result: body["op"] as? String == "configuredCraftAction.invoke" ? uncertain : terminal)
+        }
+        let runtime = HostConfiguredCraftRuntime(open: { _ in core })
+        _ = await runtime.exchange(initial, session: session())
+        let response = await runtime.exchange(ConfiguredCraftActionControl(requestId: UUID(), operationId: initial.client!.operationId), session: session())
+        expect("Core ok query typed rejected terminates UNKNOWN unless known invoked=\(wasInvoked)", response?.result == (wasInvoked ? uncertain : terminal))
+    }
     // A cache miss or reconnect cannot turn a query rejection into proof about the original invoke.
     let absent = HostConfiguredCraftRuntime(open: { _ in CraftFixtureTransport { try reply($0, outcome: "rejected") } })
     let query = ConfiguredCraftActionControl(requestId: UUID(), operationId: UUID())
@@ -137,4 +152,79 @@ import StreamProtocol
     expect("explicit same-ID replay after eviction uses Core durable once result", repeated?.result == durable && originalInvokes == 2 && effects == 1)
     if !failures.isEmpty { exit(1) }
     check("typed outcomes regression group", true)
+}
+
+
+@MainActor func craftCacheCASChecks() async throws {
+    let a = AudioForwardingDeviceID(hex: Checks.device)!
+    let other = AudioForwardingDeviceID(hex: String(repeating: "cd", count: 32))!
+    let catalog = try ConfiguredCraftActionCatalog(expectedProfileId: UUID(uuidString: Checks.profile)!, expectedAssignmentSha256: Checks.hash)
+    let off = try Checks.snapshot(input: false, output: false, phase: .off)
+    var failures = 0, cases = 0
+    for internalQuery in [false, true] {
+        for replacement in ["other_device_unknown", "other_device_ok", "other_request", "other_pairing", "same_identity_reinserted"] {
+            cases += 1
+            let pairingA = UUID(), operationId = UUID()
+            let original = ConfiguredCraftActionControl(requestId: UUID(), client: try .init(operationId: operationId,
+                deviceId: a, catalog: catalog, issuedAt: 1793910000000))
+            let b = replacement.hasPrefix("other_device") ? other : a
+            let pairingB = replacement == "other_pairing" || b != a ? UUID() : pairingA
+            let requestB = replacement == "other_request" || b != a
+                ? try ConfiguredCraftActionRequest(operationId: operationId, deviceId: b, catalog: catalog, issuedAt: 1793910000001)
+                : original.client!
+            let replacementControl = ConfiguredCraftActionControl(requestId: UUID(), client: requestB)
+            func session(_ device: AudioForwardingDeviceID, _ pairing: UUID, protected: Bool = false) -> HostConfiguredCraftSession {
+                .init(deviceId: device, deviceSessionId: UUID(), pairingGeneration: pairing,
+                    sentryProtected: { protected }, isCurrent: { true }, currentSelection: { off }, readSnapshot: { off },
+                    withSendAdmission: { _, write in try write() })
+            }
+            var release: CheckedContinuation<Void, Never>?
+            var queryCalls = 0, invokeCalls = 0
+            let originalUnknown = try ConfiguredCraftActionResult(outcome: .unknown, operationId: operationId,
+                deviceId: a, bindingSha256: Checks.hash, invoked: false, reason: "original_unknown")
+            let transport = CraftFixtureTransport { data in
+                let command = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+                var reply: [String: Any] = ["op":"configuredCraftAction.reply", "schemaVersion":1,
+                    "requestId":command["requestId"]!, "outcome":"ok"]
+                if command["op"] as? String == "configuredCraftAction.invoke" {
+                    invokeCalls += 1
+                    reply["actionResult"] = try JSONSerialization.jsonObject(with: Wire.encode(originalUnknown))
+                } else {
+                    queryCalls += 1
+                    if queryCalls == 1 { await withCheckedContinuation { release = $0 } }
+                    if replacement.hasSuffix("unknown") {
+                        reply["outcome"] = "unknown"; reply["notSent"] = false; reply["reason"] = "unavailable"
+                    } else { reply["actionResult"] = try JSONSerialization.jsonObject(with: Wire.encode(originalUnknown)) }
+                }
+                return try JSONSerialization.data(withJSONObject: reply)
+            }
+            var initialOpen = true
+            let runtime = HostConfiguredCraftRuntime(open: { _ in
+                if initialOpen { initialOpen = false; if !internalQuery { throw ProviderCallFailure.unavailable } }
+                return transport
+            })
+            let originalResult = await runtime.exchange(original, session: session(a, pairingA))
+            let query = internalQuery ? original : ConfiguredCraftActionControl(requestId: UUID(), operationId: operationId)
+            let waiting = Task { await runtime.exchange(query, session: session(a, pairingA)) }
+            for _ in 0..<1000 where release == nil { await Task.yield() }
+            guard release != nil else { fatalError("CAS fixture failed to reach query response wait") }
+            // Exactly 128 unrelated terminal outcomes evict A while its read-only query awaits.
+            for _ in 0..<128 {
+                let filler = ConfiguredCraftActionControl(requestId: UUID(), client: try .init(operationId: UUID(),
+                    deviceId: a, catalog: catalog, issuedAt: 1793910000000))
+                _ = await runtime.exchange(filler, session: session(a, pairingA, protected: true))
+            }
+            _ = await runtime.exchange(replacementControl, session: session(b, pairingB, protected: true))
+            let before = await runtime.exchange(replacementControl, session: session(b, pairingB))
+            release!.resume()
+            let late = await waiting.value
+            let after = await runtime.exchange(replacementControl, session: session(b, pairingB))
+            let passed = originalResult?.result != nil && before?.result?.outcome == .rejected && after?.result == before?.result &&
+                late?.deviceId == a && (!replacement.hasSuffix("unknown") || late?.result == originalResult?.result) && queryCalls == 1 && invokeCalls == (internalQuery ? 1 : 0)
+            if !passed { failures += 1 }
+            print("\(passed ? "PASS" : "FAIL") CACHE_CAS \(internalQuery ? "internal" : "explicit")/\(replacement) original=\(originalResult?.result?.outcome.rawValue ?? "nil") Bbefore=\(before?.result?.outcome.rawValue ?? "nil") late=\(late?.result?.outcome.rawValue ?? "nil") Bafter=\(after?.result?.outcome.rawValue ?? "nil") queries=\(queryCalls) invokes=\(invokeCalls)")
+        }
+    }
+    print("CACHE_CAS cases=\(cases) failures=\(failures); unchanged regression counts not added; actual Core/Craft effects=0")
+    if failures != 0 { exit(1) }
 }
