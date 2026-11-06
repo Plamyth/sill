@@ -62,9 +62,10 @@ struct ProviderCallSession {
         .init(id: 30, uid: "BlackHole16ch_UID", transport: .virtual, plugin: "audio.existential.BlackHole16ch", inputChannels: 16, outputChannels: 16)
     ], input: 10, output: 10, systemOutput: 10)
     var restores = 0
+    var afterRestore: (() -> Void)?
     var original: PrivacyAudioSnapshot!
     func read() throws -> PrivacyAudioSnapshot { snapshot }
     func write(_ change: PrivacyAudioWrite) -> Bool { guard let next = snapshot.applying(change) else { return false }; snapshot = next; return true }
     func observe(_ snapshot: PrivacyAudioSnapshot?, changed: (@MainActor () -> Void)?) -> Bool { true }
-    func restoreLocal(_ state: LocalAudioState) -> Bool { restores += 1; snapshot = original; return state.matches(snapshot) }
+    func restoreLocal(_ state: LocalAudioState) -> Bool { restores += 1; snapshot = original; afterRestore?(); return state.matches(snapshot) }
 }

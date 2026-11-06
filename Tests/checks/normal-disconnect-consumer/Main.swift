@@ -52,6 +52,7 @@ import StreamProtocol
     @MainActor static func main() async {
         #if NORMAL_CONSUMER
         if CommandLine.arguments.contains("--failed-preparation-only") { await failedPreparationChecks();return }
+        await compensationRearmCheck()
         #endif
         let f = Fixture(), peer = Peer()
         let started = await f.runtime.start(); check(started && f.privacy.armAndVerify(), "자동복귀 실제 모델 fixture 보호")
@@ -117,6 +118,20 @@ import StreamProtocol
 }
 
 #if NORMAL_CONSUMER
+@MainActor func compensationRearmCheck() async {
+ let f = Fixture(), peer = Peer()
+ _ = await f.runtime.start();check(f.privacy.armAndVerify(), "보상 후 새 owner 재승인 fixture 보호")
+ var admitted = true
+ f.hal.afterRestore = { admitted = false }
+ let result = await f.privacy.requestNormalDisconnectReturn { admitted }
+ check(!result && f.privacy.latched && !f.privacy.forwardingHealth(), "실패 후 물리 보상은 forwarding grant를 만들지 않음")
+ f.hal.afterRestore = nil
+ f.install(peer);f.runtime.fixtureObserve(f.relay.value)
+ print("COMPENSATION_REARM_REPRO latched=\(f.privacy.latched) health=\(f.privacy.forwardingHealth())")
+ check(f.privacy.forwardingHealth(), "새 현재 owner의 준비는 latch 값 대신 실제 보호 health를 재승인")
+ f.runtime.stop();f.privacy.stop()
+}
+
 @MainActor func sentryProofChecks() async {
  let disabled = SentryAdmission()
  check(disabled.beginNormalOffReturn() == nil, "미설정 Sentry authority는 정상 off로 추정하지 않음")
