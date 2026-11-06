@@ -222,3 +222,38 @@ Pstack Feature의 blocking 단계는 실패 실행·코드·프레임 대조이�
 07은 scope 수정의 실기 성공을 보장하지 않는다. 실제 탭 실패의 내부 원인은 미확정이다. 메뉴가 남으면 code43과 탭 뒤 AX·캡처를 남기고 끝낸다. 지원 native 상태나 다른 모델 상태가 보이면 오디오창을 닫는 단계로 진행하지 않는다. fresh OFF와 인증 광고 경로는 부모의 직전 metadata 근거이며 현재 Dots UI만으로 native 광고 부재나 오디오 효과0을 추정하지 않는다.
 
 Pstack Feature의 blocking 단계는 부모의 남은 popup 상태와06 진입 전제 대조다. Mini 정적 검사·저장 AX 대조와 새 SDK 빌드는 병렬로 수행하고, 같은 WT의07·선택기·보호 검사만 한 writer가 변경한다. Ponytail 최소 선택으로 기존 enum·AX/캡처·gate·tapChecked를 재사용하며06을 재구성하지 않는다. 설치·실행·UI·제품·Host/Core 쓰기는0이고 독립 검수는 부모에게 반환한다. 사용자 Pencil 확인은 부모의 마지막 묶음 한번으로 유지한다.
+
+## 08·09 제품88의 간단한 통화 화면 준비
+
+제품 소스 기준은 `7c2fd6858783de6b1d938b3a6531c7f6094053c5`, tree `93d9de5df821822ab2866d232b236c243e2f76ab`다. 이 변경의 QA 커밋은 제품88의 소스·설치 정체성과 별개다. 실제 iPad87/Host244 ON03·OFF04 진단, metadata와 원본 보존·Host 원인 대조는 부모가 소유한다. 이 writer는 지정된 네 파일만 변경하며 기기·Host·UI·HAL·오디오·설치·실행·빌드·서명·push·통합은 수행하지 않는다.
+
+기존01~07과 공용 helper의 원문 SHA는 `dc34eaa80c5360b967b4165436ffdeeef72e0dcc6982a47ad9fd99746626b7c9`로 고정해 검사한다. 기존 세 gate와 기본01/02 allowlist,05/06/복구07 선택 계약은 유지한다. 새 앱·runner bundle·key·profile·registry·원장은 만들지 않는다. runner는 계속 `com.ambrion.rea.appaudit.UITests.xctrunner`, 정상 앱은 `com.ambrion.sillcanvas.ipad`다.
+
+새 경로는 실행 중인 앱만 activate한다. 이미 `통화` 창이 열려 있으면 그대로 읽는다. 닫혀 있으면 기존 native 오디오 메뉴의 `입력·출력 선택…`, 또는 상단 메뉴의 `설정` 안에 있는 `openAudioRoutes`와 정확한 `통화·마이크·스피커` 라벨을 사용한다. 기존87 경로의 라벨·제목은 변경하지 않는다. 한 경로를 누른 뒤 실패하면 다른 경로로 재시도하지 않는다.
+
+`IPadAudioRouteChooser.swift`는 시작·종료 중 현재 상태에 맞는 버튼 하나만 노출한다. 초기 selection은 `.off`지만 onAppear에서 `client.audioRouteSelection`을 읽으므로 런타임 값은 추정하지 않는다. 새 관측 helper는 유일한 `통화` navigation bar, 정확한 `통화 시작` 또는 `통화 종료` 버튼 한 개, switch 형식의 `iPadCallMicrophone`/`마이크 사용`과 `iPadCallSpeaker`/`스피커 사용`, 버튼 `iPadCallDevices`/`기기`를 읽는다. switch 값은 문자열 `0` 또는 `1`만 허용한다. 준비 취소가 노출되거나 기기 sheet가 이미 열려 있으면 실패한다. 버튼 enabled 값은 관측하며 시작·종료를 누르지 않는다.
+
+메인에서 이전 input/output picker·apply·full-duplex·stop·Mac 장치·통화 대상 identifier가 없어야 한다. AX에 grant·packet·BlackHole·동의 적용·수신 확인 문구가 노출되어도 실패한다. 필요한 오류·상태 안내는 삭제하지 않는다. screenshot, 전체 native AX, 핵심 identifier/label/value/enabled/hittable JSON을 첨부한다.
+
+`prepare_destination.py GENERATED OUTPUT --test08-only`는 `test08ReadSimpleCallAXAndDeviceSheet`만 선택한다. gate는 모두0으로 생성한다. 부모가 actual88의 source/build·runner·단일 writer와 fresh OFF metadata를 직전에 확인한 뒤 runner의 일반 승인1·OFF 확인1·media0을 설정한다. 08은 두 toggle AX 값을 읽고 `기기`를 한 번 연다. 제품의 sheet onAppear는 Mac 장치 목록을 조회하므로 완전한 무효과 관측으로 표현하지 않는다. 정확한 `기기` navigation bar 안의 `완료`만 한 번 누르고 sheet 소멸과 통화 화면을 확인해 두 toggle 값을 다시 기록한다. 권한·OFF·Host 상태 판정은 부모 metadata가 담당하며 AX 값을 미디어 판정으로 바꾸지 않는다. 통화 메인은 열린 채 남는다. 통화 대상·Mac 장치 picker·시스템 출력 선택은 누르지 않는다.
+
+`prepare_destination.py GENERATED OUTPUT --test09-media-only`는 `test09SetSimpleCallMediaToggles`만 선택한다. 기존 gate 모두0에 `CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED=0`, `CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION` 빈 문자열을 추가한다. 원본 xctestrun의 승인값은 물려받지 않는다. 부모는 기존 media 승인1에 더해 전용 승인1과 정확한 `ON` 또는 `OFF`를 별도 실행 복사본에 설정해야 한다. 선택 옵션 다섯 개는 CLI와 함수에서 상호 배타적이다. 09는 기본 allowlist에 포함되지 않는다.
+
+09의 `ON`은 두 toggle 값0, `OFF`는 두 값1을 요구한다. 한쪽만 켜져 있거나 현재 상태가 다르면 조작하지 않는다. 기존 `tapChecked`로 마이크, 스피커를 각각 최대 한 번 누르고 각 AX 값과 enabled/hittable 복귀를 최대10초 확인한다. 반영 실패 시 재탭·자동 원복·반대 action은 수행하지 않는다. 최종 조작 뒤10초의 screenshot/AX와 두 값도 기록한다. 이 값은 selection 관측이며 capture/engine·Host intent·실제 전달·재생 성공의 증거가 아니다. 실패·부분 변경이 남으면 부모가 정확한 metadata와 기존 승인 범위에서 후속 조치를 결정한다. 시작·종료 native 버튼이나 원격 Mac 영상은 어떤 분기에서도 누르지 않으며, Codex 직접 제어 거절을 우회하지 않는다.
+
+Pstack Feature 진행은 다음과 같다.
+
+1. `how` over the affected subsystem. 제품 chooser·HostSettingsPanel·StreamClient의 selection과 기존 runner/변환기를 읽어 대조했다. 하위 에이전트 도구가 없어 한 번의 순차 조사로 수행했다.
+2. `architect` for parallel design exploration. skip. 사용자 ARENA 금지를 적용하고 기존 gate·AX·capture helper와 이름 있는 microphone/speaker tuple만 재사용했다. Model the Domain 원칙으로 ON/OFF 선택과 두 AX 요소를 하나의 작은 관측 단위로 유지했다.
+3. Write the throughput checkpoint as four todo items.
+   - Blocking first steps. 지정 clean WT의 base/tree, 최신 결정, 기존 테스트와 실제 제품 label/identifier/초기 selection을 확인했다.
+   - Independent workstreams. 부모의87/Host244 진단과 이 writer의88 QA 준비는 독립이다. Python 검증·Swift 구문 확인은 기기를 열지 않는다.
+   - Shared mutable state. 이 writer는 네 테스트 파일만 소유한다. 부모가 기기·Host·원장·제품·빌드·서명·설치·실행·통합을 소유한다.
+   - Smallest safe decomposition. 테스트·선택기·검증·문서는 한 변경이므로 단일 writer가 맡는다. 새 fixture·관리 체계·의존성을 추가하지 않는다.
+4. Delegate code-writing to a subagent. 부모가 위임한 이 독립 writer가 구현한다. 추가 하위 에이전트 도구가 없으며 `BLOCKED: independent review`는 부모의 비작성 검수로 반환한다.
+5. Verify on the matching surface. `python3 -B Tests/ipad-connection-ui/verify.py`, Apple `swiftc -frontend -parse Tests/ipad-connection-ui/ConnectionUITests.swift`, Python 두 파일의 compile과 `git diff --check`가 통과했다. 실제 CLI의08/09 동시 선택도 거부됐다. 실기 XCTest 수용은 아직 미검증이다.
+6. Rebase into small, ordered commits. 지정 base 위 네 파일만 한 QA 커밋으로 확정한다. 원래 제품 소스와 별도로 보고한다.
+7. If the design is contested, `interrogate` before shipping. n/a. 제품 설계 변경과 shipping은 이 위임 범위 밖이다.
+8. Run Opening a PR. skip. push·PR·통합·빌드·서명·설치·실행은 부모 소유다.
+
+Ponytail full은 기존 구조와 XCTest·Python 표준 도구만 사용했다. ARENA·순정 Goal·source-guard 이전 수용·실기 성공을 생성하거나 주장하지 않는다. 부모의 exact88 설치 readback, 독립 검수, 실제 AX 형식·값·sheet 닫힘·전후 metadata 확인과 별도09 승인 아래 실제 media 검증이 남는다.

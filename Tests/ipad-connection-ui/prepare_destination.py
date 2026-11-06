@@ -4,9 +4,10 @@ import plistlib
 from pathlib import Path
 
 
-def prepare(source, test05_only=False, test06_only=False, recover07_only=False):
-    if sum((test05_only, test06_only, recover07_only)) > 1:
-        raise ValueError('05·06·복구07은 각각 단독으로 선택해야 합니다.')
+def prepare(source, test05_only=False, test06_only=False, recover07_only=False,
+            test08_only=False, test09_media_only=False):
+    if sum((test05_only, test06_only, recover07_only, test08_only, test09_media_only)) > 1:
+        raise ValueError('05·06·복구07·08·media09는 각각 단독으로 선택해야 합니다.')
     assert source['__xctestrun_metadata__']['FormatVersion'] == 1
     assert set(source) == {'ConnectionUITests', '__xctestrun_metadata__'}
     original = source['ConnectionUITests']
@@ -45,6 +46,14 @@ def prepare(source, test05_only=False, test06_only=False, recover07_only=False):
     if recover07_only:
         target['OnlyTestIdentifiers'] = ['ConnectionUITests/test07RecoverOpenDotsPopupToNative']
         target['EnvironmentVariables']['CCR_CONNECTION_UI_RECOVERY_APPROVED'] = '0'
+    if test08_only:
+        target['OnlyTestIdentifiers'] = ['ConnectionUITests/test08ReadSimpleCallAXAndDeviceSheet']
+    if test09_media_only:
+        target['OnlyTestIdentifiers'] = ['ConnectionUITests/test09SetSimpleCallMediaToggles']
+        target['EnvironmentVariables'].update({
+            'CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED': '0',
+            'CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION': '',
+        })
     return {'ConnectionUITests': target,
             '__xctestrun_metadata__': source['__xctestrun_metadata__']}
 
@@ -57,10 +66,13 @@ if __name__ == '__main__':
     selection.add_argument('--test05-only', action='store_true')
     selection.add_argument('--test06-only', action='store_true')
     selection.add_argument('--recover07-only', action='store_true')
+    selection.add_argument('--test08-only', action='store_true')
+    selection.add_argument('--test09-media-only', action='store_true')
     args = parser.parse_args()
     data = prepare(plistlib.loads(args.generated.read_bytes()),
                    test05_only=args.test05_only, test06_only=args.test06_only,
-                   recover07_only=args.recover07_only)
+                   recover07_only=args.recover07_only, test08_only=args.test08_only,
+                   test09_media_only=args.test09_media_only)
     with args.output.open('xb') as output:
         plistlib.dump(data, output, sort_keys=True)
     assert plistlib.loads(args.output.read_bytes()) == data

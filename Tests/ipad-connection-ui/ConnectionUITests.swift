@@ -464,4 +464,127 @@ final class ConnectionUITests: XCTestCase {
         }
         captureMediaState(app, name: "recover07-closed")
     }
+
+    private func openSimpleCall(_ app: XCUIApplication) throws {
+        if app.navigationBars["통화"].exists { return }
+        let audio = app.menuBars.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", "오디오"))
+        guard audio.count <= 1 else { throw NSError(domain: "ConnectionUI", code: 50) }
+        if audio.count == 1, audio.element(boundBy: 0).isHittable {
+            try tapChecked(audio.element(boundBy: 0))
+            try tapUnique(menuAction(app, label: "입력·출력 선택…"))
+        } else {
+            try ensureToolbarVisible(app)
+            try tapUnique(app.buttons.matching(identifier: "workspaceOverflow"))
+            try tapUnique(menuAction(app, label: "설정"))
+            try tapUnique(app.buttons.matching(NSPredicate(
+                format: "identifier == %@ AND label == %@", "openAudioRoutes", "통화·마이크·스피커")))
+        }
+        let bar = try unique(app.navigationBars.matching(identifier: "통화"))
+        guard bar.isHittable else { throw NSError(domain: "ConnectionUI", code: 51) }
+    }
+
+    private func simpleCallControls(_ app: XCUIApplication, name: String) throws
+        -> (microphone: XCUIElement, speaker: XCUIElement) {
+        captureMediaState(app, name: name)
+        let bar = try unique(app.navigationBars.matching(identifier: "통화"))
+        guard bar.isHittable, app.navigationBars["기기"].exists == false,
+              app.buttons.matching(identifier: "iPadProviderCallCancelPreparation").count == 0 else {
+            throw NSError(domain: "ConnectionUI", code: 52,
+                          userInfo: [NSLocalizedDescriptionKey: "통화 메인 화면이 아니거나 준비 중입니다."])
+        }
+        let call = try unique(app.buttons.matching(NSPredicate(
+            format: "identifier IN %@", ["iPadProviderCallStart", "iPadProviderCallStop"])))
+        guard call.isHittable,
+              call.label == (call.identifier == "iPadProviderCallStart" ? "통화 시작" : "통화 종료") else {
+            throw NSError(domain: "ConnectionUI", code: 53)
+        }
+        let microphone = try unique(app.switches.matching(identifier: "iPadCallMicrophone"))
+        let speaker = try unique(app.switches.matching(identifier: "iPadCallSpeaker"))
+        let devices = try unique(app.buttons.matching(identifier: "iPadCallDevices"))
+        guard microphone.label == "마이크 사용", speaker.label == "스피커 사용", devices.label == "기기",
+              microphone.isHittable, speaker.isHittable, devices.isHittable,
+              ["0", "1"].contains(microphone.value as? String ?? ""),
+              ["0", "1"].contains(speaker.value as? String ?? "") else {
+            throw NSError(domain: "ConnectionUI", code: 54,
+                          userInfo: [NSLocalizedDescriptionKey: "정확한 통화 toggle·기기 AX 또는 0/1 값 미확인"])
+        }
+        let internalIDs = ["audioRouteInput", "audioRouteOutput", "applyAudioRoutes", "applyMacAudioRoutes",
+                           "useIPadFullDuplex", "stopIPadAudio", "iPadCallTarget", "macAudioInput", "macAudioOutput"]
+        guard app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier IN %@", internalIDs)).count == 0,
+              app.descendants(matching: .any).matching(NSPredicate(
+                format: "label MATCHES %@", "(?i).*(grant|packet|blackhole|동의 적용|Mac 수신 상태 확인).*")).count == 0 else {
+            throw NSError(domain: "ConnectionUI", code: 55,
+                          userInfo: [NSLocalizedDescriptionKey: "통화 메인에 내부 적용·grant·packet 또는 기기 설정이 노출됐습니다."])
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "controls": [call, microphone, speaker, devices].map { item in
+                ["identifier": item.identifier, "label": item.label, "value": item.value as? String ?? "",
+                 "enabled": item.isEnabled, "hittable": item.isHittable] as [String: Any]
+            },
+            "scope": "제품 소스7c2fd685의 간단한 통화 AX 관측. 버튼을 누르지 않으며 실제 미디어 수용은 별도입니다."
+        ], options: [.prettyPrinted, .sortedKeys])
+        let ax = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        ax.name = name + "-values"
+        ax.lifetime = .keepAlways
+        add(ax)
+        return (microphone, speaker)
+    }
+
+    func test08ReadSimpleCallAXAndDeviceSheet() throws {
+        continueAfterFailure = false
+        guard ProcessInfo.processInfo.environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "0" else {
+            throw XCTSkip("08은 media0과 부모의 actual88·fresh OFF 확인 후에만 실행합니다.")
+        }
+        let app = try existingApp()
+        try openSimpleCall(app)
+        _ = try simpleCallControls(app, name: "simple08-main")
+        try tapUnique(app.buttons.matching(NSPredicate(
+            format: "identifier == %@ AND label == %@", "iPadCallDevices", "기기")))
+        captureMediaState(app, name: "simple08-device-sheet")
+        let sheetBar = try unique(app.navigationBars.matching(identifier: "기기"))
+        guard sheetBar.isHittable else { throw NSError(domain: "ConnectionUI", code: 57) }
+        try tapUnique(sheetBar.buttons.matching(NSPredicate(format: "label == %@", "완료")))
+        guard sheetBar.waitForNonExistence(timeout: 5) else {
+            throw NSError(domain: "ConnectionUI", code: 58,
+                          userInfo: [NSLocalizedDescriptionKey: "기기 sheet 닫힘 미확인. 재탭하지 않습니다."])
+        }
+        _ = try simpleCallControls(app, name: "simple08-device-sheet-closed")
+    }
+
+    func test09SetSimpleCallMediaToggles() async throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED"] == "1",
+              let action = environment["CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION"], ["ON", "OFF"].contains(action) else {
+            throw XCTSkip("09는 별도 simple media 승인1과 부모의 명시적 ON 또는 OFF 선택이 필요합니다.")
+        }
+        let app = try existingMediaApp()
+        try openSimpleCall(app)
+        defer { captureMediaState(app, name: "simple09-final-observation") }
+        let controls = try simpleCallControls(app, name: "simple09-before-" + action)
+        let target = action == "ON" ? "1" : "0"
+        let initial = action == "ON" ? "0" : "1"
+        guard controls.microphone.value as? String == initial, controls.speaker.value as? String == initial,
+              controls.microphone.isEnabled, controls.speaker.isEnabled else {
+            throw NSError(domain: "ConnectionUI", code: 59,
+                          userInfo: [NSLocalizedDescriptionKey: "부모가 승인한 ON/OFF의 초기 toggle 값 또는 활성 상태와 다릅니다."])
+        }
+        for toggle in [controls.microphone, controls.speaker] {
+            guard toggle.value as? String == initial else { throw NSError(domain: "ConnectionUI", code: 60) }
+            try tapChecked(toggle)
+            captureMediaState(app, name: "simple09-after-" + toggle.identifier + "-" + action)
+            let settled = XCTNSPredicateExpectation(predicate: NSPredicate(
+                format: "value == %@ AND enabled == true AND hittable == true", target), object: toggle)
+            guard await XCTWaiter.fulfillment(of: [settled], timeout: 10) == .completed else {
+                throw NSError(domain: "ConnectionUI", code: 61,
+                              userInfo: [NSLocalizedDescriptionKey: "toggle 반영·활성 복귀 미확인. 재탭·자동 원복하지 않습니다."])
+            }
+        }
+        try await Task.sleep(nanoseconds: 10_000_000_000)
+        let observed = try simpleCallControls(app, name: "simple09-ten-seconds-after-" + action)
+        XCTAssertEqual(observed.microphone.value as? String, target)
+        XCTAssertEqual(observed.speaker.value as? String, target)
+    }
 }

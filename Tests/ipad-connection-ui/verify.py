@@ -9,7 +9,11 @@ if 'FILES' not in globals():
     root = Path(__file__).resolve().parent
     FILES = {str(p.relative_to(root)): p.read_text() for p in root.rglob('*')
              if p.is_file() and p.suffix in {'.swift', '.py', '.pbxproj', '.xcscheme'}}
-full_swift = FILES['ConnectionUITests.swift']
+candidate_swift = FILES['ConnectionUITests.swift']
+full_swift, simple88 = candidate_swift.split('\n    private func openSimpleCall(', 1)
+full_swift = full_swift.rstrip() + '\n}\n'
+simple88 = 'private func openSimpleCall(' + simple88
+assert hashlib.sha256(full_swift.encode()).hexdigest() == 'dc34eaa80c5360b967b4165436ffdeeef72e0dcc6982a47ad9fd99746626b7c9'
 previous_swift = full_swift.split('\n    func test07RecoverOpenDotsPopupToNative()', 1)[0].rstrip() + '\n}\n'
 assert hashlib.sha256(previous_swift.encode()).hexdigest() == 'bc0907aa6b8712d4cd5fad50add94a784c5617681fe086c44e757ad32d41b2b8'
 swift, native06 = full_swift.split('\n    private enum ReadOnlyCallTarget:', 1)
@@ -52,7 +56,7 @@ assert 'func test03EnableIPadFullDuplex() async throws' in swift
 assert 'func test04DisableIPadAudio() async throws' in swift
 for token in ('.launch(', '.terminate(', 'launchArguments', 'launchEnvironment',
               'coordinate(', 'typeText(', 'press(', 'swipe', 'adjust(', 'springboard'):
-    assert token not in full_swift, token
+    assert token not in candidate_swift, token
 assert 'CCR_CONNECTION_UI_APPROVED' in swift
 import re
 audio_gate = re.search(
@@ -122,7 +126,9 @@ seed = {'__xctestrun_metadata__': {'FormatVersion': 1}, 'ConnectionUITests': {
     'TestingEnvironmentVariables': {},
     'EnvironmentVariables': {'CCR_CONNECTION_UI_APPROVED': '1',
                              'CCR_CONNECTION_UI_AUDIO_OFF_VERIFIED': '1',
-                             'CCR_CONNECTION_UI_MEDIA_APPROVED': '1'}}}
+                             'CCR_CONNECTION_UI_MEDIA_APPROVED': '1',
+                             'CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED': '1',
+                             'CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION': 'ON'}}}
 result = namespace['prepare'](seed)['ConnectionUITests']
 assert result['UseDestinationArtifacts'] is True
 assert result['UseUITargetAppProvidedByTests'] is True
@@ -302,6 +308,92 @@ except AssertionError:
     pass
 else:
     raise AssertionError('runner identity mismatch accepted')
+
+assert candidate_swift.count('func test') == 9
+assert candidate_swift.count('.activate()') == 1
+assert candidate_swift.count('.tap()') == full_swift.count('.tap()')
+for forbidden in ('existingMediaApp', 'performIPadProviderCall', 'selectIPadProviderCallTarget',
+                  'try openAudioChooser(', 'try requireAudioChooser(', 'try callTargetPicker(',
+                  'tapChecked(call)', 'tapChecked(devices)', 'tapChecked(microphone)', 'tapChecked(speaker)'):
+    if forbidden == 'existingMediaApp':
+        assert simple88.count('try existingMediaApp()') == 1
+    else:
+        assert forbidden not in simple88, forbidden
+simple_open = simple88.split('private func simpleCallControls(', 1)[0]
+assert 'if app.navigationBars["통화"].exists { return }' in simple_open
+assert 'menuAction(app, label: "입력·출력 선택…")' in simple_open
+assert '"openAudioRoutes", "통화·마이크·스피커"' in simple_open
+assert simple_open.count('try tapChecked(') == 1 and simple_open.count('try tapUnique(') == 4
+assert 'guard audio.count <= 1' in simple_open
+simple_controls = simple88.split('private func simpleCallControls(', 1)[1].split('func test08', 1)[0]
+assert 'try tap' not in simple_controls
+assert 'captureMediaState(app, name: name)' in simple_controls
+assert 'guard call.isHittable,' in simple_controls
+assert 'identifier IN %@", ["iPadProviderCallStart", "iPadProviderCallStop"]' in simple_controls
+assert 'call.identifier == "iPadProviderCallStart" ? "통화 시작" : "통화 종료"' in simple_controls
+for identifier in ('iPadCallMicrophone', 'iPadCallSpeaker'):
+    assert f'app.switches.matching(identifier: "{identifier}")' in simple_controls
+for expected in ('microphone.label == "마이크 사용", speaker.label == "스피커 사용", devices.label == "기기"',
+                 '"iPadProviderCallCancelPreparation").count == 0',
+                 '["0", "1"].contains(microphone.value as? String ?? "")',
+                 '["0", "1"].contains(speaker.value as? String ?? "")',
+                 '"audioRouteInput", "audioRouteOutput", "applyAudioRoutes", "applyMacAudioRoutes"',
+                 'grant|packet|blackhole|동의 적용|Mac 수신 상태 확인',
+                 '"controls": [call, microphone, speaker, devices].map',
+                 'XCTAttachment(data: data, uniformTypeIdentifier: "public.json")'):
+    assert expected in simple_controls, expected
+simple08 = simple88.split('func test08ReadSimpleCallAXAndDeviceSheet()', 1)[1].split('func test09', 1)[0]
+assert simple08.index('environment["CCR_CONNECTION_UI_MEDIA_APPROVED"] == "0"') < simple08.index('try existingApp()')
+assert simple08.count('try existingApp()') == 1 and 'existingMediaApp' not in simple08
+assert simple08.count('try tapUnique(') == 2 and 'try tapChecked(' not in simple08
+assert '"iPadCallDevices", "기기"' in simple08
+assert 'app.navigationBars.matching(identifier: "기기")' in simple08
+assert 'sheetBar.buttons.matching(NSPredicate(format: "label == %@", "완료"))' in simple08
+assert 'sheetBar.waitForNonExistence(timeout: 5)' in simple08
+assert 'XCTAssertEqual' not in simple08 and '.value as? String' not in simple08
+assert simple08.count('try simpleCallControls(') == 2
+simple09 = simple88.split('func test09SetSimpleCallMediaToggles()', 1)[1]
+for expected in ('environment["CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED"] == "1"',
+                 'environment["CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION"]', '["ON", "OFF"].contains(action)'):
+    assert simple09.index(expected) < simple09.index('try existingMediaApp()')
+assert 'throw XCTSkip(' in simple09
+assert 'existingApp()' not in simple09 and simple09.count('try existingMediaApp()') == 1
+assert simple09.count('try tapChecked(') == 1 and 'try tapUnique(' not in simple09
+assert 'for toggle in [controls.microphone, controls.speaker]' in simple09
+assert 'let target = action == "ON" ? "1" : "0"' in simple09
+assert 'let initial = action == "ON" ? "0" : "1"' in simple09
+assert simple09.index('controls.microphone.value as? String == initial, controls.speaker.value as? String == initial') < simple09.index('try tapChecked(toggle)')
+assert 'guard toggle.value as? String == initial' in simple09
+assert 'defer { captureMediaState(app, name: "simple09-final-observation") }' in simple09
+assert 'await XCTWaiter.fulfillment(of: [settled], timeout: 10) == .completed' in simple09
+assert 'value == %@ AND enabled == true AND hittable == true' in simple09
+assert simple09.index('try tapChecked(toggle)') < simple09.index('XCTWaiter.fulfillment(') < simple09.index('Task.sleep(')
+assert 'XCTAssertEqual(observed.microphone.value as? String, target)' in simple09
+assert 'XCTAssertEqual(observed.speaker.value as? String, target)' in simple09
+assert 'iPadProviderCall' not in simple09 and 'iPadCallDevices' not in simple09
+assert simple09.count('try openSimpleCall(app)') == 1
+
+simple08_contract = namespace['prepare'](seed, test08_only=True)['ConnectionUITests']
+assert simple08_contract['OnlyTestIdentifiers'] == ['ConnectionUITests/test08ReadSimpleCallAXAndDeviceSheet']
+assert {k: v for k, v in simple08_contract.items() if k != 'OnlyTestIdentifiers'} == {
+    k: v for k, v in result.items() if k != 'OnlyTestIdentifiers'}
+simple09_contract = namespace['prepare'](seed, test09_media_only=True)['ConnectionUITests']
+assert simple09_contract['OnlyTestIdentifiers'] == ['ConnectionUITests/test09SetSimpleCallMediaToggles']
+assert simple09_contract['EnvironmentVariables'] == dict(result['EnvironmentVariables'],
+    CCR_CONNECTION_UI_SIMPLE_MEDIA_APPROVED='0', CCR_CONNECTION_UI_SIMPLE_MEDIA_ACTION='')
+assert {k: v for k, v in simple09_contract.items() if k not in ('OnlyTestIdentifiers', 'EnvironmentVariables')} == {
+    k: v for k, v in result.items() if k not in ('OnlyTestIdentifiers', 'EnvironmentVariables')}
+from itertools import combinations
+for first, second in combinations(('test05_only', 'test06_only', 'recover07_only', 'test08_only', 'test09_media_only'), 2):
+    try:
+        namespace['prepare'](seed, **{first: True, second: True})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(f'mixed selection accepted: {first}, {second}')
+for mode in ('--test08-only', '--test09-media-only'):
+    assert f"selection.add_argument('{mode}', action='store_true')" in FILES['prepare_destination.py']
+assert plistlib.loads(plistlib.dumps(simple09_contract)) == simple09_contract
 print(json.dumps({'staticAccepted': True, 'deviceExecuted': False, 'popupReplay': popup_replay,
                   'sha256': {k: hashlib.sha256(v.encode()).hexdigest()
                              for k, v in sorted(FILES.items())}}, sort_keys=True))
