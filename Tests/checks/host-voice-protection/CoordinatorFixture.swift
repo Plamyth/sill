@@ -4,6 +4,7 @@ import StreamProtocol
 private final class BoundaryConnection {
     enum State { case ready }
     let state = State.ready
+    var current = true
 }
 private struct BoundaryRoute { let encrypted = true; let fingerprint: Data? = Data([1]) }
 private final class BoundaryTrust { func isPaired(_ fingerprint: Data) -> Bool { fingerprint == Data([1]) } }
@@ -27,6 +28,7 @@ private final class BoundaryMicrophone {
 private final class BoundaryServer {
     var disabled = 0
     var sent: [StreamMessage] = []
+    func connectionIsCurrent(_ connection: BoundaryConnection) -> Bool { connection.current }
     func setRemoteAudio(_ enabled: Bool, for connection: BoundaryConnection) { if !enabled { disabled += 1 } }
     func send(_ message: StreamMessage, to connection: BoundaryConnection) { sent.append(message) }
 }
