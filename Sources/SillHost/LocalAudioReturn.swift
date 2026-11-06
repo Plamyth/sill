@@ -391,15 +391,19 @@ final class LocalAudioJournal {
 
     /// Cleanup happens only after the enclosing audio/Sentry transaction has accepted success.
     /// Failure leaves a conservative restart recovery record; it cannot undo that commit.
-    func finishLocalReturn() {
-        guard !latched, original == nil, let clearedData, load() == clearedData else { return }
-        removeRecovery()
+    @discardableResult
+    func finishLocalReturn() -> Bool {
+        guard !latched, original == nil, let clearedData, load() == clearedData else { return false }
+        return removeRecovery()
     }
 
-    private func removeRecovery() {
-        guard let storeRecovery, let loadRecovery else { return }
+    @discardableResult
+    private func removeRecovery() -> Bool {
+        guard let storeRecovery, let loadRecovery else { return false }
         storeRecovery(nil)
-        if synchronize(), loadRecovery() == nil { preparedRecovery = nil }
+        guard synchronize(), loadRecovery() == nil else { return false }
+        preparedRecovery = nil
+        return true
     }
 
     func write(latched: Bool, original: LocalAudioState?) -> Bool {

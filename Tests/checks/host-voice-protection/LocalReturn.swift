@@ -180,7 +180,7 @@ func localReturnChecks() async {
     let coupledResult = await coupled.privacy.requestLocalReturn()
     expect(!coupledResult && coupled.privacy.latched && coupled.commits == 0,
            "Sentry commit 거부는 오디오 영속 복귀를 완료하지 않음")
-    expect((try? coupled.hal.snapshot.plan().isEmpty) == true, "결합 실패 뒤 주입 장치 보호 재적용")
+    expect(coupled.hal.snapshot.physicalProtectionVerified, "결합 실패 뒤 주입 장치 보호 재적용")
     coupled.privacy.stop()
 
     let refused = ReturnFixture(); refused.intentAccepted = false
@@ -408,7 +408,7 @@ private func normalDisconnectReturnChecks() async {
             failure.clearHook = { failure.persistenceAccepted = false }
         }
         let result = await failure.privacy.requestNormalDisconnectReturn { admitted }
-        expect(!result && failure.privacy.latched && (try? failure.hal.snapshot.plan().isEmpty) == true &&
+        expect(!result && failure.privacy.latched && failure.hal.snapshot.physicalProtectionVerified &&
                failure.authCalls == 0 && failure.intentCommits == 0,
                "\(phase) 실패 시 로컬을 유지하지 않고 보호 상태 복구")
         if phase == "persistence" {
@@ -449,6 +449,7 @@ final class JournalReturnFixture {
     var stored: Data?
     var recoveryStored: Data?
     var recoveryStorageAccepted = true
+    var recoveryDeletionAccepted = true
     var recoveryReadbackAccepted = true
     var clearEffectiveThenStorageFails = false
     var afterClearHook: (() -> Void)?
@@ -519,7 +520,7 @@ private func normalDisconnectJournalFailureChecks() async {
         }
         let result = await failure.privacy.requestNormalDisconnectReturn { admitted }
         let restarted = failure.restartedJournal()
-        let protected = (try? failure.hal.snapshot.plan().isEmpty) == true
+        let protected = failure.hal.snapshot.physicalProtectionVerified
         let retained = restarted.latched && restarted.original == original
         print("JOURNAL_REPRO hotplug=\(hotplug) returned=\(result) compensationWrites=\(failure.hal.writes - writes) physicalProtected=\(protected) restartLatched=\(restarted.latched) restartHasOriginal=\(restarted.original != nil)")
         protectedEveryCase = protectedEveryCase && protected && failure.hal.writes > writes
@@ -549,7 +550,7 @@ private func normalDisconnectJournalFailureChecks() async {
         let result = await failure.privacy.requestNormalDisconnectReturn { true }
         let restarted = failure.restartedJournal()
         expect(!result && restarted.latched && restarted.original == original &&
-               (try? failure.hal.snapshot.plan().isEmpty) == true && !failure.privacy.forwardingHealth(),
+               failure.hal.snapshot.physicalProtectionVerified && !failure.privacy.forwardingHealth(),
                "최종 \(fault) 실패도 실제 production 콜백이 재시작 원본과 가능한 물리 보호 보존")
         failure.privacy.stop()
     }
@@ -565,6 +566,21 @@ private func normalDisconnectJournalFailureChecks() async {
 
 @MainActor
 private func normalDisconnectRecheckRegressions() async {
+    for manual in [false, true] {
+        let cleanup = JournalReturnFixture()
+        cleanup.authAccepted = manual
+        cleanup.privacy.authenticatedLocalReturnWillCommit = { admission in admission() }
+        expect(cleanup.privacy.armAndVerify(), "WAL 정리 실패 \(manual) fixture 보호")
+        let original = cleanup.original!
+        cleanup.recoveryDeletionAccepted = false
+        let returned = manual ? await cleanup.privacy.requestLocalReturn() : await cleanup.privacy.requestNormalDisconnectReturn { true }
+        let restarted = cleanup.restartedJournal()
+        expect(returned && original.matches(cleanup.hal.snapshot) && !cleanup.privacy.latched &&
+               cleanup.privacy.localReturnRecoveryPending && cleanup.privacy.localReturnStatusReason?.contains("재시작") == true &&
+               cleanup.privacy.state.reason?.contains("재시작") == true && restarted.latched && restarted.original == original,
+               "WAL 정리 실패는 현재 로컬 복귀와 재시작 복구 미확인을 구분")
+        cleanup.privacy.stop()
+    }
     var protectedEveryCase = true, retainedEveryOriginal = true
     for kind in ["restore-hotplug-save-failure", "clear-effective-rollback-failure"] {
         let f = JournalReturnFixture()
@@ -586,7 +602,7 @@ private func normalDisconnectRecheckRegressions() async {
         } else { f.clearEffectiveThenStorageFails = true }
         let result = await f.privacy.requestNormalDisconnectReturn { admitted }
         let restarted = f.restartedJournal()
-        let protected = (try? f.hal.snapshot.plan().isEmpty) == true
+        let protected = f.hal.snapshot.physicalProtectionVerified
         print("RECHECK_REGRESSION kind=\(kind) returned=\(result) compensationWrites=\(f.hal.writes - writes) physicalProtected=\(protected) restartLatched=\(restarted.latched) restartHasOriginal=\(restarted.original != nil) recoveryPresent=\(f.recoveryStored != nil)")
         protectedEveryCase = protectedEveryCase && !result && protected && f.hal.writes > writes
         retainedEveryOriginal = retainedEveryOriginal && restarted.latched && restarted.original == original
@@ -616,8 +632,8 @@ private func normalDisconnectRecheckRegressions() async {
             }
             let result = await f.privacy.requestNormalDisconnectReturn { admitted }
             expect(!result && f.privacy.latched && f.hal.snapshot.devices[0].inputMuted == true &&
-                   f.hal.snapshot.devices[0].outputMuted == true && f.hal.snapshot.input == 20 &&
-                   f.hal.snapshot.output == 30 && f.hal.snapshot.systemOutput == 30,
+                   f.hal.snapshot.devices[0].outputMuted == true && f.hal.snapshot.input == 10 &&
+                   f.hal.snapshot.output == 10 && f.hal.snapshot.systemOutput == 10,
                    "\(phase) 복원 후 실패에서도 가능한 보호 write를 저장·topology 오류와 분리")
             f.privacy.stop()
         }.value
@@ -644,7 +660,7 @@ private func normalDisconnectRecheckRegressions() async {
             }
             let result = await f.privacy.requestNormalDisconnectReturn { admitted }
             let restarted = f.restartedJournal()
-            expect(!result && f.privacy.latched && (try? f.hal.snapshot.plan().isEmpty) == true &&
+            expect(!result && f.privacy.latched && f.hal.snapshot.physicalProtectionVerified &&
                    restarted.latched && restarted.original == original && f.recoveryStored != nil,
                    "primary clear 후 \(phase) 취소도 WAL 정리 없이 보호와 독립 원본 보존")
             f.privacy.stop()

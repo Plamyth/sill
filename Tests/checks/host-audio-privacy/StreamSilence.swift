@@ -112,9 +112,9 @@ func streamSilenceChecks() async {
         fixture.authenticated = true
         fixture.fake.ignoreSetter = fixture.fake.writes.count + failedRestore
         let returned = await fixture.privacy.requestLocalReturn()
-        expect(!returned && fixture.clears == 0 && fixture.privacy.latched && fixture.privacy.state.protected &&
+        expect(!returned && fixture.clears == 0 && fixture.privacy.latched && !fixture.privacy.state.protected &&
                fixture.privacy.participants.isFenced && !fixture.privacy.verify() &&
-               (try? fixture.fake.snapshot.plan().isEmpty) == true &&
+               fixture.fake.snapshot.physicalProtectionVerified &&
                fixture.fake.snapshot.devices.last?.streams?.allSatisfy({ !$0.active }) == true,
                "인증 후 복구 readback 실패는 latch 해제 없이 이미 복구된 stream까지 다시 비활성화 \(failedRestore)")
         fixture.privacy.stop()
