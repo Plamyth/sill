@@ -66,4 +66,11 @@ import Darwin
     subprocess.run(swift + ['-parse-as-library', str(root / 'Sources/SillHost/ProviderPeerAnchor.swift'),
                            str(negative), '-o', str(out / 'negative')], check=True)
     subprocess.run([str(out / 'negative')], check=True, timeout=15)
+    subprocess.run(swift + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol',
+        '-Xlinker', '-rpath', '-Xlinker', str(out), str(socket_support),
+        str(root / 'Sources/SillHost/ProviderCallSocket.swift'),
+        str(root / 'Sources/SillHost/HostConfiguredCraftRuntime.swift'),
+        str(here / 'TransportChecks.swift'), '-o', str(out / 'transport-checks')], check=True)
+    with tempfile.TemporaryDirectory(prefix='.ccr-craft-transport-', dir=Path.home()) as socket_directory:
+        subprocess.run([str(out / 'transport-checks'), socket_directory], check=True, timeout=30)
 print('configured-craft scratch removed; app/device/audio effects=0')
