@@ -58,3 +58,36 @@ Pstack Feature 작성 역할과 Ponytail full을 적용했다. `how`에서 기�
 2026-11-06 정정된 `issuedAt` 모델과 독립 fixture에서 179개 검사가 통과했다. `INPUT_SOURCES_UNCHANGED=true; SCRATCH_REMOVED=true`, project.pbxproj의 `plutil -lint`도 통과했다. 최종 실행 중 입력 7파일의 SHA256은 불변이었다. 그 뒤 README에만 최신 readiness 설명·fixture·이 결과를 기록했고, 실행 코드와 검사 코드는 바꾸지 않았다. 첫 컴파일은 issuedAt key 정정 때문에 자기 프로세스만 종료했고 scratch 정리를 확인했다. 정정본은 180초 compiler 예산 내 한 번 컴파일해 통과했으며 동일 suite를 재실행하지 않았다.
 
 검사 표면은 standalone Foundation 모델이며 iOS SDK 앱 빌드가 아니다. 부모의 독립 검수·통합·제품 빌드·설치·실기 수용은 이 결과에 포함하지 않는다. 최종 commit/tree/clean은 부모에게 반환한다.
+
+## iPad 공통 Craft catalog 소비
+
+`iOSClient/IPadConfiguredCraftAction.swift`의 `encodeCatalogRequest()`는
+`{"schemaVersion":1,"operation":"get-configured-craft-action"}`의 정확한 2필드만 인코딩한다.
+`Catalog(context:data:)`는 typed DTO와 `JSONDecoder`로 응답을 읽고 기존 Catalog 검증을 적용한다.
+응답은 `schemaVersion:1`, `supported:true`, UUID `expectedProfileId`,
+`inputID:"speed.button.stop-play"`, `trigger:"longPress"`, lower64hex
+`expectedAssignmentSha256`의 정확한 6필드다. UUID 문자열은 소문자도 허용한다.
+누락·추가 key, null, 잘못된 타입·값을 거절한다. action·key·modifier·session·host identity는 wire에 없다.
+`supported:false`와 오류 응답의 미확정 wire를 새로 정의하지 않는다.
+
+`observeCatalog(_:from:authenticated:endpointSupported:inputReady:outputReady:)`는
+현재 context와 외부에서 확인한 인증·endpoint 지원 여부를 받아 기존 `observe`로 연결한다.
+endpoint 지원 기본값은 false이며 파싱 성공으로 지원이나 인증을 합성하지 않는다.
+다른 connection·host·device의 관측은 현재 상태를 바꾸지 않는다.
+현재 context의 malformed·미인증·미지원 catalog는 이전 admission을 폐기하고 pending을 unknown으로 닫는다.
+정상 catalog가 복귀해도 unknown을 초기화하거나 재호출하지 않는다.
+readiness는 선택한 mic·speaker 의도와 fresh 관측의 일치 여부다. 사용자 명시 OFF도 실제 OFF 관측과 일치하면 ready다.
+관측은 전송·operation을 생성하지 않으며 별도의 명시적 500ms 길게 누르기만 기존 `begin`으로 이어진다.
+
+`python3 -B Tests/checks/ipad-configured-craft-action/run.py`는 기존 179검사에 codec과
+부정 catalog의 admission 폐기·잘못된 세대의 상태 보존 반례를 더해 production 모델을 직접 컴파일한다.
+기존 180초 compiler 예산·10초 검사 예산·입력 소스 불변·scratch 정리를 유지한다.
+이 단위는 모델·검사·이 문서만 변경한다. Host·StreamProtocol·UI·endpoint·socket·기기·키·설치·네트워크·registry와
+앱 재시작 durable 복구는 연결하지 않는다. 실제 producer bytes 교차검증·SDK 검사·독립 검수·통합은 부모 담당이다.
+
+이 추가 단위의 기준은 `28327ba8278708865f38448fa59982dfd50c833b`, 소유 브랜치는
+`codex/ipad-craft-catalog-20261106`이다. Pstack Feature 작성 역할과 Ponytail 기존 모델 재사용을 적용했다.
+부모가 Core 조율·SDK 검사·독립 검수·통합을 병렬 진행하고 이 writer는 소유 세 파일만 수정한다.
+추가 설계 탐색·ARENA·순정 Goal·추가 agent와 push는 실행하지 않는다.
+2026-11-06T03:19:18Z 확인 시 309검사가 통과했고 `INPUT_SOURCES_UNCHANGED=true; SCRATCH_REMOVED=true`였다.
+기존 179검사 본문과 run.py는 그대로다. 그 뒤 root README의 본인 추가분만 이 문서로 옮겼으며 모델·검사 코드는 바꾸지 않았다.

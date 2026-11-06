@@ -10,6 +10,40 @@ struct IPadConfiguredCraftAction {
 
     enum Failure: Error { case invalidContext, invalidCatalog, invalidWire }
 
+    private struct CatalogRequest: Encodable {
+        let schemaVersion = 1
+        let operation = "get-configured-craft-action"
+    }
+
+    static func encodeCatalogRequest() throws -> Data {
+        try JSONEncoder().encode(CatalogRequest())
+    }
+
+    private struct CatalogResponse: Decodable {
+        let schemaVersion: Int
+        let supported: Bool
+        let expectedProfileId: UUID
+        let inputID: String
+        let trigger: String
+        let expectedAssignmentSha256: String
+
+        private enum CodingKeys: String, CodingKey, CaseIterable {
+            case schemaVersion, supported, expectedProfileId, inputID, trigger, expectedAssignmentSha256
+        }
+
+        init(from decoder: Decoder) throws {
+            try exactKeys(decoder, required: Set(CodingKeys.allCases.map(\.rawValue)))
+            let fields = try decoder.container(keyedBy: CodingKeys.self)
+            schemaVersion = try fields.decode(Int.self, forKey: .schemaVersion)
+            supported = try fields.decode(Bool.self, forKey: .supported)
+            expectedProfileId = try fields.decode(UUID.self, forKey: .expectedProfileId)
+            inputID = try fields.decode(String.self, forKey: .inputID)
+            trigger = try fields.decode(String.self, forKey: .trigger)
+            expectedAssignmentSha256 = try fields.decode(String.self, forKey: .expectedAssignmentSha256)
+            guard supported else { throw Failure.invalidCatalog }
+        }
+    }
+
     // Same ASCII validation as IPadEnrollmentProtocol.hex64, without importing its crypto/wire dependencies.
     private static func hex64(_ text: String) -> Bool {
         text.utf8.count == 64 && text.utf8.allSatisfy { byte in
@@ -41,6 +75,13 @@ struct IPadConfiguredCraftAction {
                 throw Failure.invalidCatalog
             }
             self.context = context; self.profileID = profileID; self.assignmentSha256 = assignmentSha256
+        }
+
+        init(context: Context, data: Data) throws {
+            let response = try JSONDecoder().decode(CatalogResponse.self, from: data)
+            try self.init(context: context, schemaVersion: response.schemaVersion, inputID: response.inputID,
+                          trigger: response.trigger, profileID: response.expectedProfileId,
+                          assignmentSha256: response.expectedAssignmentSha256)
         }
     }
 
@@ -189,6 +230,15 @@ struct IPadConfiguredCraftAction {
     mutating func disconnected() {
         resolveUnknown(.contextChanged)
         context = nil; admission = nil
+    }
+
+    @discardableResult
+    mutating func observeCatalog(_ data: Data, from incoming: Context, authenticated: Bool,
+                                 endpointSupported: Bool = false, inputReady: Bool, outputReady: Bool) -> Bool {
+        guard context == incoming else { return false }
+        return observe(from: incoming, authenticated: authenticated, endpointSupported: endpointSupported,
+                       catalog: try? Catalog(context: incoming, data: data),
+                       inputReady: inputReady, outputReady: outputReady)
     }
 
     @discardableResult

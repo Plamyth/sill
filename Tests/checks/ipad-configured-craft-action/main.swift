@@ -317,4 +317,151 @@ let knownNext = known.begin()
 check(knownNext != nil && knownNext!.operationId != knownRequest.operationId,
       "known 이후 새 catalog와 별도 명시 동작으로 재개 가능")
 
+let catalogRequest = try Model.encodeCatalogRequest()
+let catalogRequestObject = try JSONSerialization.jsonObject(with: catalogRequest) as! [String: Any]
+let agreedCatalogRequest = Data(#"{"schemaVersion":1,"operation":"get-configured-craft-action"}"#.utf8)
+check(NSDictionary(dictionary: catalogRequestObject).isEqual(to:
+      try JSONSerialization.jsonObject(with: agreedCatalogRequest) as! [String: Any]),
+      "catalog 요청은 독립 합의 fixture의 정확한 2필드만 인코딩")
+
+let agreedCatalogWire = Data(#"{"schemaVersion":1,"supported":true,"expectedProfileId":"abcdefab-1234-5678-9abc-def012345678","inputID":"speed.button.stop-play","trigger":"longPress","expectedAssignmentSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}"#.utf8)
+let catalogObject = try JSONSerialization.jsonObject(with: agreedCatalogWire) as! [String: Any]
+let catalogFixture = try Fixture(ready: false)
+let decodedCatalog = try Model.Catalog(context: catalogFixture.context, data: agreedCatalogWire)
+check(decodedCatalog.context == catalogFixture.context
+      && decodedCatalog.profileID == UUID(uuidString: "abcdefab-1234-5678-9abc-def012345678")
+      && decodedCatalog.assignmentSha256 == hash, "소문자 UUID catalog를 현재 context에 연결")
+check(!catalogFixture.model.supported && catalogFixture.model.state == .idle,
+      "catalog 파싱만으로 endpoint 지원이나 admission을 합성하지 않음")
+check(!catalogFixture.model.observeCatalog(agreedCatalogWire, from: catalogFixture.context, authenticated: true,
+                                          inputReady: true, outputReady: true)
+      && !catalogFixture.model.supported && catalogFixture.model.state == .idle,
+      "catalog endpoint 지원 기본값 false와 operation 생성 0")
+check(catalogFixture.model.observeCatalog(agreedCatalogWire, from: catalogFixture.context, authenticated: true,
+                                         endpointSupported: true, inputReady: true, outputReady: true)
+      && catalogFixture.model.canBegin && catalogFixture.model.state == .idle,
+      "인증과 endpoint 지원을 외부 확인한 catalog 관측은 admission만 갱신")
+let catalogBegin = catalogFixture.model.begin(from: catalogFixture.context, catalog: decodedCatalog,
+                                             userActionID: UUID(), heldMilliseconds: 500, issuedAt: epoch)!
+check(catalogBegin.expectedProfileId == decodedCatalog.profileID
+      && catalogBegin.expectedAssignmentSha256 == hash, "wire catalog 식별값 그대로 invoke 요청에 연결")
+
+for key in catalogObject.keys {
+    var missing = catalogObject; missing.removeValue(forKey: key)
+    rejects("catalog 필수 key 누락: \(key)") {
+        _ = try Model.Catalog(context: catalogFixture.context, data: bytes(missing))
+    }
+    var null = catalogObject; null[key] = NSNull()
+    rejects("catalog null key: \(key)") {
+        _ = try Model.Catalog(context: catalogFixture.context, data: bytes(null))
+    }
+}
+for key in ["operation", "action", "keyCode", "modifiers", "requiredModifiers", "deviceSessionId",
+            "session", "hostID", "deviceId", "extra"] {
+    var wire = catalogObject; wire[key] = "forbidden"
+    rejects("catalog 추가 key: \(key)") {
+        _ = try Model.Catalog(context: catalogFixture.context, data: bytes(wire))
+    }
+}
+let badCatalogValues: [(String, Any)] = [
+    ("schemaVersion", 0), ("schemaVersion", 2), ("schemaVersion", true), ("schemaVersion", "1"),
+    ("schemaVersion", 1.5), ("supported", false), ("supported", 1), ("supported", "true"),
+    ("expectedProfileId", "not-a-uuid"), ("expectedProfileId", 1), ("expectedProfileId", [] as [String]),
+    ("inputID", "speed.button.other"), ("inputID", 1), ("trigger", "press"), ("trigger", false),
+    ("expectedAssignmentSha256", hash.uppercased()), ("expectedAssignmentSha256", String(hash.dropLast())),
+    ("expectedAssignmentSha256", hash + "\n"), ("expectedAssignmentSha256", String(repeating: "ｃ", count: 64)),
+    ("expectedAssignmentSha256", 1)
+]
+for (key, value) in badCatalogValues {
+    var wire = catalogObject; wire[key] = value
+    rejects("catalog 잘못된 타입 또는 값: \(key)=\(value)") {
+        _ = try Model.Catalog(context: catalogFixture.context, data: bytes(wire))
+    }
+}
+for wire in ["", "{", "null", "[]", "true", "1", "\"catalog\""] {
+    rejects("catalog 객체가 아닌 wire: \(wire)") {
+        _ = try Model.Catalog(context: catalogFixture.context, data: Data(wire.utf8))
+    }
+}
+
+func catalogBytes(_ catalog: Model.Catalog) throws -> Data {
+    var wire = catalogObject
+    wire["expectedProfileId"] = catalog.profileID.uuidString.lowercased()
+    wire["expectedAssignmentSha256"] = catalog.assignmentSha256
+    return try bytes(wire)
+}
+
+var withdrawnCatalog = catalogObject; withdrawnCatalog["supported"] = false
+let catalogFailures: [(Data, Bool, Bool)] = [
+    (Data("{".utf8), true, true), (try bytes(withdrawnCatalog), true, true),
+    (Data("null".utf8), true, true), (agreedCatalogWire, false, true), (agreedCatalogWire, true, false)
+]
+for hasPending in [false, true] {
+    for (wire, authenticated, endpointSupported) in catalogFailures {
+        let f = try Fixture()
+        let request = hasPending ? f.begin() : nil
+        check(!f.model.observeCatalog(wire, from: f.context, authenticated: authenticated,
+                                      endpointSupported: endpointSupported, inputReady: true, outputReady: true)
+              && !f.model.supported && !f.model.canBegin && f.begin() == nil,
+              "현재 context의 부정 catalog는 이전 admission을 폐기해 신규 invoke 차단")
+        if let request {
+            check(f.model.pending == nil && f.model.resolution?.pending.request == request
+                  && f.model.resolution?.localUnknownReason == .capabilityWithdrawn
+                  && f.model.resolution?.invoked == nil && f.model.resolution?.effectConfirmed == false,
+                  "부정 catalog는 원 pending을 호출 여부 미확인의 unknown으로 닫음")
+        } else {
+            check(f.model.state == .idle, "부정 catalog 관측 자체의 operation 생성 0")
+        }
+        _ = f.model.observeCatalog(try catalogBytes(f.catalog), from: f.context, authenticated: true,
+                                   endpointSupported: true, inputReady: true, outputReady: true)
+        if let request {
+            check(f.begin() == nil && f.model.resolution?.pending.request == request,
+                  "정상 catalog 복귀로 unknown 재호출을 허용하지 않음")
+        } else {
+            check(f.model.canBegin && f.model.state == .idle, "정상 catalog 재관측은 admission만 복구")
+        }
+    }
+}
+
+for hasPending in [false, true] {
+    let f = try Fixture()
+    let request = hasPending ? f.begin() : nil
+    let before = f.model.state
+    let wrongContexts = [
+        try Model.Context(connection: UUID(), hostID: host, deviceID: device),
+        try Model.Context(connection: f.context.connection, hostID: otherHash, deviceID: device),
+        try Model.Context(connection: f.context.connection, hostID: host, deviceID: otherHash)
+    ]
+    for context in wrongContexts {
+        for (wire, authenticated, endpointSupported) in catalogFailures + [(agreedCatalogWire, true, true)] {
+            check(!f.model.observeCatalog(wire, from: context, authenticated: authenticated,
+                                          endpointSupported: endpointSupported, inputReady: false, outputReady: false)
+                  && f.model.context == f.context && f.model.state == before && f.model.supported,
+                  "다른 connection/host/device catalog는 현재 admission과 상태 훼손 0")
+        }
+    }
+    if let request {
+        check(try f.model.receive(bytes(response(request)), from: f.context),
+              "잘못된 세대의 부정 catalog 뒤에도 현재 pending ACK 소비 가능")
+    }
+    check(f.begin() != nil, "잘못된 세대의 catalog가 현재 admission을 폐기하지 않음")
+}
+
+for (input, output) in [(false, true), (true, false), (false, false), (true, true)] {
+    let f = try Fixture(ready: false)
+    check(f.model.observeCatalog(try catalogBytes(f.catalog), from: f.context, authenticated: true,
+                                 endpointSupported: true, inputReady: input, outputReady: output)
+          && f.model.state == .idle && f.model.canBegin == (input && output),
+          "선택한 mic/speaker 의도와 fresh 관측의 일치 여부를 그대로 전달")
+}
+let refreshed = try Fixture(); let refreshedRequest = refreshed.begin()!
+check(refreshed.model.observeCatalog(try catalogBytes(refreshed.catalog), from: refreshed.context, authenticated: true,
+                                     endpointSupported: true, inputReady: true, outputReady: true)
+      && refreshed.model.pending?.request == refreshedRequest, "동일 wire catalog 재관측은 pending 보존")
+let replacement = try Model.Catalog(context: refreshed.context, profileID: UUID(), assignmentSha256: otherHash)
+check(refreshed.model.observeCatalog(try catalogBytes(replacement), from: refreshed.context, authenticated: true,
+                                     endpointSupported: true, inputReady: true, outputReady: true)
+      && refreshed.model.resolution?.localUnknownReason == .catalogChanged && refreshed.begin() == nil,
+      "wire catalog 변경도 기존 observe의 catalogChanged unknown 경로 재사용")
+
 print("PASS: \(checks) Codable·소비 상태 검사. 통화/UI/기기/네트워크 효과는 검사 범위 밖입니다.")
