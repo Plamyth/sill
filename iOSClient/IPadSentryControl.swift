@@ -174,6 +174,17 @@ struct IPadSentryControl {
         return true
     }
 
+    /// Read-only owner admission, independent of whether the settings toggle can be pressed.
+    func admitsConfiguredCraft(state: SentryState, binding: Binding?, from peer: ObjectIdentifier) -> Bool {
+        guard self.peer == peer, !restorationFailed, !inFlight, let context,
+              context.binding == binding, context.state == state, context.control == state.control,
+              !retired.contains(where: { $0.epoch == context.epoch }) else { return false }
+        switch phase {
+        case .pending, .unknown: return false
+        default: return true
+        }
+    }
+
     var canSet: Bool { canSet(desired: true) || canSet(desired: false) }
 
     func canSet(desired: Bool) -> Bool {

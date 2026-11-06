@@ -11,6 +11,7 @@ HERE = Path(__file__).resolve().parent
 PROTOCOL = sorted((ROOT / "Sources/StreamProtocol").glob("*.swift"))
 APP = [ROOT / "iOSClient" / name for name in [
     "IPadConfiguredCraftAction.swift", "IPadCraftConnectedControl.swift",
+    "IPadSentryObservation.swift", "IPadSentryControl.swift",
     "IPadDesiredAudio.swift", "IPadAudioForwarding.swift", "IPadProviderCall.swift",
 ]]
 INPUTS = PROTOCOL + APP + [HERE / "main.swift", HERE / "README.md", Path(__file__).resolve(),

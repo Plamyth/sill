@@ -131,11 +131,17 @@ func completed(for r: SentryReturnRequest, code: SentryReturnState.Code) -> Data
         check(restored.request(mode: .macLocal, binding: binding, from: ObjectIdentifier(peer), now: 8) == nil,
             "fresh request denied without current Sentry lease")
 
-        var cancel = consumer(); _ = start(&cancel); receive(&cancel, pending)
+        var cancel = consumer()
+        check(!cancel.blocksConfiguredCraft(binding: binding), "no return operation leaves Craft admission separate")
+        _ = start(&cancel); receive(&cancel, pending)
+        check(cancel.blocksConfiguredCraft(binding: binding), "pending return denies configured Craft action")
         let cancelOut = cancel.cancel(binding: binding, from: ObjectIdentifier(peer), now: 3)!
         check(Data(cancelOut.bytes.dropFirst(StreamMessage.headerLength)) == raw("cancelRaw"), "cancel distinct reference and auth generation")
         check(!receive(&cancel, done) && cancel.latest?.locallyCancelled == true, "late success after local cancel rejected")
         check(!cancel.canRequest, "cancel result unknown never starts new ID")
+        check(!cancel.canCancel && cancel.blocksConfiguredCraft(binding: binding), "local cancel cannot reopen Craft before terminal Host acknowledgement")
+        check(!value.blocksConfiguredCraft(binding: binding), "terminal completed return no longer blocks Craft")
+        check(!cancel.blocksConfiguredCraft(binding: nil), "unrelated binding does not inherit return operation")
         var invalid = consumer(); _ = start(&invalid)
         for field in ["ownerID", "pairingGeneration", "hostFingerprint", "deviceFingerprint", "keyID", "nonce", "authGeneration"] {
             let wrong = changed(pending) { state in

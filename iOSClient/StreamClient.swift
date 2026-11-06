@@ -149,6 +149,7 @@ final class StreamClient: ObservableObject {
         if let state = sentryControl.receive(data, binding: binding, from: ObjectIdentifier(peer)) {
             sentryObservation.observe(state: state, from: ObjectIdentifier(peer))
         }
+        reconcileConfiguredCraftAction()
     }
     #endif
     #if !os(visionOS)
@@ -257,6 +258,8 @@ final class StreamClient: ObservableObject {
     var configuredCraftConnection = UUID()
     var configuredCraftPeer: ObjectIdentifier?
     var configuredCraftCapability: Int?
+    let configuredCraftSendGate = IPadCraftSendGate()
+    var configuredCraftPublishedTicket: IPadCraftSendGate.Ticket?
     var audioForwarding = IPadAudioForwarding()
     var audioForwardingLocalGeneration = UUID()
     var audioForwardingWake: DispatchWorkItem?
@@ -1786,6 +1789,8 @@ final class StreamClient: ObservableObject {
         set {
             if link.connection !== newValue {
                 #if os(iOS)
+                configuredCraftSendGate.bind(newValue.map(ObjectIdentifier.init))
+                configuredCraftPublishedTicket = nil
                 cancelOwnerEnrollment()
                 invalidateIPadSentryReturn()
                 sentryReturn.bind(newValue.map(ObjectIdentifier.init))
@@ -4004,6 +4009,10 @@ final class StreamClient: ObservableObject {
         guard connected, let old = connection, connectedDirectly == (kind == .fromDirect),
               kind != .fromRemote || session?.route.isRemote == true else { c.cancel(); return }
         #if os(iOS)
+        configuredCraftSendGate.bind(ObjectIdentifier(c))
+        configuredCraftPublishedTicket = nil
+        sentryObservation.bind(ObjectIdentifier(c))
+        sentryControl.bind(ObjectIdentifier(c))
         beginAutomaticConnectionOpportunity(peer: c, preservingExtendedDesktop: true)
         invalidateIPadSentryReturn()
         sentryReturn.bind(ObjectIdentifier(c))
@@ -5751,8 +5760,10 @@ final class StreamClient: ObservableObject {
         switch header.kind {
         #if os(iOS)
         case .sentryState:
+            configuredCraftSendGate.invalidate(from: ObjectIdentifier(peer))
             receiveIPadSentry(data, from: peer, hostTimestamp: header.timestamp)
         case .sentryReturnState:
+            configuredCraftSendGate.invalidate(from: ObjectIdentifier(peer))
             receiveIPadSentryReturn(data, from: peer)
         #endif
         #if os(visionOS)
@@ -5815,6 +5826,7 @@ final class StreamClient: ObservableObject {
             guard let list = Wire.decode(WindowList.self, from: data) else { return }
             let from: NWConnection? = peer
             #if os(iOS)
+            let craftTicket = configuredCraftSendGate.observe(catalog: data, from: ObjectIdentifier(peer))
             let audioTicket = audioAdmission.observe(list, from: ObjectIdentifier(peer))
             #endif
             guard connection === peer else { return }
@@ -5829,7 +5841,7 @@ final class StreamClient: ObservableObject {
                 guard self.connection === from else { return }
                 #if os(iOS)
                 self.configuredCraftCapability = list.configuredCraftActions
-                self.reconcileConfiguredCraftAction()
+                self.configuredCraftPublishedTicket = craftTicket
                 #endif
                 #if !os(visionOS)
                 #if os(iOS)
@@ -5862,6 +5874,9 @@ final class StreamClient: ObservableObject {
                 self.observeSourceIntent(list)
                 self.sourceCatalogEpoch = list.videoEpoch?.id
                 self.selectionRevision = list.selectionRevision
+                #if os(iOS)
+                self.reconcileConfiguredCraftAction()
+                #endif
                 if self.hostVersion != list.hostVersion { self.hostVersion = list.hostVersion }
                 if self.hostProtocol != list.protocol { self.hostProtocol = list.protocol }
                 if self.hostGestures != list.gestures { self.hostGestures = list.gestures }

@@ -13,6 +13,20 @@ let epoch: Int64 = 1_794_000_000_123
 let owner = IPadCraftActionJournal.Owner(macID: "fixture-mac", hostPin: host, deviceID: device)
 let deviceID = AudioForwardingDeviceID(hex: device)!
 let descriptor = try ConfiguredCraftActionCatalog(expectedProfileId: UUID(), expectedAssignmentSha256: binding)
+let inactiveState = SentryState(hostBootID: UUID(), sessionID: UUID(), revision: UUID(),
+    requested: false, phase: .inactive, limitations: [])
+func state(phase: SentryState.Phase = .userSessionProtected, requested: Bool = true,
+           revision: UUID = UUID(), authorization: UUID? = UUID(),
+           boot: UUID = inactiveState.hostBootID, session: UUID = inactiveState.sessionID) -> SentryState {
+    .init(hostBootID: boot, sessionID: session, revision: revision, requested: requested,
+          phase: phase, limitations: [], control: authorization.map { .init(authorizationGeneration: $0, manualIntent: .automatic) })
+}
+func catalogData(capability: Int?, state: SentryState?, source: Int = 0) throws -> Data {
+    let list = WindowList(macName: "fixture", windows: [], active: source == 0 ? .desktop : .window(UInt32(source)), configuredCraftActions: capability)
+    var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(list)) as! [String: Any]
+    object["sentry"] = try state.map { try JSONSerialization.jsonObject(with: JSONEncoder().encode($0)) }
+    return try JSONSerialization.data(withJSONObject: object, options: .sortedKeys)
+}
 let scratch = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 final class Clock { var now: TimeInterval = 100 }
 final class Memory {
@@ -33,6 +47,9 @@ final class Memory {
 }
 final class Fixture {
     let clock = Clock()
+    let peer = NSObject()
+    let gate = IPadCraftSendGate()
+    var published: IPadCraftSendGate.Ticket?
     let memory: Memory
     var context: IPadConfiguredCraftAction.Context
     var session: IPadCraftConnectedControl
@@ -42,7 +59,17 @@ final class Fixture {
         context = try .init(connection: UUID(), hostID: host, deviceID: device)
         let clock = self.clock
         session = IPadCraftConnectedControl(journal: journal ?? memory.journal, clock: { clock.now })
-        session.observe(context: context, owner: owner, capability: capability)
+        gate.bind(ObjectIdentifier(peer))
+        observe(capability: capability)
+    }
+    func observe(capability: Int?, state: SentryState? = inactiveState, ownerKnown: Bool = false,
+                 localReturn: Bool = false, nextOwner: IPadCraftActionJournal.Owner = owner) {
+        let origin = ObjectIdentifier(peer)
+        published = gate.observe(catalog: try! catalogData(capability: capability, state: state), from: origin)
+        let ticket = state.flatMap { gate.ticket(from: origin, published: published, capability: capability, state: $0) }
+        let admission = IPadCraftAdmission(capability: capability, state: state, ownerKnown: ownerKnown,
+            localReturnPending: localReturn, ticket: ticket)
+        session.observe(context: context, owner: nextOwner, capability: capability, admission: admission)
     }
     @discardableResult func catalog() throws -> ConfiguredCraftActionControl? {
         guard let control = session.catalogRequest() else { return nil }
@@ -54,7 +81,7 @@ final class Fixture {
     func invoke(action: UUID = UUID(), duration: Int = 500, issued: Int64 = epoch,
                 input: Bool = true, output: Bool = true, sentry: Bool = true) -> ConfiguredCraftActionControl? {
         let control = session.invoke(userAction: action, heldMilliseconds: duration, issuedAt: issued,
-                                     inputReady: input, outputReady: output, sentryInactive: sentry)
+                                     inputReady: input, outputReady: output, sentryAllowed: sentry)
         if let control { sent.append(control) }
         return control
     }
@@ -67,11 +94,11 @@ final class Fixture {
     func reconnect(to nextOwner: IPadCraftActionJournal.Owner = owner) throws {
         session.observe(context: nil, owner: nil, capability: nil)
         context = try .init(connection: UUID(), hostID: nextOwner.hostPin, deviceID: nextOwner.deviceID)
-        session.observe(context: context, owner: nextOwner, capability: 1)
+        observe(capability: 1, nextOwner: nextOwner)
     }
 }
 
-for capability in [nil, 0, 2, -1] as [Int?] {
+for capability in [nil, 0, 3, -1] as [Int?] {
     let f = try Fixture(capability: capability)
     check(f.session.catalogRequest() == nil && f.invoke() == nil && f.session.query() == nil, "unadvertised route sends zero")
     check(f.memory.writes == 0 && f.sent.isEmpty, "unadvertised route does not journal")
@@ -200,27 +227,27 @@ let selectionGeneration = UUID()
 let prepContext = try IPadConfiguredCraftAction.Context(connection: UUID(), hostID: host, deviceID: device)
 var preparation = IPadCraftPreparation(context: prepContext, selectionGeneration: selectionGeneration)
 check(preparation.permits(context: prepContext, selectionGeneration: selectionGeneration, foreground: false,
-    permissionWaiting: true, sentryInactive: true, now: 1), "permission inactive is not background failure")
+    permissionWaiting: true, sentryAllowed: true, now: 1), "permission inactive is not background failure")
 check(preparation.permits(context: prepContext, selectionGeneration: selectionGeneration, foreground: false,
-    permissionWaiting: true, sentryInactive: true, now: 100), "permission time excluded from preparation deadline")
+    permissionWaiting: true, sentryAllowed: true, now: 100), "permission time excluded from preparation deadline")
 check(preparation.permits(context: prepContext, selectionGeneration: selectionGeneration, foreground: true,
-    permissionWaiting: false, sentryInactive: true, now: 100), "preparation deadline starts after permission")
+    permissionWaiting: false, sentryAllowed: true, now: 100), "preparation deadline starts after permission")
 check(!preparation.permits(context: prepContext, selectionGeneration: selectionGeneration, foreground: true,
-    permissionWaiting: false, sentryInactive: true, now: 108), "finite preparation deadline")
+    permissionWaiting: false, sentryAllowed: true, now: 108), "finite preparation deadline")
 for delta in 0..<5 {
     var f = IPadCraftPreparation(context: prepContext, selectionGeneration: selectionGeneration)
     if delta == 0 { f.cancel() }
     check(!f.permits(context: delta == 1 ? nil : prepContext,
         selectionGeneration: delta == 2 ? UUID() : selectionGeneration,
-        foreground: delta != 3, permissionWaiting: false, sentryInactive: delta != 4, now: 100),
+        foreground: delta != 3, permissionWaiting: false, sentryAllowed: delta != 4, now: 100),
         "cancel/context/selection/background/Sentry suppress invocation")
 }
 var permissionChanged = IPadCraftPreparation(context: prepContext, selectionGeneration: selectionGeneration)
 check(!permissionChanged.permits(context: prepContext, selectionGeneration: UUID(), foreground: true,
-    permissionWaiting: true, sentryInactive: true, now: 100), "permission wait cannot adopt another selection generation")
+    permissionWaiting: true, sentryAllowed: true, now: 100), "permission wait cannot adopt another selection generation")
 var realBackground = IPadCraftPreparation(context: prepContext, selectionGeneration: selectionGeneration)
 check(!realBackground.permits(context: prepContext, selectionGeneration: selectionGeneration, foreground: false,
-    permissionWaiting: true, backgrounded: true, sentryInactive: true, now: 100), "actual background cancels even with permission outstanding")
+    permissionWaiting: true, backgrounded: true, sentryAllowed: true, now: 100), "actual background cancels even with permission outstanding")
 
 let legacyConnection = UUID()
 let legacyRequest = try ProviderCallRequest(requestId: UUID(), action: .start, expectedLeaseRevision: .init(1),
@@ -329,4 +356,121 @@ let identityObject = try JSONSerialization.jsonObject(with: archive)
 defaults.set(try JSONSerialization.data(withJSONObject: ["version": 1, "records": [
     ["identity": identityObject, "selection": ["microphone": false, "playback": false]]]]), forKey: IPadDesiredAudioStore.key)
 check(store.hasConfirmedSelection(for: audioIdentity) && store.selection(for: audioIdentity) == .init(), "legacy explicit OFF not overwritten")
+// Capability, owner and phase matrix uses the same admission constructor as the app.
+for cap in [1, 2] {
+    for ownerKnown in [false, true] {
+        for protected in [false, true] {
+            let f = try Fixture(capability: cap)
+            f.observe(capability: cap, state: protected ? state() : inactiveState, ownerKnown: ownerKnown)
+            try f.catalog()
+            let allowed = !protected || (cap == 2 && ownerKnown)
+            check((f.invoke() != nil) == allowed, "capability/owner/phase admission matrix")
+        }
+    }
+    for denied in [nil, state(phase: .pending), state(phase: .blocked),
+                   state(phase: .inactive, requested: true), state(phase: .userSessionProtected, requested: false),
+                   state(authorization: nil)] as [SentryState?] {
+        let f = try Fixture(capability: cap)
+        f.observe(capability: cap, state: denied, ownerKnown: true)
+        try f.catalog()
+        check(f.invoke() == nil && f.memory.writes == 0, "unknown/inconsistent/non-owner state denies invocation")
+    }
+    let localReturn = try Fixture(capability: cap)
+    localReturn.observe(capability: cap, ownerKnown: true, localReturn: true)
+    try localReturn.catalog()
+    check(localReturn.invoke() == nil, "local return authentication blocks both capabilities")
+}
+for (initialCap, nextCap) in [(1, 2), (2, 1)] {
+    let f = try Fixture(capability: initialCap)
+    try f.catalog()
+    let sent = f.invoke()!
+    f.observe(capability: nextCap)
+    check(f.session.exchange == nil && f.session.model.resolution?.outcome == .unknown, "cap transition closes pending as unknown")
+    check(!f.session.receive(try f.result(sent, outcome: .invoked), from: f.context), "old cap response cannot clear journal")
+    check(f.session.query()?.targetOperationId == sent.targetOperationId && f.invoke() == nil, "cap transition preserves query-only original ID")
+}
+let protectedState = state()
+let changedStates = [state(revision: UUID(), authorization: protectedState.control!.authorizationGeneration),
+    state(revision: protectedState.revision), state(boot: UUID()), state(session: UUID()),
+    state(phase: .pending), state(phase: .blocked), inactiveState]
+for changed in changedStates {
+    let f = try Fixture(capability: 2)
+    f.observe(capability: 2, state: protectedState, ownerKnown: true)
+    try f.catalog()
+    let invoke = f.invoke()!
+    let admission = f.session.exchange!.admission!
+    // Only the network observer advances. Main still holds the old, apparently admitted state.
+    f.gate.observe(catalog: try catalogData(capability: 2, state: changed), from: ObjectIdentifier(f.peer))
+    var calls = 0
+    check(!f.gate.submit(admission.ticket) { calls += 1 } && calls == 0, "network revision revokes before main publication and final send")
+    check(f.gate.ticket(from: ObjectIdentifier(f.peer), published: f.published, capability: 2, state: changed) == nil,
+          "unpublished catalog cannot grant a replacement ticket")
+    f.session.sendUnconfirmed(requestID: invoke.requestId)
+    check(f.session.exchange == nil && f.session.model.resolution?.outcome == .unknown, "rejected final send retires pending exchange")
+    check(f.session.query()?.targetOperationId == invoke.targetOperationId && f.memory.record != nil,
+          "uncertain final send preserves durable query identity")
+}
+for cap in [nil, 0, 1, 3] as [Int?] {
+    let f = try Fixture(capability: 2)
+    f.observe(capability: 2, state: protectedState, ownerKnown: true)
+    try f.catalog()
+    _ = f.invoke()!
+    let admission = f.session.exchange!.admission!
+    f.gate.observe(catalog: try catalogData(capability: cap, state: protectedState), from: ObjectIdentifier(f.peer))
+    check(!f.gate.submit(admission.ticket) { fatalError("stale capability submitted") }, "network capability revokes queued preparation")
+}
+for source in [1, 2] {
+    let f = try Fixture()
+    try f.catalog(); _ = f.invoke()!
+    let ticket = f.session.exchange!.admission!.ticket
+    f.gate.observe(catalog: try catalogData(capability: 1, state: inactiveState, source: source), from: ObjectIdentifier(f.peer))
+    check(!f.gate.submit(ticket) { fatalError("stale source submitted") }, "source change revokes final send")
+}
+let unchanged = try Fixture(capability: 2)
+unchanged.observe(capability: 2, state: protectedState, ownerKnown: true)
+try unchanged.catalog(); _ = unchanged.invoke()!
+let unchangedTicket = unchanged.session.exchange!.admission!.ticket
+unchanged.gate.observe(catalog: try catalogData(capability: 2, state: protectedState), from: ObjectIdentifier(unchanged.peer))
+var sends = 0
+check(unchanged.gate.submit(unchangedTicket) { sends += 1 } && sends == 1, "identical catalog preserves final send authority")
+unchanged.gate.invalidate(from: ObjectIdentifier(unchanged.peer))
+check(!unchanged.gate.submit(unchangedTicket) { sends += 1 } && sends == 1, "Sentry reply invalidates before deferred main handling")
+let outsider = NSObject()
+unchanged.gate.bind(ObjectIdentifier(outsider))
+check(!unchanged.gate.submit(unchangedTicket) { sends += 1 }, "replacement peer cannot consume old ticket")
+
+let handoverState = state()
+let handoverCatalog = try catalogData(capability: 2, state: handoverState)
+let newPublished = unchanged.gate.observe(catalog: handoverCatalog, from: ObjectIdentifier(outsider))
+let newTicket = unchanged.gate.ticket(from: ObjectIdentifier(outsider), published: newPublished, capability: 2, state: handoverState)
+check(newTicket != nil && unchanged.gate.submit(newTicket!) { sends += 1 }, "handover peer recovers only after its fresh published catalog")
+check(!unchanged.gate.submit(unchangedTicket) { fatalError("old peer revived") }, "fresh handover does not revive old ticket")
+
+// Owner gate uses the real Sentry controller, not just phase/requested from a UI report.
+var storedSentry: Data?
+var ownerControl = IPadSentryControl(store: .init(load: { storedSentry }, save: { storedSentry = $0 }))
+let sentryPeer = NSObject()
+let sentryOrigin = ObjectIdentifier(sentryPeer)
+let sentryBinding = IPadSentryControl.Binding(macID: "fixture", hostPin: Data(repeating: 1, count: 32), deviceFingerprint: Data(repeating: 2, count: 32))
+var observedSentry = IPadSentryObservation()
+ownerControl.bind(sentryOrigin); observedSentry.bind(sentryOrigin)
+func observeOwner(_ value: SentryState) throws {
+    let data = try catalogData(capability: 2, state: value)
+    observedSentry.observe(catalog: data, from: sentryOrigin)
+    ownerControl.observe(catalog: data, observation: observedSentry, binding: sentryBinding, from: sentryOrigin)
+}
+try observeOwner(protectedState)
+check(ownerControl.admitsConfiguredCraft(state: protectedState, binding: sentryBinding, from: sentryOrigin), "validated current owner admits protected action")
+check(!ownerControl.admitsConfiguredCraft(state: protectedState, binding: nil, from: sentryOrigin), "missing binding does not grant owner")
+check(!ownerControl.admitsConfiguredCraft(state: protectedState, binding: sentryBinding, from: ObjectIdentifier(outsider)), "wrong peer does not grant owner")
+let rotatedOwner = state(revision: protectedState.revision)
+try observeOwner(rotatedOwner)
+try observeOwner(protectedState)
+check(!ownerControl.admitsConfiguredCraft(state: protectedState, binding: sentryBinding, from: sentryOrigin), "retired authorization cannot regain owner admission")
+try observeOwner(rotatedOwner)
+let pendingSentry = ownerControl.perform(desired: false, binding: sentryBinding, from: sentryOrigin, now: 100)
+check(pendingSentry != nil && !ownerControl.admitsConfiguredCraft(state: rotatedOwner, binding: sentryBinding, from: sentryOrigin), "pending Sentry transition denies owner action")
+ownerControl.unconfirmed()
+check(!ownerControl.admitsConfiguredCraft(state: rotatedOwner, binding: sentryBinding, from: sentryOrigin), "unknown Sentry result denies owner action")
+
 print("PASS \(checks) production connected-control assertions; network/device/key/audio effects=0")

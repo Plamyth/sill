@@ -62,7 +62,7 @@ extension StreamClient {
             audioForwarding.block(reason: "catalog_microphone_scope_lost", now: audioForwardingNow)
             applyAudioForwarding(nil)
         }
-        reconcileConfiguredCraftAction()
+        // Craft admission is reconciled after this catalog's Sentry/source publication.
     }
 
     func suspendDesiredAudio(preserveManualPermission: Bool = false) {

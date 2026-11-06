@@ -59,6 +59,82 @@ struct IPadCraftActionJournal {
     }
 }
 
+/// Network observations revoke queued main-thread authority before publication catches up.
+/// This lock never acquires SessionLink, SentryControl, or main-queue locks. The submission
+/// closure may only call NWConnection.send; completion work must hop back to main.
+final class IPadCraftSendGate {
+    struct Ticket: Equatable {
+        let peer: ObjectIdentifier
+        fileprivate let generation: UUID
+    }
+    private struct Snapshot: Equatable {
+        let capability: Int?
+        let sentry: SentryState?
+        let source: Data
+    }
+    private let lock = NSLock()
+    private var peer: ObjectIdentifier?
+    private var generation = UUID()
+    private var snapshot: Snapshot?
+
+    func bind(_ next: ObjectIdentifier?) {
+        lock.lock(); defer { lock.unlock() }
+        guard next != peer else { return }
+        peer = next; snapshot = nil; generation = UUID()
+    }
+    @discardableResult func observe(catalog: Data, from incoming: ObjectIdentifier) -> Ticket? {
+        let object = (try? JSONSerialization.jsonObject(with: catalog)) as? [String: Any]
+        let keys = ["active", "inputGeneration", "videoEpoch", "selectionRevision", "launchID", "sourceSelectionAdmission"]
+        let source = object.flatMap { object in
+            try? JSONSerialization.data(withJSONObject: object.filter { keys.contains($0.key) }, options: .sortedKeys)
+        }
+        let next = source.map { Snapshot(capability: object?["configuredCraftActions"] as? Int,
+            sentry: IPadSentryObservation.decodeCatalog(catalog), source: $0) }
+        lock.lock(); defer { lock.unlock() }
+        guard incoming == peer else { return nil }
+        if snapshot != next { snapshot = next; generation = UUID() }
+        return next == nil ? nil : Ticket(peer: incoming, generation: generation)
+    }
+    func invalidate(from incoming: ObjectIdentifier) {
+        lock.lock(); defer { lock.unlock() }
+        guard incoming == peer else { return }
+        snapshot = nil; generation = UUID()
+    }
+    func ticket(from incoming: ObjectIdentifier, published: Ticket?, capability: Int?, state: SentryState) -> Ticket? {
+        lock.lock(); defer { lock.unlock() }
+        guard incoming == peer, published == Ticket(peer: incoming, generation: generation),
+              let snapshot, snapshot.capability == capability,
+              snapshot.sentry == state else { return nil }
+        return Ticket(peer: incoming, generation: generation)
+    }
+    @discardableResult func submit(_ ticket: Ticket, send: () -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard peer == ticket.peer, snapshot != nil, generation == ticket.generation else { return false }
+        send()
+        return true
+    }
+}
+
+/// An invocation's exact authority, kept in memory only, never added to the public client9 wire.
+struct IPadCraftAdmission: Equatable {
+    let capability: Int
+    let state: SentryState
+    let ticket: IPadCraftSendGate.Ticket
+
+    init?(capability: Int?, state: SentryState?, ownerKnown: Bool,
+          localReturnPending: Bool, ticket: IPadCraftSendGate.Ticket?) {
+        guard let capability, [1, 2].contains(capability), let state, let ticket,
+              IPadSentryObservation.isConsistent(state), !localReturnPending else { return nil }
+        switch (state.phase, state.requested) {
+        case (.inactive, false): break
+        case (.userSessionProtected, true):
+            guard capability == 2, ownerKnown, state.control != nil else { return nil }
+        default: return nil
+        }
+        self.capability = capability; self.state = state; self.ticket = ticket
+    }
+}
+
 /// Production state machine shared by the app adapter and the finite, network-free checks.
 struct IPadCraftConnectedControl {
     typealias Context = IPadConfiguredCraftAction.Context
@@ -67,11 +143,14 @@ struct IPadCraftConnectedControl {
         let context: Context
         let control: ConfiguredCraftActionControl
         let deadline: TimeInterval
+        let admission: IPadCraftAdmission?
     }
     private(set) var model: IPadConfiguredCraftAction
     private(set) var context: Context?
     private(set) var owner: Owner?
     private(set) var advertised = false
+    private(set) var capability: Int?
+    private(set) var admission: IPadCraftAdmission?
     private(set) var catalog: IPadConfiguredCraftAction.Catalog?
     private(set) var exchange: Exchange?
     private(set) var unresolved: IPadCraftActionJournal.Record?
@@ -89,7 +168,7 @@ struct IPadCraftConnectedControl {
         if unresolved != nil { message = "이전 음성 대화 요청의 결과를 확인해야 합니다." }
     }
 
-    var canPrepare: Bool { advertised && context != nil && catalog != nil && exchange == nil && unresolved == nil && !storageFailed }
+    var canPrepare: Bool { advertised && admission != nil && context != nil && catalog != nil && exchange == nil && unresolved == nil && !storageFailed }
     var canQuery: Bool { advertised && context != nil && unresolved?.owner == owner && unresolved != nil && exchange == nil && !storageFailed }
 
     static func legacyAllowsNewAction(_ legacy: IPadProviderCall) -> Bool {
@@ -121,11 +200,14 @@ struct IPadCraftConnectedControl {
         return (!selection.microphone || inputReady) && (!selection.playback || outputReady)
     }
 
-    mutating func observe(context next: Context?, owner nextOwner: Owner?, capability: Int?) {
-        let supported = capability == 1 && next != nil && nextOwner != nil &&
+    mutating func observe(context next: Context?, owner nextOwner: Owner?, capability: Int?,
+                          admission nextAdmission: IPadCraftAdmission? = nil) {
+        let supported = capability == 1 || capability == 2
+        let authenticated = supported && next != nil && nextOwner != nil &&
             next?.hostID == nextOwner?.hostPin && next?.deviceID == nextOwner?.deviceID
-        if context != next || owner != nextOwner || advertised != supported {
-            context = next; owner = nextOwner; advertised = supported
+        if context != next || owner != nextOwner || self.capability != capability || admission != nextAdmission || advertised != authenticated {
+            context = next; owner = nextOwner; advertised = authenticated
+            self.capability = capability; admission = nextAdmission
             exchange = nil; catalog = nil; catalogAttempted = false
             if let next { model.bind(next) } else { model.disconnected() }
             if let record = unresolved, let next, record.owner == nextOwner,
@@ -133,7 +215,7 @@ struct IPadCraftConnectedControl {
                 try? model.restoreUnresolved(request, in: next)
             }
         }
-        if !supported { message = "현재 Mac은 음성 대화 공통 동작을 지원하지 않습니다." }
+        if !authenticated { message = "현재 Mac은 음성 대화 공통 동작을 지원하지 않습니다." }
     }
 
     mutating func catalogRequest(explicit: Bool = false) -> ConfiguredCraftActionControl? {
@@ -141,13 +223,13 @@ struct IPadCraftConnectedControl {
         catalogAttempted = true
         catalog = nil
         let control = ConfiguredCraftActionControl(requestId: UUID())
-        exchange = Exchange(context: context, control: control, deadline: clock() + 10)
+        exchange = Exchange(context: context, control: control, deadline: clock() + 10, admission: nil)
         return control
     }
 
     mutating func invoke(userAction: UUID, heldMilliseconds: Int, issuedAt: Int64,
-                         inputReady: Bool, outputReady: Bool, sentryInactive: Bool) -> ConfiguredCraftActionControl? {
-        guard canPrepare, sentryInactive, issuedAt > 0, issuedAt <= 9_007_199_254_740_991,
+                         inputReady: Bool, outputReady: Bool, sentryAllowed: Bool) -> ConfiguredCraftActionControl? {
+        guard canPrepare, sentryAllowed, let admission, admission.capability == capability, issuedAt > 0, issuedAt <= 9_007_199_254_740_991,
               let context, let owner, let catalog else { return nil }
         _ = model.observe(from: context, authenticated: true, endpointSupported: advertised,
                           catalog: catalog, inputReady: inputReady, outputReady: outputReady)
@@ -165,7 +247,7 @@ struct IPadCraftConnectedControl {
             // A write may have reached disk even if its readback fails. Retain the same ID in memory.
             unresolved = record
             try journal.write(record)
-            exchange = Exchange(context: context, control: control, deadline: clock() + 10)
+            exchange = Exchange(context: context, control: control, deadline: clock() + 10, admission: admission)
             message = "음성 대화 동작의 실행 접수를 확인하는 중입니다."
             return control
         } catch {
@@ -178,7 +260,7 @@ struct IPadCraftConnectedControl {
     mutating func query() -> ConfiguredCraftActionControl? {
         guard canQuery, let context, let record = unresolved else { return nil }
         let control = ConfiguredCraftActionControl(requestId: UUID(), operationId: record.request.operationId)
-        exchange = Exchange(context: context, control: control, deadline: clock() + 10)
+        exchange = Exchange(context: context, control: control, deadline: clock() + 10, admission: nil)
         return control
     }
 
@@ -222,6 +304,19 @@ struct IPadCraftConnectedControl {
         return true
     }
 
+    /// A rejected final send never manufactures a fresh operation or erases its durable ID.
+    mutating func sendUnconfirmed(requestID: UUID) {
+        guard let pending = exchange, pending.control.requestId == requestID else { return }
+        exchange = nil
+        if pending.control.operation == .catalog { catalog = nil }
+        if let record = unresolved, let context,
+           let request = try? JSONDecoder().decode(IPadConfiguredCraftAction.Request.self,
+               from: JSONEncoder().encode(record.request)) {
+            try? model.restoreUnresolved(request, in: context)
+        }
+        message = "송신 결과가 미확인입니다. 원래 요청의 결과를 확인하세요."
+    }
+
     mutating func timeout(requestID: UUID) {
         guard let pending = exchange, pending.control.requestId == requestID, clock() >= pending.deadline else { return }
         exchange = nil
@@ -245,9 +340,9 @@ struct IPadCraftPreparation {
     mutating func cancel() { cancelled = true }
     mutating func permits(context: IPadConfiguredCraftAction.Context?, selectionGeneration: UUID,
                           foreground: Bool, permissionWaiting: Bool, backgrounded: Bool = false,
-                          sentryInactive: Bool, now: TimeInterval) -> Bool {
+                          sentryAllowed: Bool, now: TimeInterval) -> Bool {
         guard !cancelled, context == self.context, selectionGeneration == self.selectionGeneration,
-              !backgrounded, sentryInactive, foreground || permissionWaiting, now.isFinite else { return false }
+              !backgrounded, sentryAllowed, foreground || permissionWaiting, now.isFinite else { return false }
         if permissionWaiting { deadline = nil; return true }
         if deadline == nil { deadline = now + 8 }
         return now < deadline!
