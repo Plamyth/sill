@@ -91,6 +91,8 @@ public enum StreamMessageKind: UInt8 {
     case providerCallState = 222
     case sentryReturnRequest = 223
     case sentryReturnState = 224
+    case configuredCraftActionControl = 225
+    case configuredCraftActionState = 226
     case unknown = 255       // never sent: what parseHeader yields for a kind this build does not know
 }
 
@@ -127,8 +129,8 @@ public struct StreamMessage {
         case .sentryReturnRequest: return SentryReturnControl.maximumPayload
         case .sentryReturnState: return -1
         case .sentryState: return -1
-        case .forwardingControl, .providerCallControl: return 4096
-        case .providerCallState, .forwardingState, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
+        case .forwardingControl, .providerCallControl, .configuredCraftActionControl: return 4096
+        case .providerCallState, .configuredCraftActionState, .forwardingState, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
         case .fetchCatalog: return 256
         case .audioRoutes: return -1
         default: return maxClientPayload
@@ -139,8 +141,8 @@ public struct StreamMessage {
         switch kind {
         case .sentryReturnState: return SentryReturnState.maximumPayload
         case .sentryReturnRequest: return -1
-        case .forwardingState, .providerCallState: return 16384
-        case .providerCallControl, .forwardingControl, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
+        case .forwardingState, .providerCallState, .configuredCraftActionState: return 16384
+        case .providerCallControl, .configuredCraftActionControl, .forwardingControl, .forwardingUplinkReserved, .forwardingDownlinkReserved: return -1
         case .microphoneState, .microphoneReceipt, .sentryState: return 4096
         case .activateSentry: return -1
         case .microphoneControl, .microphoneFrame: return 0

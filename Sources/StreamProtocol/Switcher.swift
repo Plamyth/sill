@@ -155,6 +155,7 @@ public struct WindowList: Codable {
     public var remoteAudio: Int?
     public var audioForwarding: AudioForwardingCatalog?
     public var providerCalls: Int?
+    public var configuredCraftActions: Int?
     public var providerCallKinds: [String]?
     public var audioPrivacy: AudioPrivacyState?
     public var catalogRefresh: Int?
@@ -190,7 +191,7 @@ public struct WindowList: Codable {
                 dockApps: [AppInfo]? = nil, audioPrivacy: AudioPrivacyState? = nil,
                 catalogRefresh: Int? = nil, responseRequestID: UUID? = nil, providerCalls: Int? = nil,
                 sourceSelectionAdmission: SourceSelectionAdmission? = nil, extendedDesktopControl: Int? = nil,
-                providerCallKinds: [String]? = nil) {
+                providerCallKinds: [String]? = nil, configuredCraftActions: Int? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
@@ -201,6 +202,7 @@ public struct WindowList: Codable {
         self.catalogRefresh = catalogRefresh
         self.responseRequestID = responseRequestID
         self.providerCalls = providerCalls
+        self.configuredCraftActions = configuredCraftActions
         self.providerCallKinds = providerCallKinds
         self.inputGeneration = inputGeneration
         self.presentationInput = presentationInput
