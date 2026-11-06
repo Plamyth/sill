@@ -367,17 +367,53 @@ def verify_simple09_cleanup(body):
                  '              action == "OFF" || (controls.microphone.value as? String == "0" && controls.speaker.value as? String == "0") else {')
     loop = 'for control in [controls.microphone, controls.speaker] {'
     lookup = 'let toggle = try unique(app.switches.matching(identifier: control.identifier))'
+    selection = 'let selected = try mediaToggle(toggle, name: "simple09-before-tap")'
     current_guard = ('guard let current = toggle.value as? String, ["0", "1"].contains(current),\n'
-                     '                  toggle.isEnabled, toggle.isHittable, action == "OFF" || current == "0" else {')
+                     '                  current == selected.value, toggle.isEnabled, toggle.isHittable, action == "OFF" || current == "0" else {')
     tap = ('if current != target {\n'
-           '                try tapChecked(toggle)\n'
+           '                try tapChecked(selected.element)\n'
            '                captureMediaState(app, name: "simple09-after-" + toggle.identifier + "-" + action)\n'
            '            }')
     final_guard = 'guard observed.microphone.isEnabled, observed.speaker.isEnabled else {'
-    for expected in (preflight, loop, lookup, current_guard, tap, final_guard):
+    helper = body.split('func mediaToggle(', 1)[1].split('        let controls =', 1)[0]
+    child_lookup = 'let children = row.descendants(matching: .switch)'
+    child_count = 'let count = children.count'
+    count_guard = 'guard count <= 1 else {'
+    leaf_selection = 'let leaf = count == 1 ? children.element(boundBy: 0) : row'
+    value_guard = ('guard let current = row.value as? String, ["0", "1"].contains(current),\n'
+                   '                  let leafValue = leaf.value as? String, ["0", "1"].contains(leafValue),\n'
+                   '                  current == leafValue, row.isEnabled, row.isHittable, leaf.isEnabled, leaf.isHittable else {')
+    for expected in (child_lookup, child_count, count_guard, leaf_selection, value_guard,
+                     '"parent": snapshot(row), "childCount": count',
+                     '"children": children.allElementsBoundByIndex.map { snapshot($0) }',
+                     '"selectedTarget": count == 0 ? "row" : (count == 1 ? "child" : "none")',
+                     '"value": element.value ?? NSNull()',
+                     '"enabled": element.isEnabled, "hittable": element.isHittable',
+                     '"frame": String(describing: element.frame)',
+                     'ax.name = name + "-" + row.identifier + "-" + action + "-tap-target"',
+                     'ax.lifetime = .keepAlways', 'return (leaf, current)'):
+        assert expected in helper, expected
+    assert helper.index(child_lookup) < helper.index(child_count) < helper.index('add(ax)') < helper.index(count_guard)
+    assert helper.index(count_guard) < helper.index(leaf_selection) < helper.index(value_guard) < helper.index('return (leaf, current)')
+    assert 'tap' not in helper.replace('-tap-target', '')
+    assert helper.count('children.count') == 1 and 'firstMatch' not in helper
+    for expected in (preflight, loop, lookup, selection, current_guard, tap, final_guard):
         assert expected in body, expected
-    assert body.index(preflight) < body.index(loop) < body.index(lookup) < body.index(current_guard) < body.index(tap)
+    for direction in ('microphone', 'speaker'):
+        initial = f'_ = try mediaToggle(controls.{direction}, name: "simple09-initial")'
+        assert initial in body, initial
+        assert body.index(initial) < body.index(preflight)
+        final = f'let final{direction.capitalize()} = try mediaToggle(observed.{direction}, name: "simple09-final")'
+        assert final in body, final
+        assert body.index('Task.sleep(') < body.index(final) < body.index(final_guard)
+        assert f'XCTAssertEqual(final{direction.capitalize()}.value, target)' in body
+    assert body.index(preflight) < body.index(loop) < body.index(lookup) < body.index(selection) < body.index(current_guard) < body.index(tap)
     assert body.index(tap) < body.index('let settled =') < body.index('Task.sleep(') < body.index(final_guard)
+    assert 'target), object: toggle)' in body and 'target), object: selected.element)' in body
+    wait = 'let result = await XCTWaiter.fulfillment(of: [settled, leafSettled], timeout: 10)'
+    after = '_ = try mediaToggle(toggle, name: "simple09-settled")'
+    assert wait in body and after in body
+    assert body.index(wait) < body.index(after) < body.index('guard result == .completed else {') < body.index('Task.sleep(')
     assert body.count('try tapChecked(') == 1 and body.count('for ') == 1
     assert re.search(r'\b(continue|catch|while)\b', body) is None
     for forbidden in ('let initial =', 'else {\n                try tap', '.tap()'):
@@ -389,9 +425,29 @@ for old, new in (
         ('["0", "1"].contains(current)', '["0", "1", "unknown"].contains(current)'),
         ('toggle.isEnabled, toggle.isHittable,', 'toggle.isHittable,'),
         ('try unique(app.switches.matching(identifier: control.identifier))', 'control'),
+        ('guard count <= 1 else {', 'guard count <= 2 else {'),
+        ('row.descendants(matching: .switch)', 'app.switches'),
+        ('count == 1 ? children.element(boundBy: 0) : row', 'row'),
+        ('count == 1 ? children.element(boundBy: 0) : row', 'count > 0 ? children.element(boundBy: 0) : row'),
+        ('current == leafValue, ', ''),
+        ('let current = row.value as? String,', 'case let current = row.value as? String ?? "0",'),
+        ('let leafValue = leaf.value as? String,', 'case let leafValue = leaf.value as? String ?? "0",'),
+        ('["0", "1"].contains(leafValue)', '["0", "1", "unknown"].contains(leafValue)'),
+        ('row.isEnabled, ', ''),
+        ('row.isHittable, ', ''),
+        ('leaf.isEnabled, ', ''),
+        ('leaf.isHittable else {', 'true else {'),
+        ('current == selected.value, ', ''),
+        ('"parent": snapshot(row)', '"parent": [:]'),
+        ('"children": children.allElementsBoundByIndex.map { snapshot($0) }', '"children": []'),
+        ('_ = try mediaToggle(controls.speaker, name: "simple09-initial")', ''),
+        ('of: [settled, leafSettled]', 'of: [settled]'),
+        ('_ = try mediaToggle(toggle, name: "simple09-settled")', ''),
+        ('XCTAssertEqual(finalSpeaker.value, target)', ''),
         ('if current != target {', 'if true {'),
         ('if current != target {', 'if current == target {'),
-        ('try tapChecked(toggle)', 'try tapChecked(toggle)\n                try tapChecked(toggle)'),
+        ('try tapChecked(selected.element)', 'try tapChecked(toggle)'),
+        ('try tapChecked(selected.element)', 'try tapChecked(selected.element)\n                try tapChecked(selected.element)'),
         ('guard observed.microphone.isEnabled, observed.speaker.isEnabled else {', 'guard true else {')):
     assert old in simple09
     try:
@@ -401,9 +457,9 @@ for old, new in (
     else:
         raise AssertionError(f'unsafe test09 body accepted: {new}')
 assert 'defer { captureMediaState(app, name: "simple09-final-observation") }' in simple09
-assert 'await XCTWaiter.fulfillment(of: [settled], timeout: 10) == .completed' in simple09
+assert 'await XCTWaiter.fulfillment(of: [settled, leafSettled], timeout: 10)' in simple09
 assert 'value == %@ AND enabled == true AND hittable == true' in simple09
-assert simple09.index('try tapChecked(toggle)') < simple09.index('XCTWaiter.fulfillment(') < simple09.index('Task.sleep(')
+assert simple09.index('try tapChecked(selected.element)') < simple09.index('XCTWaiter.fulfillment(') < simple09.index('Task.sleep(')
 assert 'XCTAssertEqual(observed.microphone.value as? String, target)' in simple09
 assert 'XCTAssertEqual(observed.speaker.value as? String, target)' in simple09
 assert 'iPadProviderCall' not in simple09 and 'iPadCallDevices' not in simple09
