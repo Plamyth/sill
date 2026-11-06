@@ -251,6 +251,10 @@ final class StreamClient: ObservableObject {
     var providerCallCapability: Int?
     var providerCallKindsCapability: [String]?
     var providerCallQueryWake: DispatchWorkItem?
+    @Published var configuredCraftAction = IPadCraftConnectedControl()
+    var configuredCraftConnection = UUID()
+    var configuredCraftPeer: ObjectIdentifier?
+    var configuredCraftCapability: Int?
     var audioForwarding = IPadAudioForwarding()
     var audioForwardingLocalGeneration = UUID()
     var audioForwardingWake: DispatchWorkItem?
@@ -5739,6 +5743,7 @@ final class StreamClient: ObservableObject {
         if receiveMicrophone(header, data, from: peer) { return }
         if receiveAudioForwarding(header, data, from: peer) { return }
         if receiveIPadProviderCall(header, data, from: peer) { return }
+        if receiveConfiguredCraftAction(header, data, from: peer) { return }
         #endif
         #endif
         switch header.kind {
@@ -5820,6 +5825,10 @@ final class StreamClient: ObservableObject {
                 // Only from the current connection: a list queued by a replaced one must not
                 // describe the next session.
                 guard self.connection === from else { return }
+                #if os(iOS)
+                self.configuredCraftCapability = list.configuredCraftActions
+                self.reconcileConfiguredCraftAction()
+                #endif
                 #if !os(visionOS)
                 #if os(iOS)
                 if self.admitAudioCatalog(audioTicket) {

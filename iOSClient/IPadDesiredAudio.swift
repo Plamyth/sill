@@ -206,6 +206,7 @@ struct IPadDesiredAudioStore {
         let identity: IPadDesiredAudio.Identity
         var selection: IPadDesiredAudio.Selection
         var forwarding: IPadAudioForwarding.Durable?
+        var explicitSelection: Bool?
     }
     private struct Archive: Codable {
         let version: Int
@@ -228,13 +229,21 @@ struct IPadDesiredAudioStore {
         records.first { $0.identity == identity }?.selection ?? .init()
     }
 
+    func hasConfirmedSelection(for identity: IPadDesiredAudio.Identity) -> Bool {
+        guard let record = records.first(where: { $0.identity == identity }) else { return false }
+        // Legacy records cannot distinguish explicit OFF from an automatic save. Preserve their intent.
+        return record.explicitSelection != false
+    }
+
     func forwarding(for identity: IPadDesiredAudio.Identity) -> IPadAudioForwarding.Durable? {
         records.first { $0.identity == identity }?.forwarding
     }
 
     func saveForwarding(_ forwarding: IPadAudioForwarding.Durable, for identity: IPadDesiredAudio.Identity) {
         var next = records.filter { $0.identity.macID != identity.macID }
-        next.append(Record(identity: identity, selection: selection(for: identity), forwarding: forwarding))
+        let previous = records.first { $0.identity == identity }
+        next.append(Record(identity: identity, selection: selection(for: identity), forwarding: forwarding,
+                           explicitSelection: previous.map { $0.explicitSelection ?? true } ?? false))
         if let data = try? JSONEncoder().encode(Archive(version: 1, records: Array(next.suffix(128)))) {
             defaults.set(data, forKey: Self.key)
         }
@@ -242,7 +251,8 @@ struct IPadDesiredAudioStore {
 
     func save(_ selection: IPadDesiredAudio.Selection, for identity: IPadDesiredAudio.Identity) {
         var next = records.filter { $0.identity.macID != identity.macID }
-        next.append(Record(identity: identity, selection: selection, forwarding: records.first { $0.identity == identity }?.forwarding))
+        next.append(Record(identity: identity, selection: selection, forwarding: records.first { $0.identity == identity }?.forwarding,
+                           explicitSelection: true))
         if let data = try? JSONEncoder().encode(Archive(version: 1, records: Array(next.suffix(128)))) {
             defaults.set(data, forKey: Self.key)
         }

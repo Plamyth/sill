@@ -13,6 +13,7 @@ extension StreamClient {
 
     func desiredAudioSetConnection(_ connection: NWConnection?) {
         providerCallSetConnection(connection)
+        configuredCraftSetConnection(connection)
         let peer = connection.map(ObjectIdentifier.init)
         guard desiredAudio.peer != peer else { return }
         audioForwardingStopDiagnostic = nil
@@ -61,6 +62,7 @@ extension StreamClient {
             audioForwarding.block()
             applyAudioForwarding(nil)
         }
+        reconcileConfiguredCraftAction()
     }
 
     func suspendDesiredAudio(preserveManualPermission: Bool = false) {
@@ -134,7 +136,7 @@ extension StreamClient {
 
     func reconcileDesiredAudio() {
         dispatchPrecondition(condition: .onQueue(.main))
-        defer { observeAudioDiagnostics() }
+        defer { observeAudioDiagnostics(); reconcileConfiguredCraftAction() }
         guard connected, let connection, desiredAudio.peer == ObjectIdentifier(connection) else { return }
         if audioResumeObserver == nil { audioResumeObserver = IPadAudioResumeObserver(client: self) }
         refreshDesiredAudioIdentity()
