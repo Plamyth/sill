@@ -50,7 +50,10 @@ else:
     journal_arguments += 'clearLatch: { [unowned self] in let result = production_clearLatch(); clearHook?(); return result }, '
 (output / 'LocalReturn.swift').write_text((here / 'LocalReturn.swift').read_text()
     .replace('// PRODUCTION_JOURNAL_CALLBACKS', '\n'.join(journal_callbacks))
-    .replace('// PRODUCTION_JOURNAL_ARGUMENTS', journal_arguments))
+    .replace('// PRODUCTION_JOURNAL_ARGUMENTS', journal_arguments)
+    .replace('// JOURNAL_RECOVERY_ARGUMENTS', ', recoveryData: recoveryStored, storeRecovery: { [unowned self] in if recoveryStorageAccepted { recoveryStored = $0 } }, loadRecovery: { [unowned self] in recoveryReadbackAccepted ? recoveryStored : nil }'
+        if 'recoveryData:' in (root / 'Sources/SillHost/LocalAudioReturn.swift').read_text() else '')
+    .replace('// JOURNAL_RESTART_RECOVERY', ', recoveryData: recoveryStored' if 'recoveryData:' in (root / 'Sources/SillHost/LocalAudioReturn.swift').read_text() else ''))
 sources += [here / 'Main.swift', here / 'JournalRollback.swift', here / 'LegacyAudioJournal.swift', here / 'FakeHAL.swift', output / 'LocalReturn.swift', here / 'Exclusive.swift', output / 'CoordinatorFixture.swift']
 sources += [output / 'PrivacySentryFixture.swift']
 sources += [root / 'Tests/checks/host-audio-privacy/StreamSilence.swift']
