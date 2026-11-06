@@ -388,4 +388,65 @@ for kind in [ProviderCallKind.nativeCodex, .chatgptDots] {
             "복구 종료가 확인된 뒤 활성 소유권을 해제함")
     }
 }
+now = 101
+var controlsCall = VisionProviderCall(connection: connection, clock: { now })
+func controls(_ call: VisionProviderCall, canStart: Bool = true, canStop: Bool = false,
+              context: VisionRemoteAudioIntent.Context = context,
+              snapshot: AudioForwardingSnapshot? = off) -> VisionProviderCall.Controls {
+    call.controls(canStart: canStart, canStop: canStop, context: context, snapshot: snapshot)
+}
+check(!controls(controlsCall).enabled, "미지원 Host에서는 음성 시작이 비활성임")
+controlsCall.observe(connection: connection, capability: 1, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+check(controlsCall.canPerform && !controls(controlsCall).enabled && controls(controlsCall).message?.contains("시작 준비") == true,
+      "capability 광고만 있고 실제 prepared producer가 없으면 시작을 허용하지 않음")
+check(controlsCall.request == nil && controlsCall.nativePreparation == nil,
+      "표시 계산은 요청·준비·녹음 권한을 만들지 않음")
+check(controlsCall.consumeNativePreparation(preparation, fence: originalFence), "정확한 준비 관측을 재사용함")
+check(controls(controlsCall).enabled && controls(controlsCall).action == .start && controls(controlsCall).message == nil,
+      "현재 준비 결과와 기존 시작 권한이 모두 있어야 시작을 표시함")
+check(!controls(controlsCall, canStart: false).enabled, "창 owner·기존 시작 경계는 표시 모델로 우회하지 못함")
+check(!controls(controlsCall, context: otherWindow).enabled && !controls(controlsCall, context: hidden).enabled,
+      "다른 창·숨겨진 창의 준비 대상을 사용하지 않음")
+check(!controls(controlsCall, context: unprotected).enabled, "미디어 보호 상실 후 시작하지 않음")
+check(!controls(controlsCall, snapshot: nil).enabled && !controls(controlsCall, snapshot: revised).enabled &&
+      !controls(controlsCall, snapshot: changedEpoch).enabled, "없거나 다른 revision·binding epoch의 원장은 시작을 허용하지 않음")
+now = 103
+check(!controls(controlsCall).enabled, "준비 기한 경계에서 시작을 비활성화함")
+now = 99
+check(!controls(controlsCall).enabled, "역행 시각은 시작을 허용하지 않음")
+now = 101
+_ = controlsCall.perform(start)
+check(!controls(controlsCall).enabled && controls(controlsCall).message != nil, "응답 대기 중 중복 시작을 허용하지 않음")
+check(controlsCall.receive(try .init(request: start, result: nativeResult), from: connection), "기존 시작 확인을 표시 모델에 전달함")
+controlsCall.discardNativePreparation()
+check(controls(controlsCall, canStart: false, canStop: true).enabled &&
+      controls(controlsCall, canStart: false, canStop: true).action == .stop,
+      "준비 대상·입출력이 없어도 기존 종료 권한을 보존함")
+check(!controls(controlsCall, canStop: false).enabled, "다른 owner의 통화를 종료하지 않음")
+let controlsStop = try ProviderCallRequest(requestId: UUID(), action: .stop, expectedLeaseRevision: off.revision,
+    pairedDeviceId: device, desiredInput: false, desiredOutput: false, callSessionId: nativeResult.callSessionId)
+_ = controlsCall.perform(controlsStop)
+_ = controlsCall.receive(try .init(request: controlsStop, result: .init(requestId: controlsStop.requestId,
+    status: .unknown, reason: "fixture_unknown", provider: "codex-app-server")), from: connection)
+check(controls(controlsCall, canStop: true).action == .stop && controls(controlsCall, canStop: true).message == controlsCall.message,
+      "종료 미확인은 새 시작으로 바꾸지 않고 실제 오류를 유지함")
+var failedControls = VisionProviderCall(connection: connection, clock: { now })
+failedControls.observe(connection: connection, capability: 1, hostKey: hostKey, providerCallKinds: ["codex-app-server"])
+_ = failedControls.perform(start)
+_ = failedControls.receive(try .init(request: start, result: .init(requestId: start.requestId,
+    status: .failed, reason: "fixture_failed", provider: "codex-app-server")), from: connection)
+check(!controls(failedControls).enabled && controls(failedControls).message == failedControls.message,
+      "준비 실패 이유는 단순 UI에서도 보존함")
+_ = failedControls.consumeNativePreparation(preparation, fence: originalFence)
+check(controls(failedControls).enabled && controls(failedControls).message == failedControls.message,
+      "실패 뒤 새 준비가 확인되면 명시적 재시도가 가능함")
+var legacyControls = VisionProviderCall(connection: connection, target: .chatgptDots, clock: { now })
+legacyControls.observe(connection: connection, capability: 1, hostKey: hostKey)
+check(!controls(legacyControls).enabled, "주 시작 동작은 Dots 대체 통화를 만들지 않음")
+_ = legacyControls.perform(start)
+_ = legacyControls.receive(try .init(request: start, result: .init(requestId: start.requestId,
+    status: .started, reason: "fixture_legacy", callSessionId: "legacy-retained")), from: connection)
+check(controls(legacyControls, canStop: true).action == .stop && controls(legacyControls, canStop: true).enabled,
+      "기존 다른 통화의 종료 소유권은 보존함")
+print("PASS 통합 음성 제어 표시·prepared 부재·기한·창·종료·오류 회귀")
 print("PASS ACTUAL_METHOD_CHECKS \(methodChecks); 실제 Host·기기·음성 효과 0")

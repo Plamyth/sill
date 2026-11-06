@@ -279,6 +279,35 @@ struct VisionProviderCall {
         nativePreparation = preparation
         return true
     }
+
+    struct Controls {
+        let action: ProviderCallRequest.Action
+        let enabled: Bool
+        let message: String?
+    }
+
+    func controls(canStart: Bool, canStop: Bool, context: VisionRemoteAudioIntent.Context,
+                  snapshot: AudioForwardingSnapshot?) -> Controls {
+        if selectedActiveCall != nil {
+            return .init(action: .stop, enabled: canStop,
+                         message: pending != nil || selectedResult?.status != .started ? message : nil)
+        }
+        if pending != nil || selectedResult.map({ [.pending, .unknown].contains($0.status) }) == true {
+            return .init(action: .start, enabled: false, message: message)
+        }
+        let problem = selectedResult.map { [.failed, .unsupported].contains($0.status) } == true ? message : nil
+        guard target == .nativeCodex, targetSupported else {
+            return .init(action: .start, enabled: false, message: problem ?? "이 Mac 연결은 음성 대화 제어를 지원하지 않습니다.")
+        }
+        guard let preparation = nativePreparation, let snapshot, let device = snapshot.binding?.pairedDeviceId,
+              let fence = VisionNativePreparedCall.Fence(connection: connection, context: context,
+                  snapshot: snapshot, device: device,
+                  coreGeneration: preparation.fence.coreGeneration, ownsAudio: canStart),
+              preparation.isCurrent(fence, now: clock()) else {
+            return .init(action: .start, enabled: false, message: problem ?? "Mac 음성 대화의 시작 준비를 확인하지 못했습니다.")
+        }
+        return .init(action: .start, enabled: canStart && canPerform, message: problem)
+    }
     var message: String {
         guard target != .grok else { return "Grok 통화의 원격 시작·종료는 미확인입니다." }
         let name = target == .nativeCodex ? "Mac Codex 음성" : "Dots 통화"

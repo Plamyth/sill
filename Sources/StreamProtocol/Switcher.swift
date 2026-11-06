@@ -155,6 +155,7 @@ public struct WindowList: Codable {
     public var remoteAudio: Int?
     public var audioPrivacy: AudioPrivacyState?
     public var providerCalls: Int?
+    public var configuredCraftActions: Int?
     public var providerCallKinds: [String]?
     public var catalogRefresh: Int?
     public var responseRequestID: UUID?
@@ -193,7 +194,7 @@ public struct WindowList: Codable {
                 audioPrivacy: AudioPrivacyState? = nil, catalogRefresh: Int? = nil,
                 responseRequestID: UUID? = nil, sentry: SentryState? = nil,
                 testDestinations: TestDestinationCatalog.Projection? = nil,
-                sourceSelectionAdmission: SourceSelectionAdmission? = nil) {
+                sourceSelectionAdmission: SourceSelectionAdmission? = nil, configuredCraftActions: Int? = nil) {
         self.macName = macName; self.windows = windows; self.active = active; self.launchID = launchID
         self.hostVersion = hostVersion; self.protocol = `protocol`; self.gestures = gestures
         self.remoteAudio = remoteAudio
@@ -203,6 +204,7 @@ public struct WindowList: Codable {
         self.sentry = sentry
         self.testDestinations = testDestinations
         self.sourceSelectionAdmission = sourceSelectionAdmission
+        self.configuredCraftActions = configuredCraftActions
         self.selectionRevision = selectionRevision
         self.automaticDisplaySelection = automaticDisplaySelection
         self.inputGeneration = inputGeneration

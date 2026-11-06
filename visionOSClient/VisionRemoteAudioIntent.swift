@@ -45,6 +45,17 @@ struct VisionRemoteAudioIntent {
         let direction: Direction
         let revision: UInt64
     }
+    struct Preparation: Equatable {
+        let operationId: UUID
+        let hostKey: String
+        let original: Desire?
+        let playbackRevision: UInt64
+        let microphoneRevision: UInt64
+        var revision: UInt64 { max(playbackRevision, microphoneRevision) }
+        func revision(_ direction: Direction) -> UInt64 {
+            direction == .playback ? playbackRevision : microphoneRevision
+        }
+    }
     private struct Attempt: Hashable {
         let scope: Scope
         let direction: Direction
@@ -80,6 +91,30 @@ struct VisionRemoteAudioIntent {
     }
     func desiredRevision(_ direction: Direction, hostKey: String) -> UInt64 {
         directionRevisions[hostKey]?[direction] ?? 0
+    }
+    mutating func prepareSelection(_ desire: Desire, hostKey: String, operationId: UUID) -> Preparation? {
+        let original = desires[hostKey]
+        guard original == nil || original == desire else { return nil }
+        if original == nil {
+            for direction in Direction.allCases { setDesired(desire[direction], direction: direction, hostKey: hostKey) }
+        }
+        return .init(operationId: operationId, hostKey: hostKey, original: original,
+            playbackRevision: desiredRevision(.playback, hostKey: hostKey),
+            microphoneRevision: desiredRevision(.microphone, hostKey: hostKey))
+    }
+    @discardableResult
+    mutating func cancelPreparation(_ preparation: Preparation) -> [Direction] {
+        guard preparation.original == nil, desires[preparation.hostKey] != nil else { return [] }
+        let owned = Direction.allCases.filter {
+            desiredRevision($0, hostKey: preparation.hostKey) == preparation.revision($0)
+        }
+        if owned.count == Direction.allCases.count {
+            desires.removeValue(forKey: preparation.hostKey)
+            directionRevisions.removeValue(forKey: preparation.hostKey)
+        } else {
+            for direction in owned { setDesired(false, direction: direction, hostKey: preparation.hostKey) }
+        }
+        return owned
     }
     mutating func consume(_ direction: Direction, scope: Scope?) {
         if let scope {
@@ -131,6 +166,13 @@ extension StreamClient {
     }
     var visionPlaybackDesired: Bool { VisionRemoteAudioStore.shared.model.intent.desired(.playback, hostKey: visionAudioTrustedHostKey) }
     var visionMicrophoneDesired: Bool { VisionRemoteAudioStore.shared.model.intent.desired(.microphone, hostKey: visionAudioTrustedHostKey) }
+
+    var visionStoredAudioSelection: (desire: VisionRemoteAudioIntent.Desire, revision: UInt64)? {
+        guard let key = visionAudioTrustedHostKey else { return nil }
+        let intent = VisionRemoteAudioStore.shared.model.intent
+        guard let desire = intent.desires[key] else { return nil }
+        return (desire, max(intent.desiredRevision(.microphone, hostKey: key), intent.desiredRevision(.playback, hostKey: key)))
+    }
 
     var visionAudioIntentContext: VisionRemoteAudioIntent.Context {
         var context = VisionRemoteAudioIntent.Context()
@@ -186,6 +228,7 @@ extension StreamClient {
 
     func reconcileVisionAudioIntent() {
         dispatchPrecondition(condition: .onQueue(.main))
+        defer { visionConfiguredCraftAction.refresh() }
         var context = visionAudioIntentContext
         let suspended = !context.connected || !context.foreground || context.inputBlocked ||
             !visionInputBinding.isConfirmed ||
