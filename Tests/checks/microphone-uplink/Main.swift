@@ -573,7 +573,9 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
             microphone: MicrophoneCapability(peer: binding.peer, destination: binding.destination, generation: binding.capability))
         let message = StreamMessage(kind: .windowList, timestamp: 0, isKeyframe: false, payload: Wire.encode(list))
         reader.videoAdmission = .committed(epoch)
-        reader.sendMicrophoneCatalog(message, to: connection, grant: grant)
+        client.videoLane = .legacy
+        let admission = SourcePublicationAdmission()
+        reader.sendMicrophoneCatalog(message, to: connection, grant: grant, admission: admission)
         reader.queue.sync { reader.replayCatalog(to: client) }
         expect(Wire.decode(WindowList.self, from: Data(connection.sent.last!.dropFirst(StreamMessage.headerLength)))?.microphone == list.microphone,
                "hello-replay-preserves-current-peer-capability")
@@ -582,22 +584,44 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         expect(Wire.decode(WindowList.self, from: Data(connection.sent.last!.dropFirst(StreamMessage.headerLength)))?.microphone == nil,
                "hello-replay-strips-revoked-capability")
         let next = ownerGrant(binding)
-        reader.sendMicrophoneCatalog(message, to: connection, grant: next)
+        reader.sendMicrophoneCatalog(message, to: connection, grant: next, admission: admission)
         reader.queue.sync { reader.videoAdmission = .stopped; reader.replayCatalog(to: client) }
         expect(Wire.decode(WindowList.self, from: Data(connection.sent.last!.dropFirst(StreamMessage.headerLength)))?.microphone == nil,
                "hello-replay-strips-reset-epoch-capability")
         let other = ReaderHarness.Client(NWConnection())
         reader.queue.sync { reader.replayCatalog(to: other) }
         expect(other.connection.sent.isEmpty, "hello-replay-does-not-copy-other-peer-cache")
+        reader.queue.sync { reader.videoAdmission = .committed(epoch) }
+        let sent = connection.sent.count
+        admission.invalidate()
+        reader.queue.sync { reader.replayCatalog(to: client) }
+        expect(connection.sent.count == sent, "catalog-publication-revocation-refused")
+        reader.sendMicrophoneCatalog(message, to: connection, grant: next,
+            admission: SourcePublicationAdmission { false })
+        reader.queue.sync {}
+        expect(connection.sent.count == sent, "catalog-currentness-refused")
+    }
+
+    @MainActor static func privacyFixture() -> (HostAudioPrivacy, PrivacyFakeHAL) {
+        let hal = PrivacyFakeHAL()
+        hal.safe()
+        let startup = NativeAudioStartup()
+        startup.construct { () }
+        let privacy = HostAudioPrivacy(hal: CoreAudioPrivacyHAL(ops: hal.operations), nativeStartup: startup)
+        _ = privacy.armAndVerify()
+        return (privacy, hal)
     }
 
     @MainActor static func pluginDiscoveryTests() async {
         let fake = FakeHAL(); fake.blackHole = true
-        let owner = SillVirtualMicrophoneOwner(ops: fake.operations)
+        let (privacy, privacyHAL) = privacyFixture()
+        defer { withExtendedLifetime(privacyHAL) { privacy.stop() } }
+        let owner = SillVirtualMicrophoneOwner(ops: fake.operations, privacy: privacy)
         let binding = scope()
         let grant = owner.microphoneGrant(peer: binding.peer, source: binding.source,
             inputGeneration: binding.inputGeneration, videoEpoch: binding.videoEpoch, fingerprint: Data([1]))
-        expect(grant?.destination.outputUID == "test.blackhole", "system-owner-blackhole-discovery")
+        expect(grant?.destination.outputUID == "BlackHole2ch_UID", "system-owner-blackhole-discovery")
+        expect(privacy.verify() && privacyHAL.writes.isEmpty, "owner-real-privacy-inert-readback")
         expect(!fake.trace.contains("read:\(kAudioObjectPropertyOwner)"), "plugin-membership-not-object-owner")
         let prepared = await HALMicrophoneSink.prepare(grant: grant!, render: MicrophoneRenderBuffer(grant: grant!), ops: fake.operations)
         expect(prepared.error == nil && fake.selected == 96, "system-owner-hal-validation")
@@ -672,7 +696,20 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         let binding = scope(peer: peer.id, generation: f.binding.inputGeneration, epoch: f.binding.videoEpoch,
                             destination: f.binding.destination, capability: f.binding.capability)
         f.owner.grant = ownerGrant(binding)
+        let admittedClient = ReaderHarness.Client(connection)
+        admittedClient.route = h.routes[ObjectIdentifier(connection)]!
+        h.server.clients[ObjectIdentifier(connection)] = admittedClient
+        expect(!h.microphoneScopeIsCurrent(binding, fingerprint: Data([1])), "privacy-unobserved-refused")
+        let (privacy, privacyHAL) = privacyFixture()
+        defer { withExtendedLifetime(privacyHAL) { privacy.stop() } }
+        h.audioPrivacy = privacy
+        expect(privacy.verify() && privacyHAL.writes.isEmpty, "integration-real-privacy-inert-readback")
+        expect(!h.microphoneScopeIsCurrent(binding, fingerprint: Data([1])), "native-binding-unobserved-refused")
+        h.nativeAudioBindingAuthorized = { fingerprint, direction in fingerprint == Data([1]) && direction == .input }
         expect(h.microphoneScopeIsCurrent(binding, fingerprint: Data([1])), "paired-principal-current")
+        h.physicalAudioRoutesRetired = true
+        expect(!h.microphoneScopeIsCurrent(binding, fingerprint: Data([1])), "privacy-withdrawal-refused")
+        h.physicalAudioRoutesRetired = false
         h.routes[ObjectIdentifier(connection)] = .home(.loopback, peer: nil)
         expect(!h.microphoneScopeIsCurrent(binding, fingerprint: Data([1])), "plain-peer-refused")
         h.routes[ObjectIdentifier(connection)] = .home(.loopback, peer: ClientRoute.Peer(fingerprint: Data([1]), name: "untrusted name", cableDevice: nil))
@@ -712,6 +749,7 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         let grantID = f.states.first(where: { $0.phase == .active })!.grantID!
         let catalogClient = ReaderHarness.Client(connection)
         catalogClient.route = h.routes[ObjectIdentifier(connection)]!
+        catalogClient.videoLane = .legacy
         h.server.clients[ObjectIdentifier(connection)] = catalogClient
         h.server.videoAdmission = .committed(h.videoEpoch!)
         h.broadcastList()
@@ -789,5 +827,9 @@ func voicePacket(_ scope: MicrophoneScope, grant: UUID, sequence: UInt64) -> Mic
         legacy.inbound = [Data(ping.serialized().prefix(14)), ping.payload]
         reader.receiveLoop(legacyClient)
         expect(legacy.sent.count == 1 && StreamMessage.parseHeader(legacy.sent[0])?.kind == .pong, "old-peer-ping-unchanged")
+        legacyClient.admissionCurrent = { false }
+        legacy.inbound = [Data(ping.serialized().prefix(14)), ping.payload]
+        reader.receiveLoop(legacyClient)
+        expect(legacy.state == .cancelled && legacy.sent.count == 1, "reader-admission-withdrawal-refused")
     }
 }

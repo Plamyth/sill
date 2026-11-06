@@ -38,17 +38,40 @@ def fixture(root, receiver_only=False):
             'init(_ receiver: HostMicrophoneReceiver) { microphoneReceiver = receiver }\n'
             + block(coordinator, 'package func retryMicrophoneCleanup(') + '\n}\n')
         return files, {name: hashlib.sha256(value.encode()).hexdigest() for name, value in files.items()}
-    paths = ['Sources/StreamProtocol/' + name + '.swift' for name in
-             ['StreamMessage', 'AudioRouting', 'Switcher', 'MicrophoneUplink', 'Viewport', 'Compatibility', 'Input', 'Pointer', 'SafeText']]
+    paths = [str(path.relative_to(root)) for path in sorted((root / 'Sources/StreamProtocol').glob('*.swift'))]
     paths += ['Sources/SillHost/' + name + '.swift' for name in
-              ['SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'MicrophoneIngress', 'PointerControl', 'HostLog']]
+              ['SillVirtualMicrophoneOwner', 'HostMicrophoneGrant', 'HostMicrophoneReceiver', 'HALMicrophoneSink', 'MicrophoneIngress', 'PointerControl', 'HostLog', 'StreamPeerRole', 'HostAudioPrivacyModel', 'LocalAudioParticipants']]
     files = {name: (root / name).read_text() for name in paths}
     for name in ['Network.swift', 'FakeHAL.swift', 'Main.swift']:
         files[name] = (here / name).read_text()
+    assert files['FakeHAL.swift'].count('"test.blackhole"') == 2
+    files['FakeHAL.swift'] = files['FakeHAL.swift'].replace('"test.blackhole"', '"BlackHole2ch_UID"')
+    files['PrivacyFakeHAL.swift'] = (root / 'Tests/checks/host-voice-protection/FakeHAL.swift').read_text()
+    files['CoreAudioPrivacyHAL.swift'] = (root / 'Sources/SillHost/HostAudioPrivacy.swift').read_text().split('\nextension HostAudioPrivacy {', 1)[0]
+    files['NativeAudioStartup.swift'] = (root / 'Sources/SillHost/LocalAudioReturn.swift').read_text().split('\n@MainActor\nfinal class LocalAudioAuthentication', 1)[0]
     server = (root / 'Sources/SillHost/StreamServer.swift').read_text()
     coordinator = (root / 'Sources/SillHost/StreamCoordinator.swift').read_text()
     remote = (root / 'Sources/SillHost/RemoteAccess.swift').read_text()
+    identity = (root / 'Sources/SillHost/HostIdentity.swift').read_text()
     pieces = {
+        'TRUST_SNAPSHOT': block(identity, 'struct TrustSnapshot:'),
+        'TRUST_BOX': block(identity, 'final class TrustBox:'),
+        'REGISTRY_ERROR': block(identity, 'package enum OwnerRegistryStoreError:'),
+        'IDENTITY_ERROR': block(identity, 'package struct IdentityStoreError:'),
+        'REGISTRY': block((root / 'Sources/SillHost/OwnerBootstrapRegistry.swift').read_text(), 'struct OwnerBootstrapRegistry:'),
+        'OWNER_TRUSTED': block(remote, 'private func ownerDeviceTrusted('),
+        'PUBLICATION': block(server, 'final class SourcePublicationAdmission:'),
+        'VIDEO_LANE': block(server, 'private enum VideoLane:'),
+        'PEER_VIDEO': block(server, 'private final class PeerVideo'),
+        'ADMISSION_CURRENT': block(server, 'private func admissionIsCurrent('),
+        'CONNECTION_CURRENT': block(server, 'func connectionIsCurrent('),
+        'VIDEO_ADMISSION': block(server, 'private func currentVideoAdmission('),
+        'CATALOG_MATCHES': block(server, 'private func catalogMatches('),
+        'PLAIN_CATALOG': block(server, 'func sendCatalog('),
+        'PEER_CATALOG': block(server, 'func sendPeerCatalog('),
+        'ROUTE_AUTH': block(coordinator, 'private func audioRouteAuthorized('),
+        'NATIVE_BINDING': block(coordinator, 'private func nativeAudioBindingReady('),
+        'PRIVACY_READY': block(coordinator, 'private func audioPrivacyReady('),
         'ROUTE': block(server, 'enum ClientRoute:'),
         'READER': block(server, 'private func receiveLoop('),
         'EGRESS': block(server, 'func sendMicrophone('),
@@ -75,7 +98,6 @@ def fixture(root, receiver_only=False):
         assert body.count('// ' + key + '\n') == 1, key
         body = body.replace('// ' + key + '\n', value.replace('private ', '') + '\n', 1)
     files['Dispatch.swift'] = body
-    files['Goodbye.swift'] = 'import Foundation\n' + block((root / 'Sources/StreamProtocol/Remote.swift').read_text(), 'public struct Goodbye:') + '\n'
     manifest = {name: hashlib.sha256(value.encode()).hexdigest() for name, value in files.items()}
     manifest.update({'boundary:' + name: hashlib.sha256(value.encode()).hexdigest() for name, value in pieces.items()})
     # These lifecycle calls sit in a larger initializer / source observer and are not replaced by test policy.

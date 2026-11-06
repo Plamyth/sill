@@ -31,6 +31,9 @@ def main():
     source_hashes = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                      for folder in ['Sources', 'Tests/checks/microphone-uplink']
                      for p in (root / folder).rglob('*') if p.is_file()}
+    if not receiver_only:
+        name = 'Tests/checks/host-voice-protection/FakeHAL.swift'
+        source_hashes[name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', TMPDIR=str(output / 'tmp'))
     Path(env['TMPDIR']).mkdir(exist_ok=True)
     generated = output / 'generated'
@@ -98,12 +101,22 @@ def main():
         for name, target, old, new, witness in mutants:
             entry = {'name': name, 'witness': witness, 'anchorMatches': files[target].count(old), 'caught': False}
             record['mutants'].append(entry)
-            if entry['anchorMatches'] != 1:
+            expected_matches = 2 if name == 'pair' else 1
+            entry['expectedAnchorMatches'] = expected_matches
+            if entry['anchorMatches'] != expected_matches:
                 continue
+            mutated = files[target].replace(old, new, expected_matches)
+            if name == 'pair':
+                # Pairing is now checked in both lane bodies and the shared route gate.
+                auth = 'return AudioRoutingPolicy.authorized(encrypted: route?.encrypted == true, paired: paired,'
+                entry['routeAuthAnchorMatches'] = mutated.count(auth)
+                if entry['routeAuthAnchorMatches'] != 1:
+                    continue
+                mutated = mutated.replace(auth, auth.replace('paired: paired', 'paired: true'), 1)
             variant = output / ('mutant-' + name)
             variant.mkdir()
             path = variant / Path(target).name
-            path.write_text(files[target].replace(old, new, 1))
+            path.write_text(mutated)
             if target in protocol:
                 code, log = compile_module('StreamProtocol', [str(path) if n == target else str(generated / n) for n in protocol], name + '-module')
             else:
