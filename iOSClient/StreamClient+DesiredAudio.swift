@@ -52,14 +52,14 @@ extension StreamClient {
             // An unarmed v2 host may process the explicit intent that arms protection.
             // Losing established protection or an active binding always revokes control.
             if list.audioPrivacy?.version != 2 || wasProtected || audioForwarding.phase == .active {
-                audioForwarding.block()
+                audioForwarding.block(reason: "catalog_privacy_lost", now: audioForwardingNow)
             }
             applyAudioForwarding(nil)
             suspendDesiredAudio(preserveManualPermission: list.audioPrivacy?.version == 2 && !wasProtected && oldScope == desiredAudio.scope)
         }
         if audioForwarding.phase == .active, audioForwarding.durable?.selection.microphone == true,
            oldScope?.microphone != nil, desiredAudio.scope?.microphone == nil {
-            audioForwarding.block()
+            audioForwarding.block(reason: "catalog_microphone_scope_lost", now: audioForwardingNow)
             applyAudioForwarding(nil)
         }
         reconcileConfiguredCraftAction()

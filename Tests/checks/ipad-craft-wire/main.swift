@@ -43,6 +43,33 @@ check(try ConfiguredCraftActionState.decode(JSONEncoder().encode(state)).matches
 let error = try ConfiguredCraftActionState(control: invoke, deviceId: device, error: "sentry_protected")
 check(try ConfiguredCraftActionState.decode(JSONEncoder().encode(error)).error == "sentry_protected", "outer stable error")
 rejects("outer error is stable code") { _ = try ConfiguredCraftActionState(control: invoke, deviceId: device, error: "bad-reason") }
+for reason in ["prior-operation-result-unknown", "executor-submitted-result-unknown",
+               " original producer reason ", String(repeating: "가", count: 85) + "a"] {
+    let producer = try ConfiguredCraftActionResult(outcome: .unknown, operationId: operationID,
+        deviceId: device, bindingSha256: nil, invoked: true, reason: reason)
+    let envelope = try ConfiguredCraftActionState(control: query, deviceId: device, result: producer)
+    let decoded = try ConfiguredCraftActionState.decode(JSONEncoder().encode(envelope))
+    check(decoded.result?.reason == reason && decoded.result?.invoked == true, "producer reason preserved byte-for-byte")
+}
+for reason in ["", " \t\n", String(repeating: "x", count: 257), String(repeating: "가", count: 86)] {
+    rejects("invalid producer reason constructor") {
+        _ = try ConfiguredCraftActionResult(outcome: .unknown, operationId: operationID,
+            deviceId: device, bindingSha256: nil, invoked: false, reason: reason)
+    }
+    let envelope = try ConfiguredCraftActionState(control: query, deviceId: device, result: result)
+    var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(envelope)) as! [String: Any]
+    var nested = object["result"] as! [String: Any]; nested["reason"] = reason; object["result"] = nested
+    rejects("invalid producer reason raw decoder") {
+        _ = try ConfiguredCraftActionState.decode(JSONSerialization.data(withJSONObject: object))
+    }
+}
+let nullReasonEnvelope = try ConfiguredCraftActionState(control: query, deviceId: device, result: result)
+var nullReasonObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(nullReasonEnvelope)) as! [String: Any]
+var nullReasonResult = nullReasonObject["result"] as! [String: Any]
+nullReasonResult["reason"] = NSNull(); nullReasonObject["result"] = nullReasonResult
+rejects("explicit null producer reason rejected") {
+    _ = try ConfiguredCraftActionState.decode(JSONSerialization.data(withJSONObject: nullReasonObject))
+}
 rejects("wrong device result") { _ = try ConfiguredCraftActionState(control: invoke, deviceId: otherDevice, result: result) }
 rejects("wrong operation result") {
     let other = ConfiguredCraftActionControl(requestId: requestID, operationId: UUID())

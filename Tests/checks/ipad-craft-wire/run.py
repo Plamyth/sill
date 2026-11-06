@@ -8,7 +8,8 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
 INPUTS = sorted((ROOT / 'Sources/StreamProtocol').glob('*.swift')) + [HERE / 'main.swift', Path(__file__).resolve()]
-ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
+DEVELOPER = '/Applications/Xcode.app/Contents/Developer' if Path('/Applications/Xcode.app').exists() else '/Library/Developer/CommandLineTools'
+ENV = dict(os.environ, DEVELOPER_DIR=DEVELOPER)
 
 def hashes():
     return {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in INPUTS}
