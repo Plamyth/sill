@@ -16,7 +16,12 @@ final class HostAudioForwardingRuntime {
     private struct Session {
         let context: AudioForwardingConnectionContext
         let credential: AudioForwardingCredential
+        let configuration: AudioForwardingConfiguration?
         let generation = UUID()
+        init(context: AudioForwardingConnectionContext, credential: AudioForwardingCredential,
+             configuration: AudioForwardingConfiguration? = nil) {
+            self.context = context; self.credential = credential; self.configuration = configuration
+        }
     }
     private final class Enrollment {
         let context: AudioForwardingConnectionContext
@@ -149,8 +154,9 @@ final class HostAudioForwardingRuntime {
 
     func exchange(_ control: AudioForwardingControl,
                   context: AudioForwardingConnectionContext) async -> AudioForwardingState? {
-        guard running, recovering == nil, !recoveryNeeded, !recoveryBlocked, context.isCurrent(),
-              let bootstrap = await enroll(context), context.isCurrent() else { return nil }
+        guard running, recovering == nil, !recoveryNeeded, !recoveryBlocked, context.isCurrent() else { return nil }
+        let observed = control.operation == .observe ? await observeConnection(context) : await enroll(context)
+        guard let bootstrap = observed, context.isCurrent() else { return nil }
         if control.operation == .observe {
             guard let catalog = try? AudioForwardingCatalog(principal: context.principal,
                 role: context.role, bootstrap: bootstrap) else { return nil }
@@ -177,6 +183,32 @@ final class HostAudioForwardingRuntime {
             catalog: nil, result: result)
     }
 
+    private func observeConnection(_ context: AudioForwardingConnectionContext) async -> AudioForwardingBootstrap? {
+        guard let session = sessions[context.connectionID],
+              session.context.peer.id == context.peer.id,
+              session.context.peer.pairingGeneration == context.peer.pairingGeneration,
+              let expected = configuration, session.configuration == expected else { return await enroll(context) }
+        let owner = relay, evidence = evidenceRevision
+        let admitted = { [weak self] in
+            guard let self, !Task.isCancelled, self.running, self.recovering == nil,
+                  !self.recoveryNeeded, !self.recoveryBlocked, self.relay === owner,
+                  self.evidenceRevision == evidence, self.configuration == expected,
+                  self.privacy.forwardingIntentAllowed, context.isCurrent(),
+                  self.sessions[context.connectionID]?.generation == session.generation else { return false }
+            return true
+        }
+        guard admitted(), case .accepted(let bootstrap) = await owner.forwardingBootstrap(
+            peer: context.peer, admission: admitted), admitted() else { return nil }
+        guard bootstrap.credential.pairedDeviceId == session.credential.pairedDeviceId,
+              bootstrap.credential.pairingGeneration == session.credential.pairingGeneration,
+              bootstrap.credential.credential == session.credential.credential else { return await enroll(context) }
+        // Only enrollment changes the connection evidence. An observe still reads a fresh,
+        // validated Core snapshot/cursor; it never reissues a cached freshness window.
+        recordResponsibility(bootstrap.snapshot, session: session)
+        observe(bootstrap.snapshot)
+        return bootstrap
+    }
+
     private func enroll(_ context: AudioForwardingConnectionContext) async -> AudioForwardingBootstrap? {
         guard context.isCurrent(), running else { return nil }
         ownershipWillChange()
@@ -191,6 +223,7 @@ final class HostAudioForwardingRuntime {
                 self.enrollments[context.connectionID] === owner && context.isCurrent()
         }
         var retained = false
+        let expectedConfiguration = configuration
         defer {
             if enrollments[context.connectionID] === owner { enrollments.removeValue(forKey: context.connectionID) }
             if !retained, owner.submitted, relay === owner.relay { resetAfterUncertainEvidence() }
@@ -204,7 +237,7 @@ final class HostAudioForwardingRuntime {
             connectionID: context.connectionID, operation: .attach, admission: admitted,
             onSubmission: { owner.submitted = true })
         guard admitted(), let value = accepted(attached, phase: "enrollment_attach") else { return nil }
-        let session = Session(context: context, credential: bootstrap.credential)
+        let session = Session(context: context, credential: bootstrap.credential, configuration: expectedConfiguration)
         sessions[context.connectionID] = session
         recordResponsibility(value, session: session)
         retained = true
