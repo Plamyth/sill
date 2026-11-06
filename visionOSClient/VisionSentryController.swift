@@ -44,10 +44,14 @@ final class VisionSentryController {
         var accepted: Bool?
         var operationState: SentryControlResponse.OperationState?
         var operationCode: SentryControlResponse.Code?
-        var permitsConfiguredCraftInvocation: Bool {
-            available && state?.phase == .inactive && state?.requested == false && pendingID == nil &&
-                problem == nil && operationState != .unknown && !readbackNeedsNewSession &&
-                !(storedRequestID != nil && accepted == nil)
+        func permitsConfiguredCraftInvocation(capabilityVersion: Int?) -> Bool {
+            guard capabilityVersion == 1 || capabilityVersion == 2, available,
+                  let state, pendingID == nil, problem == nil,
+                  operationState != .unknown, !readbackNeedsNewSession,
+                  !(storedRequestID != nil && accepted == nil) else { return false }
+            if state.phase == .inactive { return !state.requested }
+            return capabilityVersion == 2 && state.phase == .userSessionProtected && state.requested &&
+                controlAvailable && state.control?.role == "ownerDevice" && state.control?.canSet == true
         }
 
         var canActivate: Bool {

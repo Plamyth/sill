@@ -5204,7 +5204,8 @@ extension StreamClient {
     private func sendVisionConfiguredCraftAction(_ control: ConfiguredCraftActionControl,
         scope: VisionConfiguredCraftActionExecutor.ReadScope, fence: VisionConfiguredCraftAction.Fence?) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard visionAudioIntentCatalog?.configuredCraftActions == 1,
+        guard let capability = visionAudioIntentCatalog?.configuredCraftActions,
+              capability == 1 || capability == 2,
               visionConfiguredCraftReadScope == scope, let expected = connection,
               authenticatedVisionMacAudioPeer == ObjectIdentifier(expected) else { return false }
         let permit: UUID?
@@ -5212,7 +5213,8 @@ extension StreamClient {
         var deadline = now + VisionConfiguredCraftAction.responseBudget
         if control.operation == .invoke {
             guard let fence, visionConfiguredCraftContext.fence == fence,
-                  visionConfiguredCraftContext.mediaReady, visionSentrySnapshot.permitsConfiguredCraftInvocation,
+                  visionConfiguredCraftContext.mediaReady,
+                  visionSentrySnapshot.permitsConfiguredCraftInvocation(capabilityVersion: capability),
                   let freshUntil = visionForwarding?.freshUntil, freshUntil > now,
                   let current = visionInputPermit else { return false }
             permit = current

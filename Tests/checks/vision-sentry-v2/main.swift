@@ -594,5 +594,34 @@ for held in [false, true] {
     }
 }
 
+var voice = VisionSentryController.Snapshot()
+voice.available = true; voice.controlAvailable = true
+voice.state = state()
+check(voice.permitsConfiguredCraftInvocation(capabilityVersion: 1), "기존 비보호 버전1 동작 보존")
+check(voice.permitsConfiguredCraftInvocation(capabilityVersion: 2), "비보호 버전2 동작 허용")
+voice.state = state(.userSessionProtected, requested: true)
+check(!voice.permitsConfiguredCraftInvocation(capabilityVersion: 1), "버전1 보호 동작은 계속 거절")
+check(voice.permitsConfiguredCraftInvocation(capabilityVersion: 2), "버전2의 현재 보호 owner만 허용")
+for version in [Int?.none, 0, 3] {
+    check(!voice.permitsConfiguredCraftInvocation(capabilityVersion: version), "미지원 버전 보호 동작 거절")
+}
+for phase in [SentryState.Phase.pending, .blocked] {
+    voice.state = state(phase, requested: true)
+    check(!voice.permitsConfiguredCraftInvocation(capabilityVersion: 2), "보호 전환·차단 중 동작 거절")
+}
+voice.state = state(.userSessionProtected, requested: true, capability: false)
+check(!voice.permitsConfiguredCraftInvocation(capabilityVersion: 2), "현재 owner capability 누락 거절")
+voice.state = state(.userSessionProtected, requested: true)
+for change in 0..<6 {
+    var unsafe = voice
+    if change == 0 { unsafe.controlAvailable = false }
+    if change == 1 { unsafe.available = false }
+    if change == 2 { unsafe.pendingID = UUID() }
+    if change == 3 { unsafe.problem = .storage }
+    if change == 4 { unsafe.operationState = .unknown }
+    if change == 5 { unsafe.storedRequestID = UUID(); unsafe.accepted = nil }
+    check(!unsafe.permitsConfiguredCraftInvocation(capabilityVersion: 2), "소유권·저장·미확인 실행 상태는 거절")
+}
+
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)

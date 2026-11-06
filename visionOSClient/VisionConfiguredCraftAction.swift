@@ -29,6 +29,8 @@ struct VisionConfiguredCraftAction {
         let selectionRevision: UInt64
         let otherDeviceSelected: Bool
         let deviceRouteRevision: UUID?
+        let hostCapabilityVersion: Int?
+        let sentryRevision: UUID?
         func matchesMediaScope(_ scope: VisionRemoteAudioIntent.Scope?) -> Bool {
             guard let scope else { return false }
             return connection == scope.connection && window == scope.window && admission == scope.admission &&
@@ -52,6 +54,8 @@ struct VisionConfiguredCraftAction {
         var routeImplemented = false
         var admitted = false
         var invocationAllowed = true
+        var hostCapabilityVersion: Int?
+        var sentryRevision: UUID?
         var selection: VisionRemoteAudioIntent.Desire?
         var selectionRevision: UInt64 = 0
         var otherDeviceSelected = false
@@ -77,7 +81,8 @@ struct VisionConfiguredCraftAction {
                 admission: scope.admission, video: scope.video, foreground: scope.foreground,
                 binding: binding, routeGeneration: routeGeneration,
                 selection: selection, selectionRevision: selectionRevision,
-                otherDeviceSelected: otherDeviceSelected, deviceRouteRevision: deviceRouteRevision)
+                otherDeviceSelected: otherDeviceSelected, deviceRouteRevision: deviceRouteRevision,
+                hostCapabilityVersion: hostCapabilityVersion, sentryRevision: sentryRevision)
         }
     }
 
@@ -280,7 +285,8 @@ final class VisionConfiguredCraftActionExecutor: ObservableObject {
     }
     @Published private(set) var model = Action()
     @Published private(set) var problem: String?
-    private var capability = false
+    private var capabilityVersion: Int?
+    private var capability: Bool { capabilityVersion != nil }
     private var scope: ReadScope?
     private var catalog: Action.Catalog?
     private var catalogRevision: UUID?
@@ -315,6 +321,7 @@ final class VisionConfiguredCraftActionExecutor: ObservableObject {
     var context: Action.Context {
         var value = readContext()
         value.capabilityPresent = capability && scope != nil && scope == readScope()
+        value.hostCapabilityVersion = capabilityVersion
         value.routeImplemented = value.capabilityPresent
         value.binding = nil; value.routeGeneration = nil
         if value.capabilityPresent, let catalog, let scope, let profile = UUID(uuidString: catalog.expectedProfileId) {
@@ -343,13 +350,13 @@ final class VisionConfiguredCraftActionExecutor: ObservableObject {
     var message: String? {
         let result = problem ?? model.message
         if !context.invocationAllowed {
-            return "센트리 보호가 켜져 있거나 상태가 미확인이어서 음성 명령을 실행할 수 없습니다." +
+            return "현재 연결의 음성 명령 실행 권한을 확인하지 못했습니다." +
                 (result.map { " " + $0 } ?? "")
         }
         return result
     }
     func observe(capability: Int?) {
-        self.capability = capability == 1
+        capabilityVersion = capability == 1 || capability == 2 ? capability : nil
         refresh()
     }
     func begin(heldFor: Double, issuedAt: Date = Date()) {
@@ -512,7 +519,9 @@ extension StreamClient {
         var context = VisionConfiguredCraftAction.Context()
         context.hostKey = audioContext.hostKey; context.scope = audioContext.scope
         context.admitted = audioContext.admitted && visionConfiguredCraftFocused
-        context.invocationAllowed = visionSentrySnapshot.permitsConfiguredCraftInvocation
+        context.invocationAllowed = visionSentrySnapshot.permitsConfiguredCraftInvocation(
+            capabilityVersion: visionAudioIntentCatalog?.configuredCraftActions)
+        context.sentryRevision = visionSentrySnapshot.state?.revision
         context.selection = visionStoredAudioSelection?.desire
         context.selectionRevision = visionStoredAudioSelection?.revision ?? 0
         let routes = visionMacAudioRoutes

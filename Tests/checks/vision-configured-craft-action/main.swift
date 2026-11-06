@@ -406,9 +406,10 @@ for mutate in [
 }
 executorContext.invocationAllowed = false
 let beforeBlocked = preparationCalls
+let beforeBlockedSends = sends
 executor.begin(heldFor: 0.5, issuedAt: date)
-expect(preparationCalls == beforeBlocked && executor.message?.contains("센트리") == true,
-       "Sentry active/unknown 차단을 표시하고 준비·invoke0")
+expect(preparationCalls == beforeBlocked && sends == beforeBlockedSends && executor.message?.contains("권한") == true,
+       "실행 권한 미확인 상태를 표시하고 준비·invoke0")
 executorContext = Action.Context(hostKey: "trusted-host", scope: scope, binding: binding,
     routeGeneration: UUID(), capabilityPresent: true, routeImplemented: true, admitted: true)
 executor.refresh(); acceptFixtureCatalog()
@@ -648,5 +649,43 @@ expect(notInvokedAction.receiveReadback(definiteRejection, hostKey: notInvokedCo
 if case .completed(_, let saved) = notInvokedAction.phase {
     expect(saved.outcome == .rejected && !saved.invoked, "확정 거절을 UNKNOWN으로 무조건 숨기지 않음")
 } else { fatalError("definite rejection missing") }
+
+for stage in ["preparing", "ready", "awaiting"] {
+    for change in ["capability", "sentryRevision"] {
+        var current = Action.Context(hostKey: "trusted-host", scope: scope, binding: binding,
+            routeGeneration: UUID(), capabilityPresent: true, routeImplemented: true, admitted: true)
+        current.hostCapabilityVersion = 2; current.sentryRevision = UUID()
+        if stage != "preparing" { current.readback = readyReadback(.init(playback: true, microphone: true)) }
+        var receiver = Action()
+        _ = receiver.begin(heldFor: 0.5, context: current, now: 100, issuedAt: date)
+        let operation = receiver.operation!
+        if stage == "awaiting" {
+            expect(receiver.takeInvocation(operation, context: current, now: 100.1) != nil,
+                "보호 권한 변경 전 동일 operation을 제출함")
+        }
+        if change == "capability" { current.hostCapabilityVersion = 1 }
+        else { current.sentryRevision = UUID() }
+        if case .cancelPreparation(let cancelled) = receiver.advance(context: current, now: 101) {
+            expect(cancelled == operation, "지원 버전·센트리 revision 변경은 원 operation만 취소함")
+        } else { fatalError("security revision change did not cancel") }
+        expect(receiver.takeInvocation(operation, context: current, now: 101.1) == nil,
+            "변경 뒤 늦은 준비 완료가 새 invoke를 내보내지 않음")
+        if stage == "awaiting" {
+            if case .unknown = receiver.phase {} else { fatalError("sent operation must stay unknown") }
+        } else if case .cancelled = receiver.phase {} else { fatalError("unsent operation must cancel") }
+    }
+}
+
+let capabilityReadScope = VisionConfiguredCraftActionExecutor.ReadScope(hostKey: "trusted-host",
+    connection: scope.connection, window: scope.window, admission: scope.admission,
+    foreground: scope.foreground, video: scope.video, device: AudioForwardingDeviceID(hex: binding.deviceId)!)
+let capabilityExecutor = VisionConfiguredCraftActionExecutor(context: { context }, readScope: { capabilityReadScope },
+    prepare: { _ in fatalError("catalog observation must not prepare media") }, cancelPreparation: { _ in },
+    finishPreparation: { _ in }, send: { _, _, _ in true }, cancelSend: { _ in }, clock: { 100 })
+capabilityExecutor.observe(capability: 2)
+expect(capabilityExecutor.context.capabilityPresent && capabilityExecutor.context.hostCapabilityVersion == 2,
+    "지원 버전2는 기존 catalog/조회 경로를 재사용함")
+capabilityExecutor.observe(capability: 3)
+expect(!capabilityExecutor.canBegin && !capabilityExecutor.canReadCatalog, "알 수 없는 지원 버전을 활성화하지 않음")
 
 print("PASS \(checks) configured Craft action checks; actual Host/Core/device/media/input actions 0")
