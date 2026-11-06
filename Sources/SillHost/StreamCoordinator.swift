@@ -47,6 +47,8 @@ package final class StreamCoordinator {
     }
     package var sentryRequestLocalReturn: (() async -> Bool)?
     private let microphoneIngress = MicrophoneIngress()
+    private var microphoneIngressDraining = false
+    private var microphoneIngressDrainTask: Task<Void, Never>?
     private let microphoneOwner: (any HostMicrophoneOriginalOwner)?
     private let audioPrivacy: HostAudioPrivacy?
     private var forwardingRuntime: HostAudioForwardingRuntime?
@@ -526,7 +528,13 @@ package final class StreamCoordinator {
                 isKeyframe: false, payload: Wire.encode(receipt)), to: connection, render: nil)
         }
         microphoneIngress.schedule = { [weak self] in
-            Task { @MainActor in self?.drainMicrophoneIngress() }
+            Task { @MainActor in
+                guard let self, self.microphoneIngressDrainTask == nil else { return }
+                self.microphoneIngressDrainTask = Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    await self.drainMicrophoneIngress()
+                }
+            }
         }
         remote?.onMicrophoneTrustRevoked = { [weak self] fingerprint in
             guard let self else { return }
@@ -3231,19 +3239,33 @@ package final class StreamCoordinator {
         return message
     }
 
-    private func drainMicrophoneIngress() {
-        let (controls, frames, closedPeers) = microphoneIngress.take()
-        for peer in closedPeers {
-            microphoneReceiver.forgetCapabilities(peer: peer)
-            microphoneReceiver.revoke(peer: peer, reason: "cancellation queue exhausted")
+    private func drainMicrophoneIngress() async {
+        guard !microphoneIngressDraining else { return }
+        microphoneIngressDraining = true
+        defer {
+            microphoneIngressDraining = false
+            microphoneIngressDrainTask = nil
         }
-        for control in controls {
-            guard microphoneIngress.peer(control.peer.connection)?.id == control.peer.id else { continue }
-            if control.request.operation == .start && !microphoneScopeIsCurrent(control.request.scope, fingerprint: control.peer.fingerprint) { continue }
-            microphoneReceiver.control(control.request, fingerprint: control.peer.fingerprint)
-        }
-        for frame in frames where microphoneScopeIsCurrent(frame.frame.scope, fingerprint: frame.peer.fingerprint) {
-            _ = microphoneReceiver.frame(frame.frame, fingerprint: frame.peer.fingerprint, arrived: frame.arrived)
+        while !shuttingDown {
+            let (controls, frames, closedPeers) = microphoneIngress.take()
+            guard !controls.isEmpty || !frames.isEmpty || !closedPeers.isEmpty else { return }
+            for peer in closedPeers {
+                microphoneReceiver.forgetCapabilities(peer: peer)
+                microphoneReceiver.revoke(peer: peer, reason: "cancellation queue exhausted")
+            }
+            for control in controls {
+                guard microphoneIngress.peer(control.peer.connection)?.id == control.peer.id else { continue }
+                if control.request.operation == .start && !microphoneScopeIsCurrent(control.request.scope, fingerprint: control.peer.fingerprint) { continue }
+                microphoneReceiver.control(control.request, fingerprint: control.peer.fingerprint)
+            }
+            for frame in frames {
+                // frame() performs the fresh scope/privacy check immediately before admission.
+                // Repeating it here adds synchronous HAL/trust reads without another boundary.
+                _ = microphoneReceiver.frame(frame.frame, fingerprint: frame.peer.fingerprint, arrived: frame.arrived)
+                // Let ready control and relay replies run before the rest of this bounded batch.
+                // The single consumer keeps older retained frames ahead of the next ingress batch.
+                await Task.yield()
+            }
         }
     }
 
@@ -3278,6 +3300,10 @@ package final class StreamCoordinator {
         microphoneReceiver.revoke(reason: "네이티브 오디오 경로를 종료하고 있습니다.")
         await revokeRemoteAudio(reason: "네이티브 오디오 경로를 종료하고 있습니다.")
         guard await microphoneReceiver.waitForRetirement(), !Task.isCancelled else { return false }
+        // A yielded ingress batch is outside the mailbox but still owns frame storage.
+        // Fence first, then join its single consumer before claiming quiescence.
+        await microphoneIngressDrainTask?.value
+        guard !microphoneIngressDraining, microphoneIngressDrainTask == nil, !Task.isCancelled else { return false }
         let drained = await withCheckedContinuation { continuation in
             server.drainRemoteAudio { continuation.resume(returning: $0) }
         }
@@ -3292,7 +3318,8 @@ package final class StreamCoordinator {
     }
 
     private func localAudioReturnFacts() -> LocalAudioParticipantFacts {
-        let retired = microphoneReceiver.retirementComplete
+        let retired = microphoneReceiver.retirementComplete &&
+            !microphoneIngressDraining && microphoneIngressDrainTask == nil
         let captureStopped = remoteAudioLifecycle.isIdle && remoteAudioCapture.retirementConfirmed &&
             !remoteAudioCapture.hasStream && !remoteAudioRunning
         return .init(admissionFenced: physicalAudioRoutesRetired && audioPrivacy?.participants.isFenced == true,
