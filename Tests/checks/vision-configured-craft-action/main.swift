@@ -460,10 +460,15 @@ var wrongCorrelation = try JSONSerialization.jsonObject(with: JSONEncoder().enco
 wrongCorrelation["requestId"] = UUID().uuidString.lowercased()
 expect(!executor.receive(try JSONSerialization.data(withJSONObject: wrongCorrelation), in: fixtureReadScope()!),
        "다른 requestId 응답은 현재 query를 완료하지 않음")
-expect(executor.receive(try JSONEncoder().encode(typedState), in: fixtureReadScope()!), "Core typed rejected는 UNKNOWN과 구별해 보존함")
-if case .completed(_, let saved) = executor.model.phase { expect(saved == typedRejected, "typed result 원문 필드를 보존함") }
+expect(!executor.receive(try JSONEncoder().encode(typedState), in: fixtureReadScope()!), "이미 확인한 인계를 query rejected로 낮추지 않음")
+if case .completed(_, let saved) = executor.model.phase { expect(saved == unknownResult, "원 unknown invoked true를 보존함") }
 else { fatalError("typed query result missing") }
-expect(!executor.canQuery && sends == 2, "terminal rejected 결과의 읽기가 자동 재토글을 만들지 않음")
+let confirmedQueryResult = try ConfiguredCraftActionResult(outcome: .invoked, operationId: reconnectQuery.operationId!,
+    deviceId: fixtureReadScope()!.device, bindingSha256: nil, invoked: true)
+let confirmedQueryState = try ConfiguredCraftActionState(control: reconnectQuery,
+    deviceId: fixtureReadScope()!.device, result: confirmedQueryResult)
+expect(executor.receive(try JSONEncoder().encode(confirmedQueryState), in: fixtureReadScope()!), "원 기한 안의 더 확실한 원 operation 결과를 수용함")
+expect(!executor.canQuery && sends == 2, "terminal 결과의 읽기가 자동 재토글을 만들지 않음")
 let catalogControl = ConfiguredCraftActionControl(requestId: UUID())
 let catalogEnvelope = try ConfiguredCraftActionState(control: catalogControl, deviceId: fixtureReadScope()!.device,
     catalog: .init(expectedProfileId: profile, expectedAssignmentSha256: assignment))
@@ -635,5 +640,13 @@ let rejectedQuery = try Action.Result(outcome: .rejected, operationId: knownInvo
 expect(!knownInvokedAction.receiveReadback(rejectedQuery, hostKey: knownInvokedContext.fence!.hostKey,
     device: AudioForwardingDeviceID(hex: binding.deviceId)!) && knownInvokedAction.phase == beforeRejectedQuery,
     "이미 확인한 인계를 rejected false로 낮추지 않음")
+var (notInvokedAction, notInvokedOperation, notInvokedContext) = knownQueryResult(invoked: false)
+let definiteRejection = try Action.Result(outcome: .rejected, operationId: notInvokedOperation.request.operationId,
+    deviceId: AudioForwardingDeviceID(hex: binding.deviceId)!, bindingSha256: nil, invoked: false)
+expect(notInvokedAction.receiveReadback(definiteRejection, hostKey: notInvokedContext.fence!.hostKey,
+    device: AudioForwardingDeviceID(hex: binding.deviceId)!), "인계 확인이 없으면 원 operation의 확정 typed rejected로 복구함")
+if case .completed(_, let saved) = notInvokedAction.phase {
+    expect(saved.outcome == .rejected && !saved.invoked, "확정 거절을 UNKNOWN으로 무조건 숨기지 않음")
+} else { fatalError("definite rejection missing") }
 
 print("PASS \(checks) configured Craft action checks; actual Host/Core/device/media/input actions 0")

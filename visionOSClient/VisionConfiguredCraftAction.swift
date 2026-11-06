@@ -238,12 +238,22 @@ struct VisionConfiguredCraftAction {
               result.deviceId == device, result.operationId == operation.request.operationId,
               !result.effectConfirmed, result.outcome != .invoked || result.invoked,
               result.outcome != .rejected || !result.invoked else { return false }
+        let prior: Result?
         switch phase {
-        case .unknown: break
-        case .completed(_, let old) where old.outcome == .unknown: break
+        case .unknown: prior = nil
+        case .completed(_, let old) where old.outcome == .unknown: prior = old
         default: return false
         }
-        phase = .completed(operation, result)
+        if let prior {
+            guard !prior.invoked || result.outcome != .rejected else { return false }
+            let uncertain = result.outcome == .unknown
+            guard let preserved = try? Result(outcome: result.outcome, operationId: result.operationId,
+                deviceId: result.deviceId,
+                bindingSha256: uncertain ? prior.bindingSha256 ?? result.bindingSha256 : result.bindingSha256 ?? prior.bindingSha256,
+                invoked: prior.invoked || result.invoked,
+                reason: uncertain ? prior.reason ?? result.reason : result.reason ?? prior.reason) else { return false }
+            phase = .completed(operation, preserved)
+        } else { phase = .completed(operation, result) }
         return true
     }
 }
