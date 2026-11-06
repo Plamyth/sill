@@ -4,7 +4,18 @@ import Darwin
 protocol ProviderCallTransport: Sendable {
     func exchange<Request: Encodable, Reply: Decodable>(_ request: Request, as: Reply.Type,
                                                        until deadline: TimeInterval) async throws -> Reply
+    func exchange<Request: Encodable, Reply: Decodable>(admittedSend: @escaping ProviderCallAdmittedSend<Request>,
+        as: Reply.Type, until deadline: TimeInterval, decode: @escaping @Sendable (Data) throws -> Reply) async throws -> Reply
     func invalidate()
+}
+
+typealias ProviderCallAdmittedSend<Request> = @MainActor (_ write: (Request) throws -> Void) throws -> Void
+
+extension ProviderCallTransport {
+    func exchange<Request: Encodable, Reply: Decodable>(admittedSend: @escaping ProviderCallAdmittedSend<Request>,
+        as: Reply.Type, until deadline: TimeInterval, decode: @escaping @Sendable (Data) throws -> Reply) async throws -> Reply {
+        throw ProviderCallFailure.unavailable
+    }
 }
 
 final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
@@ -79,15 +90,68 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
 
     func exchange<Request: Encodable, Reply: Decodable>(_ request: Request, as: Reply.Type,
                                                        until deadline: TimeInterval) async throws -> Reply {
+        let frame = try Self.frame(request, limit: frameLimit)
+        return try await transact(until: deadline, write: { fd in
+            _ = try ProviderPeerAnchor.verify(fd, policy: .core)
+            try Self.write(frame, to: fd, until: deadline)
+        }, decode: { bytes in
+            try LocalAudioRelayJSON.validate(bytes)
+            return try JSONDecoder().decode(Reply.self, from: bytes)
+        })
+    }
+
+    private static func frame<Request: Encodable>(_ request: Request, limit: Int) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         var message = try encoder.encode(request)
-        guard !message.isEmpty, message.count + 1 < frameLimit, !message.contains(10),
-              deadline.isFinite else { throw ProviderCallFailure.invalidFields }
+        guard !message.isEmpty, message.count + 1 < limit, !message.contains(10) else { throw ProviderCallFailure.invalidFields }
         message.append(10)
-        let frame = message
+        return message
+    }
+
+    private enum FirstWrite: Error { case retry }
+
+    func exchange<Request: Encodable, Reply: Decodable>(admittedSend: @escaping ProviderCallAdmittedSend<Request>,
+        as: Reply.Type, until deadline: TimeInterval, decode: @escaping @Sendable (Data) throws -> Reply) async throws -> Reply {
+        try await transact(until: deadline, write: { [self] fd in
+            while true {
+                try Self.wait(fd, events: Int16(POLLOUT), until: deadline)
+                _ = try ProviderPeerAnchor.verify(fd, policy: .core)
+                var first: (frame: Data, count: Int)?
+                do {
+                    try DispatchQueue.main.sync {
+                        try MainActor.assumeIsolated {
+                            try admittedSend { request in
+                                guard first == nil else { throw ProviderCallFailure.invalidFields }
+                                let frame = try Self.frame(request, limit: frameLimit)
+                                let count = try frame.withUnsafeBytes { raw in
+                                    lock.lock(); defer { lock.unlock() }
+                                    guard descriptor != nil else { throw ProviderCallFailure.unavailable }
+                                    guard ProcessInfo.processInfo.systemUptime < deadline else { throw ProviderCallFailure.expired }
+                                    let count = send(fd, raw.baseAddress, raw.count, 0)
+                                    if count < 0, errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK { throw FirstWrite.retry }
+                                    guard count > 0 else { throw ProviderCallFailure.unavailable }
+                                    return count
+                                }
+                                first = (frame, count)
+                            }
+                        }
+                    }
+                } catch FirstWrite.retry { continue }
+                guard let first else { throw ProviderCallFailure.invalidFields }
+                if first.count < first.frame.count {
+                    try Self.write(Data(first.frame.dropFirst(first.count)), to: fd, until: deadline)
+                }
+                return
+            }
+        }, decode: decode)
+    }
+
+    private func transact<Reply>(until deadline: TimeInterval, write: @escaping (Int32) throws -> Void,
+                                decode: @escaping @Sendable (Data) throws -> Reply) async throws -> Reply {
+        guard deadline.isFinite else { throw ProviderCallFailure.invalidFields }
         return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Reply, Error>) in
                 queue.async { [self] in
                     do {
                         lock.lock()
@@ -95,12 +159,10 @@ final class ProviderCallSocket: ProviderCallTransport, @unchecked Sendable {
                         lock.unlock()
                         guard fd >= 0 else { throw ProviderCallFailure.unavailable }
                         defer { Darwin.close(fd) }
-                        _ = try ProviderPeerAnchor.verify(fd, policy: .core)
-                        try Self.write(frame, to: fd, until: deadline)
+                        try write(fd)
                         let bytes = try Self.read(fd, until: deadline, frameLimit: frameLimit)
                         _ = try ProviderPeerAnchor.verify(fd, policy: .core)
-                        try LocalAudioRelayJSON.validate(bytes)
-                        let reply = try JSONDecoder().decode(Reply.self, from: bytes)
+                        let reply = try decode(bytes)
                         guard ProcessInfo.processInfo.systemUptime < deadline else { throw ProviderCallFailure.expired }
                         continuation.resume(returning: reply)
                     } catch {

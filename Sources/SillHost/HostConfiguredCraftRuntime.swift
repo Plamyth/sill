@@ -9,6 +9,7 @@ struct HostConfiguredCraftSession {
     let sentryProtected: @MainActor () -> Bool
     let isCurrent: @MainActor () -> Bool
     let readSnapshot: @MainActor () async -> AudioForwardingSnapshot?
+    let withSendAdmission: @MainActor (_ requiresInactive: Bool, _ write: () throws -> Void) throws -> Void
 }
 
 @MainActor
@@ -114,12 +115,17 @@ final class HostConfiguredCraftRuntime {
                       Self.eligible(latest, deviceId: session.deviceId), Self.same(initial, latest) else { return nil }
             }
             guard current(), !dispatching || !session.sentryProtected() else { return nil }
-            let acceptedAt = now()
-            guard acceptedAt > 0, acceptedAt <= 9_007_199_254_740_991 else { return failure("clock_unavailable") }
-            let command = HostConfiguredCraftCommand(control: control, operation: localOperation,
-                deviceId: session.deviceId, deviceSessionId: session.deviceSessionId, acceptedAt: acceptedAt)
+            let clock = now, deviceId = session.deviceId, sessionId = session.deviceSessionId
             sentInvoke = dispatching
-            let reply = try await socket.exchange(command, as: HostConfiguredCraftReply.self, until: deadline)
+            let reply = try await socket.exchange(admittedSend: { (write: (HostConfiguredCraftCommand) throws -> Void) in
+                guard current(), !dispatching || !session.sentryProtected() else { throw ProviderCallFailure.superseded }
+                try session.withSendAdmission(dispatching) {
+                    let acceptedAt = clock()
+                    guard acceptedAt > 0, acceptedAt <= 9_007_199_254_740_991 else { throw ProviderCallFailure.invalidFields }
+                    try write(HostConfiguredCraftCommand(control: control, operation: localOperation,
+                        deviceId: deviceId, deviceSessionId: sessionId, acceptedAt: acceptedAt))
+                }
+            }, as: HostConfiguredCraftReply.self, until: deadline, decode: { try HostConfiguredCraftReply.decode($0) })
             guard current() else { return nil }
             guard reply.requestId == control.requestId else { return nil }
             let response: ConfiguredCraftActionState?
@@ -195,6 +201,9 @@ struct HostConfiguredCraftReply: Decodable {
     let actionResult: ConfiguredCraftActionResult?
     let reason: String?
     private enum CodingKeys: String, CodingKey { case op, schemaVersion, requestId, outcome, catalog, actionResult, notSent, reason }
+    static func decode(_ data: Data) throws -> Self {
+        try ConfiguredCraftActionJSON.decode(Self.self, from: data)
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         outcome = try c.decode(Outcome.self, forKey: .outcome)

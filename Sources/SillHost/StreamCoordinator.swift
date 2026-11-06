@@ -4193,7 +4193,14 @@ extension StreamCoordinator {
                 return self.server.sentryAdmission.isRequested || self.server.sentryAdmission.status(for: id)?.phase != .inactive
             },
             isCurrent: { current() && (audio?.admitted() ?? true) },
-            readSnapshot: { await audio?.readSnapshot() })
+            readSnapshot: { await audio?.readSnapshot() },
+            withSendAdmission: { [weak self] requiresInactive, write in
+                guard let self, current(), audio?.admitted() ?? true else { throw ProviderCallFailure.superseded }
+                guard try self.server.withConfiguredCraftWrite(to: connection, ticket: exchange.ticket,
+                    deviceId: peer.id, inactive: sentryState, requiresInactive: requiresInactive, write) else {
+                    throw ProviderCallFailure.superseded
+                }
+            })
         let reply = await configuredCraftRuntime?.exchange(exchange.control, session: craftSession)
         server.sendConfiguredCraftState(current() ? reply : nil, to: connection, ticket: exchange.ticket)
     }

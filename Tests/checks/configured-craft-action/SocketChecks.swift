@@ -79,7 +79,7 @@ final class CraftSocketCore: @unchecked Sendable {
                 let binding = AudioForwardingBinding(pairedDeviceId: peer, intentGeneration: generation, bindingEpoch: generation,
                     transportId: generation, transportKind: .native, operationId: generation, phase: .off, configuration: configuration)
                 return try! AudioForwardingSnapshot(revision: .init(1), intent: intent, binding: binding)
-            })
+            }, withSendAdmission: { _, write in try write() })
         let catalog = await runtime.exchange(ConfiguredCraftActionControl(requestId: UUID()), session: session)
         precondition(catalog?.catalog?.supported == true, "catalog fixture failed: \(catalog?.error ?? "no reply")")
         let op = UUID()

@@ -2,6 +2,12 @@ import Foundation
 
 public enum ConfiguredCraftActionFailure: Error { case invalidFields, invalidValue, invalidCorrelation }
 
+public enum ConfiguredCraftActionJSON {
+    public static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        try CraftJSON.decode(type, data, limit: 16384)
+    }
+}
+
 private struct CraftKey: CodingKey {
     let stringValue: String
     var intValue: Int? { nil }

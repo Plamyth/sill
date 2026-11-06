@@ -2216,6 +2216,25 @@ final class StreamServer {
         }
     }
 
+    @MainActor
+    func withConfiguredCraftWrite(to connection: NWConnection, ticket: UUID,
+                                  deviceId: AudioForwardingDeviceID, inactive: SentryState?,
+                                  requiresInactive: Bool, _ write: () throws -> Void) rethrows -> Bool {
+        try queue.sync {
+            guard let client = clients[ObjectIdentifier(connection)], client.connection === connection,
+                  admissionIsCurrent(client), connection.state == .ready, client.role.isViewer,
+                  client.route.encrypted, client.route.pairedName != nil,
+                  let fingerprint = client.route.fingerprint, AudioForwardingDeviceID(fingerprint: fingerprint) == deviceId,
+                  let exchange = client.configuredCraftExchange, exchange.ticket == ticket, exchange.isCurrent else { return false }
+            if requiresInactive {
+                guard let inactive else { return false }
+                return try sentryAdmission.withInactiveCraftWrite(for: ObjectIdentifier(connection), expected: inactive, write)
+            }
+            try write()
+            return true
+        }
+    }
+
     private func receiveConfiguredCraft(_ payload: Data, from client: Client) {
         let connection = client.connection
         guard clients[ObjectIdentifier(connection)] === client, admissionIsCurrent(client),

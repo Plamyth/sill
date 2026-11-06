@@ -350,6 +350,16 @@ final class SentryAdmission: @unchecked Sendable {
         return statusLocked(for: peer)
     }
 
+    func withInactiveCraftWrite(for peer: ObjectIdentifier, expected: SentryState,
+                                _ write: () throws -> Void) rethrows -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard expected.phase == .inactive, !expected.requested,
+              statusLocked(for: peer) == expected else { return false }
+        // The nonblocking first send shares this lock with protection changes.
+        try write()
+        return true
+    }
+
     private func statusLocked(for peer: ObjectIdentifier) -> SentryState? {
         guard enabled, let session = sessions[peer] else { return nil }
         let phase: SentryState.Phase

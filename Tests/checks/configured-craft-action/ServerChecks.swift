@@ -16,6 +16,7 @@ private final class CraftServerFixture: @unchecked Sendable {
         var configuredCraftExchange: ConfiguredCraftExchange?
     }
     let queue = DispatchQueue(label: "configured-craft.fixture")
+    let sentryAdmission = SentryAdmission()
     var clients: [ObjectIdentifier: Client] = [:]
     var onConfiguredCraftControl: ((ConfiguredCraftExchange, NWConnection, Route) -> Void)?
     var sent: [Data] = []
@@ -28,6 +29,46 @@ private final class CraftServerFixture: @unchecked Sendable {
     func drain() { queue.sync {} }
     // PRODUCTION_TICKET
     // PRODUCTION_HANDLERS
+    // PRODUCTION_WRITE_ADMISSION
+}
+
+@MainActor func craftFirstWriteAdmissionChecks(_ check: (String, Bool) -> Void) throws {
+    let peer = AudioForwardingDeviceID(hex: Checks.device)!
+    for mode in ["valid", "changed_sentry", "wrong_ticket", "concurrent_sentry", "inactive_without_screen_admission"] {
+        let server = CraftServerFixture(), client = server.add(), other = server.add()
+        let id = ObjectIdentifier(client.connection)
+        server.sentryAdmission.configure(latched: false, persistenceHealthy: true)
+        server.sentryAdmission.register(id, externalRoute: false)
+        if mode != "inactive_without_screen_admission" { server.sentryAdmission.admit(id) }
+        let inactive = server.sentryAdmission.status(for: id)!
+        let control = ConfiguredCraftActionControl(requestId: UUID())
+        server.onConfiguredCraftControl = { _, _, _ in }
+        server.receive(Wire.encode(control), client)
+        let ticket = client.configuredCraftExchange!.ticket
+        if mode == "changed_sentry" { _ = server.sentryAdmission.requireProtection(explicit: true) }
+        let attempting = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+        var wrote = false, protectionWaited = false
+        let allowed = server.withConfiguredCraftWrite(to: client.connection,
+            ticket: mode == "wrong_ticket" ? UUID() : ticket, deviceId: peer, inactive: inactive, requiresInactive: true) {
+                if mode == "concurrent_sentry" {
+                    DispatchQueue.global().async {
+                        attempting.signal()
+                        _ = server.sentryAdmission.requireProtection(explicit: true)
+                        finished.signal()
+                    }
+                    precondition(attempting.wait(timeout: .now() + 1) == .success)
+                    protectionWaited = finished.wait(timeout: .now() + 0.01) == .timedOut
+                }
+                wrote = true
+            }
+        if mode == "changed_sentry" || mode == "wrong_ticket" {
+            check("first-write scope rejects \(mode)", !allowed && !wrote)
+        } else { check("first-write scope accepts current inactive owner", allowed && wrote) }
+        if mode == "concurrent_sentry" {
+            check("Sentry lock held through first write", protectionWaited && finished.wait(timeout: .now() + 1) == .success && server.sentryAdmission.isRequested)
+        }
+        check("write admission leaves other TLS untouched", other.connection.state == .ready)
+    }
 }
 
 @MainActor private final class CraftCoordinatorReplyFixture {
@@ -76,7 +117,7 @@ private final class CraftServerFixture: @unchecked Sendable {
         let runtime = mode == "missing_runtime" ? nil : HostConfiguredCraftRuntime(open: { _ in transport })
         let coordinator = CraftCoordinatorReplyFixture(server: server, runtime: runtime)
         let session = HostConfiguredCraftSession(deviceId: peer, deviceSessionId: UUID(), pairingGeneration: UUID(),
-            sentryProtected: { false }, isCurrent: { current }, readSnapshot: { off })
+            sentryProtected: { false }, isCurrent: { current }, readSnapshot: { off }, withSendAdmission: { _, write in try write() })
         await coordinator.forward(ticket, connection: client.connection, peer: .init(id: peer), craftSession: session, current: { current })
         server.drain()
         if ["wrong_request", "malformed", "stale", "missing_runtime"].contains(mode) {

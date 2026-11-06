@@ -66,6 +66,8 @@ Core COMMAND_SOCKET 요청의 공통 필드는 정확히 `op`, `schemaVersion:1`
 
 Host는 기존 ProviderCallSocket.open의 설치된 Core 서명 peer 검증을 마친 뒤 현재 TLS 등록·연결·pairing·Sentry inactive와 fresh 선택을 다시 검사하고 sender 호출 직전에 acceptedAt을 stamp한다. Core는 Host 서명 peer 및 acceptedAt의 500ms 이내 freshness를 확인한다. inactive가 아닌 Sentry 상태나 미확인은 invoke를 허용하지 않는다. Core query는 기존 operationId에 대한 읽기만 수행하고 조회 자체로 journal을 쓰지 않는다.
 
+configured Craft는 socket의 writable 대기와 Core peer 재검사 뒤 MainActor의 현재 admission을 평가한다. 첫 nonblocking send는 서버 connection/ticket queue와 Sentry inactive 잠금 안에서 실행하고 그 구간에서 acceptedAt을 stamp한다. 소유권·pairing 변경은 MainActor와, 연결 변경은 서버 queue와, Sentry 전환은 같은 잠금과 직렬화된다. 아직 byte를 보내지 않은 요청만 현재성 변경으로 취소한다. 첫 send 뒤 결과가 모호하면 원 operation의 UNKNOWN 또는 해당 TLS 종료로 남기며 재invoke하지 않는다. 기존 provider의 일반 exchange/JSON 규칙은 유지한다.
+
 Core 응답 공통 필드는 `op:"configuredCraftAction.reply"`, `schemaVersion:1`, 같은 `requestId`, `outcome`이다.
 
 | outcome | 정확한 추가 필드 |
@@ -76,6 +78,8 @@ Core 응답 공통 필드는 `op:"configuredCraftAction.reply"`, `schemaVersion:
 | `unknown` | `notSent:false`, `reason` |
 
 성공에 notSent/error/reason 등의 외피 필드를 추가하지 않는다. 잘못된 requestId, 잘못된 union 또는 다른 device/operation의 actionResult는 socket을 닫고 외부 응답을 보내지 않는다.
+
+configured Core reply도 raw JSON 토큰부터 검증한다. `schemaVersion:1e0`, `1.0`, 중복 키와 깨진 JSON은 typed decode 실패와 동일하게 외부 응답 없이 해당 요청 TLS를 닫는다. 기존 provider의 일반 JSON decoder를 전역 변경하지 않는다.
 
 Core local rejected는 외부 error union의 reason으로 매핑한다. Core local unknown과 송신 후 transport timeout은 외부 result unknown으로 매핑하며 bindingSha256은 null, invoked는 false, effectConfirmed는 false다. catalog의 unknown은 외부 error다. Core ok actionResult는 상관 device/operation을 확인한 뒤 그대로 운반한다.
 

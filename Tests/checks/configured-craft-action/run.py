@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory(prefix='configured-craft-') as temporary:
     server = (root / 'Sources/SillHost/StreamServer.swift').read_text()
     ticket = server[server.index('    final class ConfiguredCraftExchange:'):server.index('    private var viewerCount:')]
     handlers = server[server.index('    private func receiveConfiguredCraft('):server.index('    private func replayCatalog(')]
+    write_admission = server[server.index('    @MainActor\n    func withConfiguredCraftWrite('):server.index('    private func receiveConfiguredCraft(')]
     coordinator = (root / 'Sources/SillHost/StreamCoordinator.swift').read_text()
     reply_markers = ['        guard let configuredCraftRuntime else {',
                      '        let reply = await configuredCraftRuntime?.exchange(exchange.control, session: craftSession)']
@@ -25,7 +26,8 @@ with tempfile.TemporaryDirectory(prefix='configured-craft-') as temporary:
     fixture = out / 'ServerChecks.swift'
     fixture.write_text((here / 'ServerChecks.swift').read_text().replace('// PRODUCTION_TICKET', ticket)
                        .replace('// PRODUCTION_HANDLERS', handlers)
-                       .replace('// PRODUCTION_COORDINATOR_REPLY', reply))
+                       .replace('// PRODUCTION_COORDINATOR_REPLY', reply)
+                       .replace('// PRODUCTION_WRITE_ADMISSION', write_admission))
     socket_source = (root / 'Sources/SillHost/ProviderCallSocket.swift').read_text()
     bridge = (root / 'Sources/SillHost/ProviderCallBridge.swift').read_text()
     support = out / 'ProviderSupport.swift'
@@ -34,6 +36,7 @@ with tempfile.TemporaryDirectory(prefix='configured-craft-') as temporary:
     subprocess.run(swift + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol',
         '-Xlinker', '-rpath', '-Xlinker', str(out),
         str(root / 'Sources/SillHost/HostConfiguredCraftRuntime.swift'),
+        str(root / 'Sources/SillHost/SentryAdmission.swift'),
         str(support), str(here / 'Main.swift'), str(fixture), '-o', str(out / 'checks')], check=True)
     subprocess.run([str(out / 'checks')], check=True, timeout=40,
                    env={**os.environ, 'DYLD_LIBRARY_PATH': str(out)})

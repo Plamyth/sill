@@ -5,8 +5,11 @@ import StreamProtocol
 final class Flags: @unchecked Sendable {
     let lock = NSLock()
     private var liveValue = true, protectedValue = false
+    private var stampValue: Int64 = 1793910000010
     var live: Bool { lock.lock(); defer { lock.unlock() }; return liveValue }
     var protected: Bool { lock.lock(); defer { lock.unlock() }; return protectedValue }
+    var stamp: Int64 { lock.lock(); defer { lock.unlock() }; return stampValue }
+    func advanceStamp() { lock.lock(); stampValue += 750; lock.unlock() }
     func change(live: Bool? = nil, protected: Bool? = nil) {
         lock.lock(); defer { lock.unlock() }
         if let live { liveValue = live }; if let protected { protectedValue = protected }
@@ -80,7 +83,7 @@ final class FakeCore: @unchecked Sendable {
     }
     @MainActor static func session(_ flags: Flags = Flags(), generation: UUID = profile, sessionID: UUID = UUID()) throws -> HostConfiguredCraftSession {
         let snap = try snapshot()
-        return .init(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: generation, sentryProtected: { flags.protected }, isCurrent: { flags.live }, readSnapshot: { snap })
+        return .init(deviceId: peer, deviceSessionId: sessionID, pairingGeneration: generation, sentryProtected: { flags.protected }, isCurrent: { flags.live }, readSnapshot: { snap }, withSendAdmission: { _, write in try write() })
     }
     static func reply(_ c: [String: Any], outcome: String = "unknown", reason: String? = nil) throws -> Data {
         let body = c["client"] as? [String: Any]
@@ -91,9 +94,10 @@ final class FakeCore: @unchecked Sendable {
     }
     @MainActor static func main() async throws {
         let dir = CommandLine.arguments[1]
-        for mode in ["ownership_before_write", "sentry_before_write", "exponent_schema", "fraction_schema", "duplicate_schema", "invalid_json", "nested_reason", "valid", "legacy_exponent"] {
+        for mode in ["ownership_before_write", "sentry_before_write", "exponent_schema", "fraction_schema", "duplicate_schema", "invalid_json", "nested_reason", "valid", "legacy_exponent", "stamp_before_write"] {
             let flags = Flags()
             ProviderPeerAnchor.reset(mode == "ownership_before_write" ? { flags.change(live:false) } : mode == "sentry_before_write" ? { flags.change(protected:true) } : nil)
+            if mode == "stamp_before_write" { ProviderPeerAnchor.reset { flags.advanceStamp() } }
             let core = try FakeCore(path:dir + "/c.sock") { c in
                 let body = c["client"] as? [String: Any]
                 let id = body?["operationId"] ?? c["operationId"]!
@@ -119,7 +123,7 @@ final class FakeCore: @unchecked Sendable {
                 socket.invalidate()
                 check("legacy generic provider JSON semantics unchanged",result.schemaVersion == 1)
             } else {
-                let runtime = HostConfiguredCraftRuntime(open:{ deadline in try await ProviderCallSocket.open(path:core.path,until:deadline,frameLimit:16385) })
+                let runtime = HostConfiguredCraftRuntime(open:{ deadline in try await ProviderCallSocket.open(path:core.path,until:deadline,frameLimit:16385) }, now: { flags.stamp })
                 let result = await runtime.exchange(try invoke(),session:try session(flags))
                 if mode == "ownership_before_write" || mode == "sentry_before_write" {
                     check("actual first write blocks \(mode)", core.observed == nil)
@@ -127,6 +131,7 @@ final class FakeCore: @unchecked Sendable {
                     check("raw Core reply rejected without success: \(mode)",result == nil)
                 } else {
                     check("valid Core result and nested reason preserved",result?.result?.outcome == .invoked && result?.result?.reason == "executor-submitted-result-unknown")
+                    if mode == "stamp_before_write" { check("acceptedAt stamped after actual pre-write peer verification",core.observed?["acceptedAt"] as? Int64 == flags.stamp && flags.stamp == 1793910000760) }
                 }
                 print("OBS \(mode) CoreFrameReceived=\(core.observed != nil) response=\(result?.result?.outcome.rawValue ?? result?.error ?? "nil")")
             }
