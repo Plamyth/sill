@@ -45,6 +45,13 @@ if new:
     fixture += audio[a:b]
     fixture += '''    var microphonePolicy = IPadMicrophonePolicy()
     var microphoneReceipt: MicrophoneReceipt?
+    var microphoneCaptureToken: UUID?
+    var microphoneCleanupProblem: String?
+    var receiptControls: [MicrophoneControl] = []
+    func sendMicrophoneControl(_ control: MicrophoneControl, to peer: ObjectIdentifier) {
+        precondition(peer == connection.map(ObjectIdentifier.init))
+        receiptControls.append(control)
+    }
     var grants = 0
     func applyMicrophone(_ effects: [IPadMicrophonePolicy.Effect]) {
         for effect in effects { if case .beginCapture = effect { grants += 1 } }
@@ -53,6 +60,8 @@ if new:
 '''
     mic = select_platform((root/'iOSClient/StreamClient+Microphone.swift').read_text(), vision=False, ios=True)
     a = mic.index('    func receiveMicrophone('); b = mic.index('    func applyMicrophone(', a)
+    fixture += mic[a:b]
+    a = mic.index('    func requestMicrophoneReceipt('); b = mic.index('    private func sendMicrophoneControl(', a)
     fixture += mic[a:b]
 
 

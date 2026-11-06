@@ -1,4 +1,5 @@
 import Foundation
+import StreamProtocol
 
 @main struct ObservationMetadataCheck {
     static func main() throws {
@@ -32,6 +33,23 @@ import Foundation
                      "real metadata preserves failed guards as booleans")
         precondition((first["forwardingContextReadinessScope"] as? String)?.contains("not authentication, media authority") == true,
                      "scope mismatch observations are explicitly not authority")
+        precondition(first["hostMediaCounters"] is NSNull, "no receipt means unknown, not zero counters")
+        let receipt = MicrophoneReceipt(scope: MicrophoneScope(peer: UUID(), source: .desktop,
+            inputGeneration: UUID(), videoEpoch: UUID(), destination: UUID(), capability: UUID()),
+            grantID: UUID(), admittedPackets: 77, renderedFrames: 36960, applicationQueueAgeMilliseconds: 2.5)
+        log.snapshot(runtime: runtime, render: nil, playbackRunning: false, hostMediaCounters: receipt, session: [:])
+        var receiptSnapshot = first
+        for _ in 0..<100 {
+            Thread.sleep(forTimeInterval: 0.05); log.flush()
+            receiptSnapshot = try JSONSerialization.jsonObject(with: Data(contentsOf: log.snapshotURL)) as! [String:Any]
+            if receiptSnapshot["hostMediaCounters"] is [String:Any] { break }
+        }
+        let actualCounters = receiptSnapshot["hostMediaCounters"] as! [String:Any]
+        let expectedCounters = try JSONSerialization.jsonObject(with: JSONEncoder().encode(receipt)) as! NSDictionary
+        precondition((actualCounters as NSDictionary).isEqual(expectedCounters), "existing receipt DTO scope, grant and counters survive the actual encoder")
+        precondition(Set(actualCounters.keys) == ["scope", "grantID", "admittedPackets", "renderedFrames", "applicationQueueAgeMilliseconds"], "no samples or new wire fields")
+        precondition((receiptSnapshot["hostMediaCountersScope"] as? String)?.contains("not signal level") == true,
+                     "packet counters are not acoustic or transcription acceptance")
         let diagnosticID = UUID()
         let attempt = log.attempt(diagnosticID)
         attempt.recordForwardingGuards("explicit_stop_requested", guards)
@@ -85,6 +103,7 @@ import Foundation
                      "historical attempts do not retain the current scope summary")
         precondition((attempts[0]["scopeAtFirstObservation"] as! [String:Any])["forwardingContextReadiness"] == nil,
                      "historical attempts do not inherit current guards")
+        precondition(second["hostMediaCounters"] is NSNull, "next snapshot without a current receipt clears previous counters")
         log.connectionChanged()
         runtime.forwardingLastReceived = nil
         runtime.forwardingContextReadiness = nil
@@ -100,6 +119,7 @@ import Foundation
                      "connection replacement discards persisted current summary")
         precondition((final["runtime"] as! [String:Any])["forwardingContextReadiness"] == nil,
                      "connection replacement discards persisted guard map")
-        print("audio-metadata 실제 추출 본문 검사 24개 통과; 엔진·마이크·네트워크 0")
+        precondition(final["hostMediaCounters"] is NSNull, "reconnect snapshot cannot retain a retired grant receipt")
+        print("audio-metadata 실제 추출 본문 검사 31개 통과; 엔진·마이크·네트워크 0")
     }
 }

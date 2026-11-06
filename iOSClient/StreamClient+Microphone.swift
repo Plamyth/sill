@@ -88,10 +88,13 @@ extension StreamClient {
             }
         } else if header.kind == .microphoneReceipt, let receipt = Wire.decode(MicrophoneReceipt.self, from: data) {
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.connection === peer else { return }
+                guard let self, self.connection === peer,
+                      self.desiredAudioPermits(.microphone), self.microphoneCaptureToken != nil,
+                      self.microphoneCleanupProblem == nil,
+                      self.microphonePolicy.receive(receipt, from: ObjectIdentifier(peer)) else { return }
                 IPadMicrophoneDiagnostics.shared.received(.microphoneReceipt, hostTimestamp: header.timestamp)
-                self.microphonePolicy.receive(receipt, from: ObjectIdentifier(peer))
-                self.microphoneReceipt = self.microphonePolicy.latestReceipt
+                self.microphoneReceipt = self.microphonePolicy.currentReceipt
+                self.observeAudioDiagnostics()
             }
         }
         return true
@@ -269,9 +272,10 @@ extension StreamClient {
     func requestMicrophoneReceipt() {
         guard microphonePolicy.phase == .live, let connection,
               microphonePolicy.peer == ObjectIdentifier(connection),
-              let scope = microphonePolicy.scope, let grant = microphonePolicy.grantID else { return }
-        sendMicrophoneControl(MicrophoneControl(operation: .receipt, requestID: UUID(),
-                                               scope: scope, grantID: grant), to: ObjectIdentifier(connection))
+              desiredAudioPermits(.microphone), microphoneCaptureToken != nil,
+              microphoneCleanupProblem == nil,
+              let control = microphonePolicy.takeReceiptRequest(now: ProcessInfo.processInfo.systemUptime) else { return }
+        sendMicrophoneControl(control, to: ObjectIdentifier(connection))
     }
 
     private func sendMicrophoneControl(_ control: MicrophoneControl, to peer: ObjectIdentifier) {

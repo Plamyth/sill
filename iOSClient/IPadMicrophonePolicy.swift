@@ -32,6 +32,14 @@ struct IPadMicrophonePolicy {
     private(set) var grantID: UUID?
     private(set) var stopRequestID: UUID?
     private(set) var latestReceipt: MicrophoneReceipt?
+    private var liveSince: Double?
+    private var receiptRequested = false
+
+    var currentReceipt: MicrophoneReceipt? {
+        guard phase == .live, receiptRequested, let latestReceipt,
+              latestReceipt.scope == scope, latestReceipt.grantID == grantID else { return nil }
+        return latestReceipt
+    }
 
     var canStart: Bool {
         guard scope != nil, !hostCleanupRequired else { return false }
@@ -78,6 +86,8 @@ struct IPadMicrophonePolicy {
         stopRequestID = nil
         grantID = nil
         latestReceipt = nil
+        liveSince = nil
+        receiptRequested = false
         phase = .authorizing
         return [.requestPermission(peer, scope, id)]
     }
@@ -140,10 +150,14 @@ struct IPadMicrophonePolicy {
     }
 
     mutating func captureStarted(requestID: UUID, grant: UUID,
-                                 from origin: ObjectIdentifier) -> [Effect] {
+                                 from origin: ObjectIdentifier,
+                                 now: Double = ProcessInfo.processInfo.systemUptime) -> [Effect] {
         guard peer == origin, phase == .capturing, startRequestID == requestID,
               grantID == grant, let scope else { return [] }
         phase = .live
+        liveSince = now.isFinite && now >= 0 ? now : nil
+        receiptRequested = false
+        latestReceipt = nil
         return [.openFrames(origin, scope, grant)]
     }
 
@@ -174,10 +188,23 @@ struct IPadMicrophonePolicy {
         return [.closeFrames, .stopCapture]
     }
 
-    mutating func receive(_ receipt: MicrophoneReceipt, from origin: ObjectIdentifier) {
+    /// Existing once-per-second observation calls this; no retry or additional timer is created.
+    mutating func takeReceiptRequest(now: Double) -> MicrophoneControl? {
+        guard phase == .live, !receiptRequested, let liveSince,
+              now.isFinite, now >= liveSince, now - liveSince >= 5,
+              let scope, let grantID else { return nil }
+        receiptRequested = true
+        return MicrophoneControl(operation: .receipt, requestID: UUID(), scope: scope, grantID: grantID)
+    }
+
+    @discardableResult
+    mutating func receive(_ receipt: MicrophoneReceipt, from origin: ObjectIdentifier) -> Bool {
         guard peer == origin, phase == .live, scope == receipt.scope,
-              grantID == receipt.grantID else { return }
+              grantID == receipt.grantID, receiptRequested, latestReceipt == nil,
+              receipt.applicationQueueAgeMilliseconds.isFinite,
+              receipt.applicationQueueAgeMilliseconds >= 0 else { return false }
         latestReceipt = receipt
+        return true
     }
 
     mutating func sourceWillChange() -> [Effect] { revoke() }
@@ -232,6 +259,8 @@ struct IPadMicrophonePolicy {
         stopRequestID = nil
         grantID = nil
         latestReceipt = nil
+        liveSince = nil
+        receiptRequested = false
         return effects
     }
 }

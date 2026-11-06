@@ -18,6 +18,8 @@ with tempfile.TemporaryDirectory(prefix='ipad-forwarding-observation-') as scrat
     assert len(keys) == len(set(keys)) == 24
     (out/'guards.json').write_text(json.dumps({key: index % 2 == 0 for index, key in enumerate(keys)}))
     subprocess.run(['xcrun','swiftc','-swift-version','5','-parse-as-library',
+        '-I',str(out/'model'),'-L',str(out/'model'),'-lStreamProtocol',
+        '-Xlinker','-rpath','-Xlinker',str(out/'model'),
         '-module-cache-path',str(out/'cache'),str(out/'Diagnostics.swift'),
         str(here/'observation-metadata.swift'),'-o',str(out/'metadata-check')],check=True,env=env)
     subprocess.run([str(out/'metadata-check'),str(out)],check=True)

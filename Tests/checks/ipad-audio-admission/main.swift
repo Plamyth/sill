@@ -266,6 +266,43 @@ private let frame = IPadMicrophonePCMFrame(sequence: 1, frameCount: 960, pcm: Da
         _ = client.receiveMicrophone(header(), Wire.encode(MicrophoneState(requestID: fresh, scope: scope, phase: .active, grantID: UUID())), from: peer)
         try? await Task.sleep(nanoseconds: 10_000_000)
         expect(client.grants == 1, "fresh matching microphone grant can begin capture")
+        let grant = UUID()
+        _ = client.microphonePolicy.captureStarted(requestID: fresh, grant: client.microphonePolicy.grantID!,
+            from: id, now: ProcessInfo.processInfo.systemUptime - 6)
+        client.audioCatalogAdmission = client.audioAdmission.ticket(for: id)
+        client.requestMicrophoneReceipt()
+        expect(client.receiptControls.isEmpty, "actual receipt request requires a current capture token")
+        client.microphoneCaptureToken = grant
+        client.microphoneCleanupProblem = "fixture cleanup"
+        client.requestMicrophoneReceipt()
+        expect(client.receiptControls.isEmpty, "actual receipt request refuses capture cleanup failure")
+        client.microphoneCleanupProblem = nil
+        _ = client.audioAdmission.observe(revoked, from: id)
+        client.requestMicrophoneReceipt()
+        expect(client.receiptControls.isEmpty, "actual receipt request refuses revoked admission")
+        _ = client.audioAdmission.observe(list, from: id)
+        client.audioCatalogAdmission = client.audioAdmission.ticket(for: id)
+        client.requestMicrophoneReceipt()
+        client.requestMicrophoneReceipt()
+        expect(client.receiptControls.count == 1 && client.receiptControls[0].operation == .receipt,
+               "actual adapter requests exactly once for the live grant")
+        let accepted = MicrophoneReceipt(scope: scope, grantID: client.microphonePolicy.grantID!,
+            admittedPackets: 7, renderedFrames: 3360, applicationQueueAgeMilliseconds: 1.5)
+        let receiptHeader = StreamMessage.parseHeader(StreamMessage(kind: .microphoneReceipt,
+            timestamp: 0, isKeyframe: false, payload: Data()).serialized())!
+        client.microphoneCaptureToken = nil
+        _ = client.receiveMicrophone(receiptHeader, Wire.encode(accepted), from: peer)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        expect(client.microphonePolicy.currentReceipt == nil, "actual receiver refuses a stopped capture")
+        client.microphoneCaptureToken = grant
+        _ = client.receiveMicrophone(receiptHeader, Wire.encode(accepted), from: peer)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        expect(client.microphonePolicy.currentReceipt == accepted && client.microphoneReceipt == accepted,
+               "actual receiver publishes current accepted Host counters")
+        _ = client.microphonePolicy.backgrounded()
+        _ = client.receiveMicrophone(receiptHeader, Wire.encode(accepted), from: peer)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        expect(client.microphonePolicy.currentReceipt == nil, "old grant cannot reappear after OFF")
     }
     #endif
 

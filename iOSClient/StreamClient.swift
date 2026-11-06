@@ -231,6 +231,8 @@ final class StreamClient: ObservableObject {
             forwardingLastReceived: audioForwarding.receivedSummary(in: audioForwardingContext), sentryPhase: sentry?.phase.rawValue,
             sentryRequested: sentry?.requested, hostBootID: sentry?.hostBootID, hostSessionID: sentry?.sessionID),
             render: remoteAudio.diagnosticRender, playbackRunning: remoteAudio.diagnosticRunning,
+            hostMediaCounters: desiredAudioPermits(.microphone) && microphoneCaptureToken != nil && microphoneCleanupProblem == nil
+                ? microphonePolicy.currentReceipt : nil,
             session: ["microphoneAuthorizationRawValue": AVCaptureDevice.authorizationStatus(for: .audio).rawValue,
                 "category": session.category.rawValue, "mode": session.mode.rawValue,
                 "inputPortTypes": Array(session.currentRoute.inputs.prefix(8)).map { $0.portType.rawValue },
@@ -6121,6 +6123,7 @@ final class StreamClient: ObservableObject {
             #if os(iOS)
             self.sentryControl.checkTimeout(now: ProcessInfo.processInfo.systemUptime)
             self.checkIPadSentryReturnTimeout(now: ProcessInfo.processInfo.systemUptime)
+            self.requestMicrophoneReceipt()
             self.observeAudioDiagnostics()
             #endif
             #if DEBUG

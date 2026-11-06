@@ -168,7 +168,8 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
     var snapshotURL: URL { fileURL.deletingLastPathComponent().appendingPathComponent("audio-metadata-snapshot.json") }
 
     /// Called by existing main-queue lifecycle/statistics work, never by the audio callback.
-    func snapshot(runtime: Runtime, render: RenderCounters?, playbackRunning: Bool, session: @autoclosure () -> [String: Any]) {
+    func snapshot(runtime: Runtime, render: RenderCounters?, playbackRunning: Bool,
+                  hostMediaCounters: (any Encodable)? = nil, session: @autoclosure () -> [String: Any]) {
         dispatchPrecondition(condition: .onQueue(.main))
         let now = DispatchTime.now().uptimeNanoseconds
         let observation = state.withLock { value in
@@ -214,7 +215,8 @@ final class IPadMicrophoneDiagnostics: @unchecked Sendable {
             "render": renderValue, "playbackEngineRunning": playbackRunning,
             "counterScope": "instrumented boundaries per attempt in this process; absent counters/fields are unknown; not Host receipts",
             "renderScope": "per attempt and formatVersion, possibly retired; levels summarize finite Float samples copied to callback destinations, excluding silence-fill and admission denial; no sample payload retained or audible-output proof",
-            "hostClockOffsetSeconds": null, "hostMediaCounters": null]
+            "hostClockOffsetSeconds": null, "hostMediaCounters": hostMediaCounters.map { encode($0) } ?? null,
+            "hostMediaCountersScope": "one Host receipt for the current live peer/scope/grant after at least five seconds; packet/render counters only, not signal level, audible output or transcription proof"]
         let deadline = state.withLock { value -> UInt64? in
             guard value.connectionObservationID == observation.id else { return nil }
             value.latestSnapshot = document
