@@ -28,3 +28,10 @@ Pstack Feature의 작성 역할과 Ponytail full을 적용한다. 기존 순수 
 기존 `python3 -B Tests/checks/ipad-configured-craft-action/run.py`도 실제 production 모델 309검사와 소스 불변·scratch 정리를 통과했다. 이 검증 뒤 해당 모델 코드는 바뀌지 않았다. `plutil -lint iOSClient/Sill.xcodeproj/project.pbxproj`, 변경 UI/adapter의 `swiftc -frontend -parse`, `git diff --check`도 통과했다. 이후 이 README에 결과만 기록했다.
 
 부모는 최종 commit의 iOS SDK/full app, 기존 audio-forwarding/desired-audio/chooser harness 호환 수정과 검증, 독립 검수·공식 통합을 소유한다. 실제 UI 긴누르기·권한 복귀·연결·기기 오디오·Host 설치·음성 수용은 이 검사로 확인하지 않았다. push/PR·기기/Host·실제 네트워크/키/권한/오디오 조작은 실행하지 않았다. Pstack Model the Domain은 session/exchange/unresolved 상태로, Test Behavior Not Implementation은 앱이 사용하는 production 함수의 실제 반환·저장·readback 검사로 적용했다.
+
+
+## capability 2 후속 검사 범위
+
+2026-11-06 별도 iPad 소스 작업은 기존 상태 모델과 journal을 유지하면서 정확한 capability 1/2 허용표, 검증된 Sentry owner, revision/authGeneration/boot/session 변경, Main 발행 전 network gate 취소, 원 ID UNKNOWN/query-only 보존, 인계 후 fresh catalog 회복을 검사한다. 실제 owner 판정에는 `IPadSentryControl`을 사용한다. 인증 복귀의 로컬 취소 후 미확정 차단은 별도 기존 `ipad-sentry-return` actual consumer 검사에서 다룬다.
+
+외부 wire·공유 host·기기·오디오·키 효과는 만들지 않는다. 이 검사와 iOS SDK 성공을 실제 통화·지속 오디오·설치 수용으로 확대하지 않는다. 현재 작업의 authoritative 진행·결과는 기존 프로그램 원장 `rea-completion-20261028/program/CURRENT-RESUME.md`에 연결한다. 위 초기 위임과 검사 수는 당시 이력이며 현재 실행 결과는 별도 exact-source 영수증을 따른다.

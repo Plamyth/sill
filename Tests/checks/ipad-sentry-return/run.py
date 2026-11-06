@@ -80,6 +80,12 @@ lifecycle += 'func checkReturnTimeout(now: TimeInterval) { ' + timeout.replace('
 files['Client.swift'] = b'''import Foundation
 import Network
 import StreamProtocol
+// Diagnostics are outside this Sentry fixture; never create an actual audio logger here.
+enum IPadMicrophoneDiagnostics {
+    enum Event { case sentryState }
+    static let shared = SelfLogger()
+    struct SelfLogger { func received(_ event: Event, hostTimestamp: Double) {} }
+}
 enum RemoteTLS {
     static let sessionALPN = "sill/1"
     static func negotiatedALPN(_ peer: NWConnection) -> String? { peer.alpn }
@@ -118,6 +124,10 @@ final class StreamClient {
     let ownerBootstrap = Bootstrap()
     func cancelOwnerBootstrap(resumable: Bool) {}
 
+    // Other feature lifecycle observers are outside this return-operation fixture.
+    func suspendExtendedDesktopIntent() {}
+    func resumeExtendedDesktopIntent() {}
+    func observeAudioDiagnostics() {}
     func refreshExtendedDesktopAdmission() {}
     func ownerEnrollmentTrustChanged() {}
     let link = SessionLink()

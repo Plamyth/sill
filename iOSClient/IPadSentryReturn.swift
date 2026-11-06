@@ -75,6 +75,12 @@ struct IPadSentryReturn {
     private var challengeDeadline: TimeInterval?
     var latest: Entry? { entries.last }
     var originalRequest: Data? { latest?.rawRequest }
+    /// A local cancel is not the Host's terminal acknowledgement.
+    func blocksConfiguredCraft(binding: Binding?) -> Bool {
+        guard !storageFailed else { return true }
+        guard let latest, latest.binding == binding else { return false }
+        return !latest.terminal
+    }
     var canRequest: Bool { !storageFailed && context?.lease != nil && (latest == nil || latest?.terminal == true) }
     var canQuery: Bool { !storageFailed && context?.binding == latest?.binding && latest != nil }
     var canCancel: Bool { canQuery && latest?.terminal == false && latest?.locallyCancelled == false }

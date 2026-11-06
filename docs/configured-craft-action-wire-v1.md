@@ -100,3 +100,20 @@ Sentry 보호 중 Craft CGHID 키 주입의 수용은 확인되지 않았다. �
 ## 검증 경계
 
 `Tests/checks/configured-craft-action/run.py`는 production codec/runtime의 격리 검사다. 실제 Core/Craft, Mac 입력·오디오, 원격기기, 설치와 registry를 조작하지 않는다. 기기 담당은 동일 소스 commit/tree와 이 문서 hash를 기준으로 수용하며 실제 UI·오디오 수용은 별도 기록한다.
+
+
+## iPad capability 2 소비 (2026-11-06, 별도 소스 후보)
+
+공개 `client` 9필드, kind225/226, catalog 6필드, result 6필드는 바꾸지 않는다. 이 문서의 기존 capability 1 및 inactive invoke 계약은 유지한다. Host의 별도 `configured-craft-host-egress-v1` 계약(4235ce4f)에 따라 capability 2는 같은 inactive 경로와 보호된 현재 소유자 경로를 함께 지원한다. 보호 실행의 내부 `prepareHost`와 PID/tag 실행 계획은 Host/Core만 소유하며 iPad에는 추가하지 않는다.
+
+- capability 1: 알려진 `inactive`와 `requested=false`만 실행 준비를 허용한다.
+- capability 2: 위 경로 또는 정확한 `userSessionProtected`, `requested=true`, 현재 TLS/기기 binding의 검증된 owner control, 알려진 Sentry 상태가 모두 있어야 한다.
+- unknown/pending/blocked, 권한이 미확인·퇴역된 세대, 진행 중이거나 결과 미확인인 현재 소유자의 인증 복귀는 실행을 거절한다. 복귀를 로컬에서 취소했어도 Host terminal 확인 전까지 같은 거절을 유지한다.
+
+준비와 exchange는 capability의 정확한 버전, 전체 Sentry 상태(revision/authorizationGeneration 포함), network admission ticket을 메모리에 묶는다. 네트워크 큐가 관측한 catalog의 Sentry/capability/소스 세대 변경은 main 발행 전 ticket을 폐기한다. main이 같은 catalog를 발행하기 전에는 새 ticket을 얻을 수 없다. Sentry 제어·복귀 응답도 먼저 폐기하고 새 catalog를 기다린다. revision UUID의 크기나 도착한 UI 상태만으로 신선도를 추정하지 않는다.
+
+iPad는 이 동작을 기존처럼 `NWConnection.send`에 직접 제출한다. 최종 API 호출 직전의 짧은 별도 lock 구간에서 ticket을 다시 검사한다. gate lock 아래에서는 SessionLink/SentryControl/main sync/사용자 콜백을 호출하지 않는다. 유선·무선 인계도 새 peer로 gate와 Sentry 소비자를 먼저 바인딩한 뒤 새 catalog로 준비를 복구한다. 기존 peer의 ticket은 재활성화하지 않는다.
+
+준비 중 변경은 실행을 만들지 않는다. durable operation을 만든 뒤 송신 거절·오류·세대 변경이 있으면 pending exchange를 닫고 원문과 같은 operationID를 UNKNOWN으로 보존한다. 확정 not-sent로 추정해 지우거나 새 invoke로 바꾸지 않는다. 같은 durable owner의 명시적 query는 보호 실행 권한과 분리하며, 늦은 옛 exchange 응답이 기록을 지우지 못한다. 호출 접수는 통화 시작·종료·가청 오디오 수용이 아니다.
+
+이 변경은 source-only 검수 범위다. 기존 iPad90/QA108, Host246/247/Craft3의 설치·기기·오디오·키 효과를 만들지 않는다. 정확한 통합·테스트 적용 및 실물 수용은 원담당이 다음 공유 구간에서 별도로 수행한다.

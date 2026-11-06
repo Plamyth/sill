@@ -19,18 +19,23 @@ extension StreamClient {
         return (context, .init(macID: trusted.macID, hostPin: host, deviceID: device.hex))
     }
 
-    var configuredCraftSentryInactive: Bool {
-        guard case .reported(let state) = sentryObservation.status else { return false }
-        return state.phase == .inactive && !state.requested
+    var configuredCraftAdmission: IPadCraftAdmission? {
+        guard let peer = connection, case .reported(let state) = sentryObservation.status else { return nil }
+        let origin = ObjectIdentifier(peer)
+        return IPadCraftAdmission(capability: configuredCraftCapability, state: state,
+            ownerKnown: sentryControl.admitsConfiguredCraft(state: state, binding: sentryBinding(on: peer), from: origin),
+            localReturnPending: sentryReturn.blocksConfiguredCraft(binding: sentryBinding(on: peer)) || sentryReturnKeyOperation != nil,
+            ticket: configuredCraftSendGate.ticket(from: origin, published: configuredCraftPublishedTicket,
+                capability: configuredCraftCapability, state: state))
     }
 
     var usesConfiguredCraftAction: Bool {
         configuredCraftAction.unresolved != nil || configuredCraftAction.storageFailed ||
-            (providerCall.target == .nativeCodex && configuredCraftCapability == 1 && IPadCraftConnectedControl.legacyAllowsNewAction(providerCall))
+            (providerCall.target == .nativeCodex && [1, 2].contains(configuredCraftCapability ?? 0) && IPadCraftConnectedControl.legacyAllowsNewAction(providerCall))
     }
 
     var configuredCraftCanPrepare: Bool {
-        configuredCraftAction.canPrepare && configuredCraftSentryInactive &&
+        configuredCraftAction.canPrepare && (configuredCraftAdmission != nil) &&
             IPadCraftConnectedControl.legacyAllowsNewAction(providerCall) && !inputPaused &&
             appInForeground && UIApplication.shared.applicationState == .active &&
             audioRouteContext != nil && audioForwardingContext != nil
@@ -55,7 +60,7 @@ extension StreamClient {
 
     func reconcileConfiguredCraftAction() {
         let identity = configuredCraftIdentity
-        configuredCraftAction.observe(context: identity?.0, owner: identity?.1, capability: configuredCraftCapability)
+        configuredCraftAction.observe(context: identity?.0, owner: identity?.1, capability: configuredCraftCapability, admission: configuredCraftAdmission)
         if let control = configuredCraftAction.catalogRequest() { sendConfiguredCraftAction(control) }
     }
 
@@ -73,7 +78,7 @@ extension StreamClient {
         reconcileConfiguredCraftAction()
         guard configuredCraftCanPrepare, let peer = connection, let identity = configuredCraftIdentity, let displayed,
               displayed == audioRouteContext, let forwarding = audioForwardingContext,
-              case .reported(let sentry) = sentryObservation.status else { throw IPadAudioRoutePolicy.Problem.changedConnection }
+              let admission = configuredCraftAdmission else { throw IPadAudioRoutePolicy.Problem.changedConnection }
         let selectedGeneration = desiredAudioSelectionGeneration
         var permissionPreparation = IPadCraftPreparation(context: identity.0, selectionGeneration: selectedGeneration)
         let initial = desiredAudioIdentity.map { desiredAudioStore.hasConfirmedSelection(for: $0) } ?? true
@@ -84,8 +89,8 @@ extension StreamClient {
                   authenticatedMacAudioRoutePeer == ObjectIdentifier(peer),
                   desiredAudioIdentity?.macID == identity.1.macID,
                   providerCallTrustedHostKey == identity.1.hostPin, audioForwardingDevice?.hex == identity.1.deviceID,
-                  configuredCraftSentryInactive,
-                  sentryObservation.status == .reported(sentry), !inputPaused,
+                  (configuredCraftAdmission != nil),
+                  configuredCraftAdmission == admission, !inputPaused,
                   appInForeground, UIApplication.shared.applicationState != .background,
                   audioRouteContext?.peer == displayed.peer, audioRouteContext?.source == displayed.source,
                   desiredAudioSelectionGeneration == selectedGeneration else { throw IPadAudioRoutePolicy.Problem.changedConnection }
@@ -105,8 +110,8 @@ extension StreamClient {
         while configuredCraftAction.exchange?.control.requestId == catalogRequest.requestId {
             try Task.checkCancellation()
             guard configuredCraftIdentity?.0 == identity.0, configuredCraftIdentity?.1 == identity.1,
-                  desiredAudioSelectionGeneration == selectedGeneration, configuredCraftSentryInactive,
-                  sentryObservation.status == .reported(sentry), UIApplication.shared.applicationState == .active else {
+                  desiredAudioSelectionGeneration == selectedGeneration, (configuredCraftAdmission != nil),
+                  configuredCraftAdmission == admission, UIApplication.shared.applicationState == .active else {
                 throw IPadAudioRoutePolicy.Problem.changedConnection
             }
             try await Task.sleep(for: .milliseconds(50))
@@ -117,7 +122,7 @@ extension StreamClient {
             guard permissionPreparation.permits(context: configuredCraftIdentity?.0,
                 selectionGeneration: desiredAudioSelectionGeneration, foreground: appInForeground,
                 permissionWaiting: true, backgrounded: UIApplication.shared.applicationState == .background,
-                sentryInactive: configuredCraftSentryInactive, now: audioForwardingNow) else {
+                sentryAllowed: (configuredCraftAdmission != nil), now: audioForwardingNow) else {
                 throw IPadAudioRoutePolicy.Problem.changedConnection
             }
             let authorization = IPadAudioRoutePolicy.Authorization(context: displayed)
@@ -149,7 +154,7 @@ extension StreamClient {
                 selectionGeneration: desiredAudioSelectionGeneration,
                 foreground: appInForeground && UIApplication.shared.applicationState == .active,
                 permissionWaiting: false, backgrounded: UIApplication.shared.applicationState == .background,
-                sentryInactive: configuredCraftSentryInactive, now: audioForwardingNow) else {
+                sentryAllowed: (configuredCraftAdmission != nil), now: audioForwardingNow) else {
                 throw IPadAudioRoutePolicy.Problem.changedConnection
             }
             try validate()
@@ -175,23 +180,23 @@ extension StreamClient {
         while true {
             try Task.checkCancellation()
             guard configuredCraftIdentity?.1 == identity.1, configuredCraftAction.canPrepare,
-                  sentryObservation.status == .reported(sentry),
+                  configuredCraftAdmission == admission,
                   audioRouteContext?.peer == displayed.peer, audioRouteContext?.source == displayed.source,
                   audioForwardingContext == forwarding, selected == audioRouteSelection,
                   !inputPaused, IPadCraftConnectedControl.legacyAllowsNewAction(providerCall),
                   preparation.permits(context: configuredCraftIdentity?.0, selectionGeneration: desiredAudioSelectionGeneration,
                     foreground: appInForeground && UIApplication.shared.applicationState == .active,
-                    permissionWaiting: false, sentryInactive: configuredCraftSentryInactive, now: audioForwardingNow) else {
+                    permissionWaiting: false, sentryAllowed: (configuredCraftAdmission != nil), now: audioForwardingNow) else {
                 throw IPadAudioRoutePolicy.Problem.changedConnection
             }
             if configuredCraftAudioReady {
                 let epoch = Date().timeIntervalSince1970 * 1000
                 guard epoch.isFinite, epoch > 0, epoch <= 9_007_199_254_740_991,
                       let control = configuredCraftAction.invoke(userAction: userAction, heldMilliseconds: 500,
-                        issuedAt: Int64(epoch), inputReady: true, outputReady: true, sentryInactive: configuredCraftSentryInactive) else {
+                        issuedAt: Int64(epoch), inputReady: true, outputReady: true, sentryAllowed: (configuredCraftAdmission != nil)) else {
                     throw IPadAudioRoutePolicy.Problem.changedConnection
                 }
-                sendConfiguredCraftAction(control)
+                guard sendConfiguredCraftAction(control) else { throw IPadAudioRoutePolicy.Problem.changedConnection }
                 return
             }
             if case .failed(let reason) = microphonePhase { throw NSError(domain: "ConfiguredCraftAction", code: 1, userInfo: [NSLocalizedDescriptionKey: reason]) }
@@ -200,33 +205,49 @@ extension StreamClient {
         }
     }
 
-    private func sendConfiguredCraftAction(_ control: ConfiguredCraftActionControl) {
+    @discardableResult private func sendConfiguredCraftAction(_ control: ConfiguredCraftActionControl) -> Bool {
+        var submitted = false
+        defer {
+            if !submitted { configuredCraftAction.sendUnconfirmed(requestID: control.requestId) }
+        }
         guard let peer = connection, let identity = configuredCraftIdentity,
-              configuredCraftCapability == 1, configuredCraftAction.owner == identity.1,
+              [1, 2].contains(configuredCraftCapability ?? 0), configuredCraftAction.owner == identity.1,
               let exchange = configuredCraftAction.exchange, exchange.context == identity.0,
               exchange.control.requestId == control.requestId,
-              control.operation != .invoke || (configuredCraftCanSendInvoke && configuredCraftAudioReady),
+              control.operation != .invoke || (exchange.admission != nil &&
+                exchange.admission == configuredCraftAdmission && configuredCraftCanSendInvoke && configuredCraftAudioReady),
               let payload = try? JSONEncoder().encode(control),
-              (try? ConfiguredCraftActionControl.decode(payload)) != nil else { return }
-        peer.send(content: StreamMessage(kind: .configuredCraftActionControl, timestamp: Date().timeIntervalSince1970,
-            isKeyframe: false, payload: payload).serialized(), completion: .contentProcessed { [weak self, weak peer] error in
+              (try? ConfiguredCraftActionControl.decode(payload)) != nil else { return false }
+        let bytes = StreamMessage(kind: .configuredCraftActionControl, timestamp: Date().timeIntervalSince1970,
+            isKeyframe: false, payload: payload).serialized()
+        let send: () -> Void = { [weak self, weak peer] in
+            peer?.send(content: bytes, completion: .contentProcessed { [weak self, weak peer] error in
                 guard error != nil else { return }
                 DispatchQueue.main.async { [weak self, weak peer] in
                     guard let self, let peer, self.connection === peer,
-                          self.configuredCraftIdentity?.0 == exchange.context,
-                          self.configuredCraftAction.exchange?.control.requestId == control.requestId else { return }
-                    // Retire only this exchange. Never stop or cancel a replacement connection.
-                    self.configuredCraftAction.observe(context: nil, owner: nil, capability: nil)
+                          self.configuredCraftIdentity?.0 == exchange.context else { return }
+                    self.configuredCraftAction.sendUnconfirmed(requestID: control.requestId)
                 }
             })
+        }
+        if control.operation == .invoke {
+            guard let admission = exchange.admission else { return false }
+            // The network queue revokes this ticket before publishing Sentry/source changes on main.
+            // No SessionLink lock or main-queue sync is acquired under this small gate.
+            submitted = configuredCraftSendGate.submit(admission.ticket, send: send)
+        } else {
+            send(); submitted = true // Query preserves the original operation even without invoke authority.
+        }
+        guard submitted else { return false }
         DispatchQueue.main.asyncAfter(deadline: .now() + max(0, exchange.deadline - ProcessInfo.processInfo.systemUptime)) { [weak self] in
             guard let self, self.configuredCraftIdentity?.0 == exchange.context else { return }
             self.configuredCraftAction.timeout(requestID: control.requestId)
         }
+        return true
     }
 
     private var configuredCraftCanSendInvoke: Bool {
-        configuredCraftSentryInactive && !inputPaused && appInForeground &&
+        (configuredCraftAdmission != nil) && !inputPaused && appInForeground &&
             UIApplication.shared.applicationState == .active && IPadCraftConnectedControl.legacyAllowsNewAction(providerCall)
     }
 
@@ -235,7 +256,8 @@ extension StreamClient {
         DispatchQueue.main.async { [weak self, weak peer] in
             guard let self, let peer, self.connection === peer,
                   let identity = self.configuredCraftIdentity,
-                  self.configuredCraftAction.owner == identity.1, self.configuredCraftCapability == 1 else { return }
+                  self.configuredCraftAction.owner == identity.1, [1, 2].contains(self.configuredCraftCapability ?? 0) else { return }
+            self.reconcileConfiguredCraftAction()
             _ = self.configuredCraftAction.receive(data, from: identity.0)
         }
         return true
