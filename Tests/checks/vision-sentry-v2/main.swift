@@ -623,5 +623,51 @@ for change in 0..<6 {
     check(!unsafe.permitsConfiguredCraftInvocation(capabilityVersion: 2), "소유권·저장·미확인 실행 상태는 거절")
 }
 
+for change in ["unchanged", "revision", "capability", "owner", "blocked", "source", "authorization", "disconnect"] {
+    let wirePeer = NWConnection(), sender = ObjectIdentifier(wirePeer)
+    let controller = VisionSentryController(store: Journal().store)
+    controller.bind(sender, trusted: true, identity: binding)
+    let initial = state(.userSessionProtected, requested: true)
+    var offered = list(initial); offered.configuredCraftActions = 2
+    controller.observe(offered, from: sender)
+    let mainQueueCache = controller.snapshot
+    guard let stamp = controller.configuredCraftAdmission(to: sender, capabilityVersion: 2,
+        expectedState: mainQueueCache.state) else { fatalError("voice admission fixture missing") }
+    let gate = controller.craftAdmissionGate
+    check(gate.accepts(stamp), "첫 송신 전 현재 권한 stamp 확인")
+    let link = SessionLink(); link.connection = wirePeer
+    check(link.hold(wirePeer), "메인 큐 상태 발행 전 대기열 고정")
+    var terminal: SessionLink.Submission.Outcome?
+    let submission = SessionLink.Submission(deadline: ProcessInfo.processInfo.systemUptime + 10,
+        isCurrent: { gate.accepts(stamp) }, terminal: { terminal = $0 })
+    let client: [String: Any] = ["schemaVersion": 1, "operation": "invoke-configured-craft-action",
+        "operationId": UUID().uuidString.lowercased(), "deviceId": String(repeating: "a", count: 64),
+        "inputID": "speed.button.stop-play", "trigger": "longPress",
+        "expectedProfileId": UUID().uuidString.lowercased(),
+        "expectedAssignmentSha256": String(repeating: "b", count: 64), "issuedAt": 1_793_966_000_000]
+    let payload = try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "operation": "invoke",
+        "requestId": UUID().uuidString.lowercased(), "client": client])
+    let bytes = StreamMessage(kind: .configuredCraftActionControl, timestamp: 1,
+        isKeyframe: false, payload: payload).serialized()
+    check(link.send(bytes, onlyOn: wirePeer, submission: submission), "유효한 요청을 아직 송신하지 않고 보관")
+    var next = offered
+    if change == "revision" { next.sentry = state(.userSessionProtected, requested: true) }
+    if change == "capability" { next.configuredCraftActions = 1 }
+    if change == "owner" { next.sentry = state(.userSessionProtected, requested: true, capability: false) }
+    if change == "blocked" { next.sentry = state(.blocked, requested: true) }
+    if change == "source" { next.active = .none }
+    if change == "authorization" {
+        next.sentry = state(.userSessionProtected, requested: true, revision: initial.revision, auth: UUID())
+    }
+    if change == "disconnect" { controller.bind(nil, trusted: false) }
+    else { controller.observe(next, from: sender) }
+    check(mainQueueCache.permitsConfiguredCraftInvocation(capabilityVersion: 2), "메인 큐 캐시는 여전히 이전 허용 상태")
+    _ = link.unhold(wirePeer); drain()
+    check(wirePeer.sent.count == (change == "unchanged" ? 1 : 0), "실제 첫 송신은 새 권한·세대를 동기 확인")
+    check(terminal == (change == "unchanged" ? .submitted : .cancelled), "변경된 stamp는 송신 전 취소로 종료")
+    _ = link.unhold(wirePeer); drain()
+    check(wirePeer.sent.count == (change == "unchanged" ? 1 : 0), "관측·취소 뒤 자동 재송신 없음")
+}
+
 print("RESULT_ASSERTIONS \(assertions)")
 exit(failures == 0 ? 0 : 1)

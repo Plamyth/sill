@@ -2,6 +2,22 @@ import Foundation
 import StreamProtocol
 
 final class VisionSentryController {
+    final class CraftAdmissionGate {
+        private let lock = NSLock()
+        private var current: UUID?
+
+        fileprivate func replace(_ stamp: UUID?) {
+            lock.lock(); defer { lock.unlock() }
+            current = stamp
+        }
+
+        func accepts(_ stamp: UUID) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            return current == stamp
+        }
+    }
+
+    let craftAdmissionGate = CraftAdmissionGate()
     private struct CapabilityHeader: Decodable {
         let version: Int
         let role: String?
@@ -117,6 +133,7 @@ final class VisionSentryController {
         let epoch: VideoEpoch?
         let display: UInt32?
         let launch: String?
+        let craftCapability: Int?
 
         init?(_ list: WindowList) {
             guard let state = list.sentry, state.version == 1,
@@ -125,6 +142,7 @@ final class VisionSentryController {
             self.state = state
             source = list.active; generation = list.inputGeneration; epoch = list.videoEpoch
             display = list.activeDisplayID; launch = list.launchID
+            craftCapability = list.configuredCraftActions
         }
     }
 
@@ -143,7 +161,15 @@ final class VisionSentryController {
     private var catalog: Catalog?
     private var pending: Pending?
     private var retiredRevisions: Set<UUID> = []
-    private var value = Snapshot()
+    private var value = Snapshot() {
+        didSet { refreshCraftAdmissionLocked() }
+    }
+    private struct CraftAuthority: Equatable {
+        let peer: ObjectIdentifier
+        let catalog: Catalog
+    }
+    private var craftAuthority: CraftAuthority?
+    private var craftStamp: UUID?
     let store: VisionSentryRequestStore
     private var identity: VisionSentryStoredRequest.Binding?
     private var records: [VisionSentryStoredRequest] = []
@@ -170,6 +196,33 @@ final class VisionSentryController {
     var snapshot: Snapshot {
         lock.lock(); defer { lock.unlock() }
         return value
+    }
+
+    func configuredCraftAdmission(to sender: ObjectIdentifier, capabilityVersion: Int,
+                                  expectedState: SentryState?) -> UUID? {
+        lock.lock(); defer { lock.unlock() }
+        guard let authority = craftAuthority, authority.peer == sender,
+              authority.catalog.craftCapability == capabilityVersion,
+              authority.catalog.state == expectedState else { return nil }
+        return craftStamp
+    }
+
+    private func refreshCraftAdmissionLocked() {
+        let next: CraftAuthority?
+        if trusted, let peer, let catalog, catalog.source != .none, value.state == catalog.state,
+           value.permitsConfiguredCraftInvocation(capabilityVersion: catalog.craftCapability) {
+            next = CraftAuthority(peer: peer, catalog: catalog)
+        } else { next = nil }
+        guard next != craftAuthority else { return }
+        craftAuthority = next
+        craftStamp = next.map { _ in UUID() }
+        craftAdmissionGate.replace(craftStamp)
+    }
+
+    private func invalidateCraftAdmissionLocked() {
+        craftAuthority = nil
+        craftStamp = nil
+        craftAdmissionGate.replace(nil)
     }
 
     func bind(_ next: ObjectIdentifier?, trusted: Bool, identity: VisionSentryStoredRequest.Binding? = nil) {
@@ -204,6 +257,7 @@ final class VisionSentryController {
             }
         }
         if catalog != next {
+            invalidateCraftAdmissionLocked()
             let continuing = controlPending?.admitted == true && catalog?.state.hostBootID == next.state.hostBootID &&
                 catalog?.state.sessionID == next.state.sessionID &&
                 catalog?.state.control?.authorizationGeneration == next.state.control?.authorizationGeneration
@@ -305,6 +359,7 @@ final class VisionSentryController {
     }
 
     private func clearLocked() {
+        invalidateCraftAdmissionLocked()
         finishLocked()
         catalog = nil
         value = Snapshot()

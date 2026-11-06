@@ -5209,6 +5209,7 @@ extension StreamClient {
               visionConfiguredCraftReadScope == scope, let expected = connection,
               authenticatedVisionMacAudioPeer == ObjectIdentifier(expected) else { return false }
         let permit: UUID?
+        let craftAdmission: UUID?
         let now = ProcessInfo.processInfo.systemUptime
         var deadline = now + VisionConfiguredCraftAction.responseBudget
         if control.operation == .invoke {
@@ -5216,10 +5217,13 @@ extension StreamClient {
                   visionConfiguredCraftContext.mediaReady,
                   visionSentrySnapshot.permitsConfiguredCraftInvocation(capabilityVersion: capability),
                   let freshUntil = visionForwarding?.freshUntil, freshUntil > now,
-                  let current = visionInputPermit else { return false }
+                  let current = visionInputPermit,
+                  let admission = visionSentry.configuredCraftAdmission(to: ObjectIdentifier(expected),
+                      capabilityVersion: capability, expectedState: visionSentrySnapshot.state) else { return false }
             permit = current
+            craftAdmission = admission
             deadline = min(deadline, freshUntil)
-        } else { permit = nil }
+        } else { permit = nil; craftAdmission = nil }
         let payload = Wire.encode(control)
         guard payload.count <= 4096 else { return false }
         let bytes = StreamMessage(kind: .configuredCraftActionControl, timestamp: Date().timeIntervalSince1970,
@@ -5228,7 +5232,10 @@ extension StreamClient {
         guard visionConfiguredCraftReadScope == scope,
               control.operation != .invoke || (visionConfiguredCraftContext.fence == fence && visionConfiguredCraftContext.mediaReady) else { return false }
         let id = control.requestId
-        let submission = SessionLink.Submission(deadline: deadline) { [weak self] outcome in
+        let craftGate = visionSentry.craftAdmissionGate
+        let submission = SessionLink.Submission(deadline: deadline, isCurrent: {
+            control.operation != .invoke || craftAdmission.map { craftGate.accepts($0) } == true
+        }) { [weak self] outcome in
             switch outcome {
             case .cancelled: self?.visionConfiguredCraftAction.sendCancelled(id)
             case .submitted: self?.visionConfiguredCraftAction.submitted(id)
