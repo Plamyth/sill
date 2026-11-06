@@ -5227,8 +5227,10 @@ extension StreamClient {
               control.operation != .invoke || (visionConfiguredCraftContext.fence == fence && visionConfiguredCraftContext.mediaReady) else { return false }
         let id = control.requestId
         let submission = SessionLink.Submission(deadline: deadline) { [weak self] outcome in
-            guard outcome == .cancelled else { return }
-            self?.visionConfiguredCraftAction.sendCancelled(id)
+            switch outcome {
+            case .cancelled: self?.visionConfiguredCraftAction.sendCancelled(id)
+            case .submitted: self?.visionConfiguredCraftAction.submitted(id)
+            }
         }
         visionConfiguredCraftSubmission = (id, submission)
         return link.send(bytes, onlyOn: expected, permit: permit, submission: submission)

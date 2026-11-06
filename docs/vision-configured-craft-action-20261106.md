@@ -20,7 +20,7 @@ Catalog/query는 기존 인증 TLS 연결의 읽기 전용 명령이다. capabil
 
 준비는 기존 VisionRemoteAudioAuthority의 단일 owner와 방향별 revision을 사용한다. 명시 선택이 없을 때만 기본 입출력을 준비하고, 명시 OFF/다른 장치는 보존한다. Store는 실제 pendingNativeSelection과 manual ticket을 거쳐 기존 reconcileVisionForwarding·visionAudio.enable·toggleVisionMicrophone/startVisionMicrophoneAutomatically를 사용한다. 새 producer나 native API를 만들지 않았다. 준비 함수는 mediaReady를 생성하지 않는다. 현재 fresh forwarding snapshot, 실제 로컬 microphone/playback 상태와 정리 상태를 읽어 선택 방향과 일치해야 한다. 확인된 both OFF도 허용하며 active call을 요구하지 않는다.
 
-준비 영수증은 operationId·host·원 선택·방향 revision을 보관한다. 취소는 해당 영수증의 현재 revision만 되돌린다. 준비 후 사용자 한 방향 변경은 그대로 두고 준비가 만든 다른 방향만 회수한다. 새 operation·다른 창·다른 host의 새 선택은 늦은 취소가 건드리지 않는다. 원래 선택 부재의 준비 전체를 취소하면 미선택 상태를 복원한다. 이미 존재한 명시 선택과 기존 실행 자원은 보존한다. 인계가 끝난 준비는 기존 독립 마이크/스피커 의도로 남고, 실제 통화 상태를 추정하지 않는다.
+준비 영수증은 operationId·host·원 선택·방향 revision을 보관한다. 취소는 해당 영수증의 현재 revision만 되돌린다. 준비 후 사용자 한 방향 변경은 그대로 두고 준비가 만든 다른 방향만 회수한다. 새 operation·다른 창·다른 host의 새 선택은 늦은 취소가 건드리지 않는다. 원래 선택 부재의 준비 전체를 취소하면 미선택 상태를 복원한다. 이미 존재한 명시 선택과 기존 실행 자원은 보존한다. writer의 큐 접수만으로 준비 소유권을 넘기지 않으며 실제 Submission.submitted 또는 상관 응답으로 인계를 확인한다. 송신 전 취소는 준비 영수증으로 원래 선택을 복원한다. 인계가 끝난 준비는 기존 독립 마이크/스피커 의도로 남고, 실제 통화 상태를 추정하지 않는다.
 
 scene/foreground/focus·window/admission·video·connection·선택 revision·장치 revision과 Sentry 상태 변화는 같은 모델을 갱신한다. 준비 취소 후 늦은 readback은 invoke를 만들지 않는다. UI 소멸 취소는 그 UI가 만든 operationId에만 결속된다. 기존 연결 초기화와 Store retirement에도 취소가 연결된다. 기존 active native call 종료 식별자·오류·정리 경로는 보존한다.
 

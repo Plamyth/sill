@@ -266,6 +266,7 @@ final class VisionConfiguredCraftActionExecutor: ObservableObject {
         let control: ConfiguredCraftActionControl
         let scope: ReadScope
         let until: Double
+        var submitted = false
     }
     @Published private(set) var model = Action()
     @Published private(set) var problem: String?
@@ -390,6 +391,7 @@ final class VisionConfiguredCraftActionExecutor: ObservableObject {
               clock().isFinite, clock() < pending.until,
               let state = try? ConfiguredCraftActionState.decode(data), state.deviceId == incoming.device,
               state.matches(pending.control) else { return false }
+        submitted(state.requestId)
         clearPending()
         if let catalog = state.catalog {
             if self.catalog != catalog { catalogRevision = UUID() }
@@ -428,6 +430,15 @@ final class VisionConfiguredCraftActionExecutor: ObservableObject {
         problem = "음성 명령 요청의 전송을 확인하지 못했습니다."
         scheduleDeadline()
     }
+    func submitted(_ id: UUID) {
+        guard var pending, pending.control.requestId == id, !pending.submitted,
+              pending.control.operation == .invoke, pending.scope == readScope(),
+              let operation = model.operation, pending.control.targetOperationId == operation.request.operationId,
+              context.fence == operation.fence else { return }
+        pending.submitted = true
+        self.pending = pending
+        finishPreparation(operation)
+    }
     private func execute(_ effect: Action.Effect?) {
         guard let effect else { return }
         switch effect {
@@ -445,7 +456,6 @@ final class VisionConfiguredCraftActionExecutor: ObservableObject {
                 cancelPreparation(operation); execute(model.cancel()); return
             }
             submit(.init(requestId: UUID(), client: request), fence: operation.fence)
-            if pending?.control.client?.operationId == request.operationId { finishPreparation(operation) }
         case .cancelPreparation(let operation):
             cancelPreparation(operation)
             if pending?.control.targetOperationId == operation.request.operationId { clearPending() }
