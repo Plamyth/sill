@@ -135,7 +135,10 @@ for line in sys.stdin:
         assert method in {'bootstrap', 'inspectRuntime', 'forwardingRequest', 'hold', 'after-request'}, '요청 검사 중 허용되지 않은 RPC'
     if mode.startswith('evidence-'):
         assert method in {'bootstrap', 'inspectRuntime', 'forwardingEvidence', 'hold', 'after-evidence'}, '연결 근거 검사 중 허용되지 않은 RPC'
-    if method == 'bootstrap':
+    if mode == 'latency' and method not in ['bootstrap', 'inspectRuntime']:
+        time.sleep(float(payload['delay']))
+        result = 1
+    elif method == 'bootstrap':
         result = dict(participantId='s23.audio.relay', capabilities=['quiesce-v1', 'inspect-v1', 'runtime-v1', 'forwarding-v1'])
     elif method == 'inspectRuntime':
         result = dict(runtimeVersion=1, serverListening=True, address='127.0.0.1', port=0,

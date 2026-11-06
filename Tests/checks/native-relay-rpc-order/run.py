@@ -8,14 +8,24 @@ import sys
 import tempfile
 
 root = Path(sys.argv[1]).resolve()
-assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered'], ['bootstrap'], ['evidence']]
+assert sys.argv[2:] in [[], ['http-admission'], ['conflict'], ['registered'], ['bootstrap'], ['evidence'], ['latency']]
 check = root / 'Tests/checks/native-relay-rpc-order'
 names = ['Sources/SillHost/LocalAudioRelay.swift', 'Sources/SillHost/LocalAudioParticipants.swift',
          'Sources/SillHost/AudioForwardingContract.swift', 'Sources/SillHost/RemoteAccess.swift',
          'Sources/SillHost/AudioForwardingCoordinator.swift', 'Sources/SillHost/HostLog.swift',
          'Sources/SillHost/ProviderCallBridge.swift']
+server_path = root / 'Sources/SillHost/StreamServer.swift'
+role_path = root / 'Sources/SillHost/StreamPeerRole.swift'
 protocol = sorted((root / 'Sources/StreamProtocol').glob('*.swift'))
-sources = [root / n for n in names] + sorted(check.glob('*.swift')) + [check / 'child.py', Path(__file__).resolve()] + protocol
+sources = [root / n for n in names] + sorted(check.glob('*.swift')) + [check / 'child.py', Path(__file__).resolve(), server_path, role_path] + protocol
+def block(text, marker):
+    start = text.index(marker)
+    end = text.index('{', start) + 1
+    depth = 1
+    while depth:
+        depth += (text[end] == '{') - (text[end] == '}')
+        end += 1
+    return text[start:end]
 def hashes():
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
 before = hashes()
@@ -32,6 +42,10 @@ extension LocalAudioRelay {
 }
 '''
     (out / 'Relay.swift').write_text(source)
+    server_fixture = (check / 'ServerLatency.swift').read_text()
+    for marker in ['final class ForwardingExchange:', 'private func receiveForwarding(', 'func sendForwardingState(']:
+        server_fixture = server_fixture.replace('// ' + marker, block(server_path.read_text(), marker).removeprefix('private '))
+    (out / 'Server.swift').write_text(server_fixture)
     access = (root / names[3]).read_text()
     paired = access[access.index('struct AudioForwardingPairedDevice:'):access.index('\n/// Pairing')]
     (out / 'Paired.swift').write_text('import Foundation\nimport StreamProtocol\n' + paired.replace('fileprivate init(', 'init('))
@@ -47,11 +61,13 @@ extension LocalAudioRelay {
         '-emit-module-path', str(out / 'StreamProtocol.swiftmodule')], timeout=120, capture_output=True, text=True)
     print(module.stdout + module.stderr, end='')
     compile_result = None
-    if module.returncode == 0:
+    parsed = subprocess.run(['swiftc', '-frontend', '-parse', str(server_path)], timeout=120, capture_output=True, text=True)
+    print(parsed.stdout + parsed.stderr, end='')
+    if module.returncode == 0 and parsed.returncode == 0:
         compile_result = subprocess.run(shared + ['-parse-as-library', '-I', str(out), '-L', str(out), '-lStreamProtocol',
             '-Xlinker', '-rpath', '-Xlinker', str(out), str(out / 'Relay.swift'), str(out / 'Registry.swift'),
             str(root / names[2]), str(root / names[4]), str(root / names[5]), str(out / 'Models.swift'),
-            str(out / 'Paired.swift'), str(check / 'Main.swift'),
+            str(out / 'Paired.swift'), str(check / 'Main.swift'), str(check / 'Latency.swift'), str(out / 'Server.swift'), str(role_path),
             '-o', str(binary)], timeout=120, capture_output=True, text=True)
         print(compile_result.stdout + compile_result.stderr, end='')
     executed = None
@@ -70,8 +86,10 @@ extension LocalAudioRelay {
                 pass
         executed = worker
         print(output, end='')
+        if sys.argv[2:] == ['latency']:
+            assert not any(prefix in output for prefix in ['audio.trace relayRPC ', 'audio.trace relayRead ', 'audio.trace forwardingReply ']), 'diagnostics reached synchronous stdout'
     after = hashes()
-    receipt = dict(protocolCompileExit=module.returncode, compileExit=compile_result.returncode if compile_result else None,
+    receipt = dict(protocolCompileExit=module.returncode, serverSyntaxExit=parsed.returncode, compileExit=compile_result.returncode if compile_result else None,
         checksExit=executed.returncode if executed else None,
         sourceHashes=before, sharedModuleSourceHashes=protocol_hashes, sourceUnchanged=before == after,
         extractedRelaySHA256=hashlib.sha256(source.encode()).hexdigest(),

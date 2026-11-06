@@ -181,12 +181,51 @@ final class LocalAudioRelay {
         let deadline: ContinuousClock.Instant
         let completion: CheckedContinuation<Data?, Never>
         let timer: Task<Void, Never>
+        let trace: CallTrace
+    }
+
+    private final class CallTrace: @unchecked Sendable {
+        let request: UUID
+        let started = DispatchTime.now().uptimeNanoseconds
+        var acquired: UInt64?
+        var readAt: UInt64?
+        var readHop: UInt64 = 0
+        var phase = "queue"
+        var sent = false
+        var success = false
+        var finished = false
+        let io = OSAllocatedUnfairLock(initialState: (write: UInt64?.none, read: UInt64?.none))
+        init(_ request: UUID) { self.request = request }
+
+        static func milliseconds(_ end: UInt64, since start: UInt64) -> Double {
+            Double(end >= start ? end - start : 0) / 1_000_000
+        }
+    }
+    private static var rpcTracesRemaining = 64
+
+    private func recordCall(_ method: String, _ trace: CallTrace) {
+        trace.finished = true
+        let end = DispatchTime.now().uptimeNanoseconds
+        let total = CallTrace.milliseconds(end, since: trace.started)
+        guard Self.rpcTracesRemaining > 0, !trace.success || total >= 250 else { return }
+        Self.rpcTracesRemaining -= 1
+        let allowed = ["bootstrap", "inspectRuntime", "fenceAndQuiesce", "inspect", "forwardingRegister",
+            "forwardingBootstrap", "forwardingEvidence", "forwardingConfigure", "forwardingSnapshot", "forwardingCommit",
+            "forwardingRequest", "forwardingPrepare", "forwardingDisconnect", "forwardingLocalReturn", "forwardingRevoke",
+            "forwardingProviderAcquire", "forwardingProviderDispatch", "forwardingProviderCancel", "forwardingProviderRelease"]
+        let safeMethod = allowed.contains(method) ? method : "other"
+        let times = trace.io.withLock { $0 }
+        let write = times.write
+        let writeQueue = write.flatMap { write in trace.acquired.map { CallTrace.milliseconds(write, since: $0) } }
+        let writeToRead = write.flatMap { write in times.read.map { CallTrace.milliseconds($0, since: write) } }
+        HostLog.shared.append("audio.trace relayRPC method=\(safeMethod) request=\(trace.request) startedNs=\(trace.started) endedNs=\(end) totalMs=\(total) queueMs=\(CallTrace.milliseconds(trace.acquired ?? end, since: trace.started)) acquiredToWriteMs=\(writeQueue.map(String.init(describing:)) ?? "unobserved") writeToReadMs=\(writeToRead.map(String.init(describing:)) ?? "unobserved") readNs=\(times.read.map(String.init) ?? "unobserved") readHopMs=\(trace.readAt == nil ? "unobserved" : String(describing: Double(trace.readHop) / 1_000_000)) phase=\(trace.phase) sent=\(trace.sent) success=\(trace.success)")
     }
     private struct Waiting {
         let id: UUID
         let deadline: ContinuousClock.Instant
         let completion: CheckedContinuation<Bool, Never>
         let timer: Task<Void, Never>
+        let trace: CallTrace
     }
 
     private let participants: LocalAudioParticipantRegistry
@@ -197,6 +236,7 @@ final class LocalAudioRelay {
     private let input = Pipe()
     private let output = Pipe()
     private let writer = DispatchQueue(label: "ccr.audio-relay.control.write")
+    private nonisolated let readingTrace = OSAllocatedUnfairLock(initialState: CallTrace?.none)
     private let controllerBootId = UUID()
     private var state = State.idle
     private var buffer = Data()
@@ -232,9 +272,23 @@ final class LocalAudioRelay {
             let count = Darwin.read(handle.fileDescriptor, &bytes, bytes.count)
             if count < 0, errno == EINTR { return }
             let chunk = count > 0 ? Data(bytes.prefix(count)) : nil
+            let readAt = DispatchTime.now().uptimeNanoseconds
+            let trace = self?.readingTrace.withLock { $0 }
+            if chunk != nil { trace?.io.withLock { $0.read = $0.read ?? readAt } }
             Task { @MainActor in
                 guard let self else { return }
-                guard let chunk, !chunk.isEmpty else { self.lost(); return }
+                if let trace {
+                    trace.readAt = trace.readAt ?? readAt
+                    let now = DispatchTime.now().uptimeNanoseconds
+                    trace.readHop = max(trace.readHop, now >= readAt ? now - readAt : 0)
+                    if trace.finished, trace.readHop >= 250_000_000, Self.rpcTracesRemaining > 0 {
+                        Self.rpcTracesRemaining -= 1
+                        HostLog.shared.append("audio.trace relayRead request=\(trace.request) readNs=\(readAt) mainNs=\(now) readHopMs=\(Double(trace.readHop) / 1_000_000) phase=afterCompletion")
+                    }
+                    if self.pending?.id == trace.request, let deadline = self.pending?.deadline,
+                       ContinuousClock.now >= deadline { trace.phase = "receiveDeadline" }
+                }
+                guard let chunk, !chunk.isEmpty else { self.pending?.trace.phase = "pipeClosed"; self.lost(); return }
                 self.receive(chunk)
             }
         }
@@ -656,20 +710,21 @@ final class LocalAudioRelay {
         return reply?.result
     }
 
-    private func acquireCall(_ id: UUID, until deadline: ContinuousClock.Instant) async -> Bool {
+    private func acquireCall(_ id: UUID, until deadline: ContinuousClock.Instant, trace: CallTrace) async -> Bool {
         guard !Task.isCancelled, ContinuousClock.now < deadline else { return false }
         if case .closed = state { return false }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { completion in
                 if activeCall == nil {
                     activeCall = id
+                    trace.acquired = DispatchTime.now().uptimeNanoseconds
                     completion.resume(returning: true)
                 } else {
                     let timer = Task { [weak self] in
                         try? await ContinuousClock().sleep(until: deadline)
                         if !Task.isCancelled { self?.removeWaiting(id) }
                     }
-                    waiting.append(Waiting(id: id, deadline: deadline, completion: completion, timer: timer))
+                    waiting.append(Waiting(id: id, deadline: deadline, completion: completion, timer: timer, trace: trace))
                 }
             }
         } onCancel: { [weak self] in Task { @MainActor in self?.removeWaiting(id) } }
@@ -692,6 +747,7 @@ final class LocalAudioRelay {
                 next.completion.resume(returning: false)
             } else {
                 activeCall = next.id
+                next.trace.acquired = DispatchTime.now().uptimeNanoseconds
                 next.completion.resume(returning: true)
                 return
             }
@@ -701,15 +757,26 @@ final class LocalAudioRelay {
     private func call<Payload: Encodable, Result: Decodable>(_ method: String, payload: Payload,
         until deadline: ContinuousClock.Instant, admission: (@MainActor () -> Bool)? = nil) async -> Reply<Result>? {
         let requestId = UUID()
-        guard await acquireCall(requestId, until: deadline) else { return nil }
+        let trace = CallTrace(requestId)
+        defer { recordCall(method, trace) }
+        guard await acquireCall(requestId, until: deadline, trace: trace) else {
+            trace.phase = Task.isCancelled ? "queueCancelled" : ContinuousClock.now >= deadline ? "queueDeadline" : "queueClosed"
+            return nil
+        }
+        trace.phase = "acquired"
         defer { releaseCall(requestId) }
-        guard !Task.isCancelled, ContinuousClock.now < deadline else { return nil }
+        guard !Task.isCancelled, ContinuousClock.now < deadline else {
+            trace.phase = Task.isCancelled ? "acquiredCancelled" : "acquiredDeadline"
+            return nil
+        }
         guard sequence < UInt64.max, process.isRunning else {
+            trace.phase = "processOrSequence"
             lost(); return nil
         }
         let expectedState = state
         let expectedProcessId = process.processIdentifier
         let expectedBoot: UUID?
+        trace.phase = "state"
         switch state {
         case .bootstrapping: guard method == "bootstrap" else { lost(); return nil }; expectedBoot = nil
         case .checkingRuntime(let boot): guard method == "inspectRuntime" else { lost(); return nil }; expectedBoot = boot
@@ -721,36 +788,48 @@ final class LocalAudioRelay {
         let request = Request(controllerBootId: controllerBootId, sequence: expectedSequence,
                               requestId: requestId, method: method, payload: payload)
         guard var bytes = try? JSONEncoder().encode(request), bytes.count < LocalAudioRelayJSON.limit else {
+            trace.phase = "encoding"
             lost(); return nil
         }
         bytes.append(10)
         var sent = false
         let response: Data? = await withTaskCancellationHandler {
             await withCheckedContinuation { completion in
-                guard admission?() != false, activeCall == requestId, state == expectedState,
+                let admitted = admission?() != false
+                guard admitted, activeCall == requestId, state == expectedState,
                       process.isRunning, process.processIdentifier == expectedProcessId,
                       !Task.isCancelled, ContinuousClock.now < deadline else {
+                    trace.phase = !admitted ? "admission" : Task.isCancelled ? "acquiredCancelled" : ContinuousClock.now >= deadline ? "acquiredDeadline" : "identityChanged"
                     completion.resume(returning: nil)
                     return
                 }
                 sequence = nextSequence
                 sent = true
+                trace.sent = true
+                trace.phase = "responseClosed"
                 let timer = Task { [weak self] in
                     try? await ContinuousClock().sleep(until: deadline)
-                    if !Task.isCancelled, self?.pending?.id == requestId { self?.lost() }
+                    if !Task.isCancelled, self?.pending?.id == requestId { trace.phase = "responseDeadline"; self?.lost() }
                 }
-                pending = Pending(id: requestId, deadline: deadline, completion: completion, timer: timer)
+                pending = Pending(id: requestId, deadline: deadline, completion: completion, timer: timer, trace: trace)
+                readingTrace.withLock { $0 = trace }
                 let handle = input.fileHandleForWriting, frame = bytes
                 writer.async { [weak self] in
+                    trace.io.withLock { $0.write = DispatchTime.now().uptimeNanoseconds }
                     do { try handle.write(contentsOf: frame) }
-                    catch { Task { @MainActor in self?.lost() } }
+                    catch { Task { @MainActor in trace.phase = "writeFailed"; self?.lost() } }
                 }
             }
         } onCancel: { [weak self] in Task { @MainActor in
-            if self?.pending?.id == requestId { self?.lost() }
+            if self?.pending?.id == requestId { trace.phase = "responseCancelled"; self?.lost() }
         } }
         guard sent else { return nil }
-        guard let response, !Task.isCancelled, ContinuousClock.now < deadline else { lost(); return nil }
+        guard let response, !Task.isCancelled, ContinuousClock.now < deadline else {
+            if Task.isCancelled { trace.phase = "responseCancelled" }
+            else if ContinuousClock.now >= deadline, trace.phase == "responseClosed" { trace.phase = "responseDeadline" }
+            lost(); return nil
+        }
+        trace.phase = "replyValidation"
         do {
             try LocalAudioRelayJSON.validate(response)
             let reply = try JSONDecoder().decode(Reply<Result>.self, from: response)
@@ -760,6 +839,8 @@ final class LocalAudioRelay {
                   expectedBoot == nil || reply.relayBootId == expectedBoot,
                   process.isRunning else { lost(); return nil }
             if case .closed = state { return nil }
+            trace.phase = "reply"
+            trace.success = true
             return reply
         } catch { lost(); return nil }
     }
@@ -773,6 +854,7 @@ final class LocalAudioRelay {
         let response = Data(buffer[..<newline])
         buffer.removeAll(keepingCapacity: false)
         self.pending = nil
+        readingTrace.withLock { $0 = nil }
         pending.timer.cancel()
         pending.completion.resume(returning: response)
     }
@@ -792,6 +874,7 @@ final class LocalAudioRelay {
         registeredBoot = nil
         let completing = pending
         pending = nil
+        readingTrace.withLock { $0 = nil }
         completing?.timer.cancel()
         completing?.completion.resume(returning: nil)
         buffer.removeAll(keepingCapacity: false)

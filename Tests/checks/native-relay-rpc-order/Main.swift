@@ -68,6 +68,11 @@ import StreamProtocol
         precondition(condition(), "test barrier expired")
     }
     @MainActor static func main() async {
+        if CommandLine.arguments.last == "latency" {
+            await latencyDiagnostics()
+            print("PASS \(assertions) latency diagnostics assertions. Actual pipe and inert child only.")
+            return
+        }
         if CommandLine.arguments.last == "evidence" {
             await evidenceScope()
             print("연결 근거 검사 \(assertions)개 통과. 실제 비공개 파이프와 inert 자식만 사용.")
