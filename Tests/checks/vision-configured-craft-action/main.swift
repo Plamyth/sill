@@ -375,6 +375,9 @@ acceptFixtureCatalog()
 executor.begin(heldFor: 0.5, issuedAt: date)
 executorContext.readback = readyReadback(.init(playback: true, microphone: true))
 executor.refresh(); executor.refresh()
+expect(finishCalls == 0, "writer의 큐 접수만으로 준비 소유권을 넘기지 않음; 관측=\(finishCalls)")
+executor.submitted(lastControl!.requestId)
+executor.submitted(lastControl!.requestId)
 expect(sends == 1 && finishCalls == 1 && preparationIDs.last == sentIDs.last,
        "현재 fresh readback 뒤 같은 operation을 단 한 번 송신·준비 인계함")
 executorClock = 111
@@ -423,6 +426,8 @@ executor.begin(heldFor: 0.5, issuedAt: date)
 executorContext.readback = readyReadback(.init(playback: true, microphone: true)); executor.refresh()
 let invokedControl = lastControl!
 expect(invokedControl.operation == .invoke && sends == 2, "제품 executor는 공통 invoke envelope를 한 번 작성함")
+executor.submitted(UUID())
+expect(finishCalls == 1, "다른 requestId의 늦은 submitted가 현재 준비를 인계하지 않음")
 let uncertain = try ConfiguredCraftActionState(control: invokedControl, deviceId: fixtureReadScope()!.device, error: "unavailable")
 expect(executor.receive(try JSONEncoder().encode(uncertain), in: fixtureReadScope()!), "invoke 외부 error union을 수용함")
 if case .unknown = executor.model.phase {} else { fatalError("외부 unavailable을 rejected로 승격했습니다") }
