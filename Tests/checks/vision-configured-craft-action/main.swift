@@ -603,4 +603,37 @@ for replacement in ["1.0", "1e0", "true"] {
            "실제 state raw decoder는 분수·지수·boolean 숫자 별칭을 거절함")
 }
 
+func knownQueryResult(invoked: Bool) -> (Action, Action.Operation, Action.Context) {
+    var current = Action.Context(hostKey: "trusted-host", scope: scope, binding: binding,
+        routeGeneration: UUID(), capabilityPresent: true, routeImplemented: true, admitted: true)
+    current.readback = readyReadback(.init(playback: true, microphone: true))
+    var action = Action()
+    _ = action.begin(heldFor: 0.5, context: current, now: 100, issuedAt: date, operationId: UUID.init)
+    _ = action.advance(context: current, now: 101)
+    guard let operation = action.operation else { fatalError("query fixture operation missing") }
+    expect(action.takeInvocation(operation, context: current, now: 102) != nil, "조회 보존 대조군을 한 번 제출함")
+    let known = try! Action.Result(outcome: .unknown, operationId: operation.request.operationId,
+        deviceId: AudioForwardingDeviceID(hex: binding.deviceId)!, bindingSha256: assignment,
+        invoked: invoked, reason: "executor-submitted-result-unknown")
+    expect(action.receive(known, context: current, now: 103), "기존 원 operation의 미확인 결과를 수용함")
+    return (action, operation, current)
+}
+for knownInvoked in [false, true] {
+    var (action, operation, current) = knownQueryResult(invoked: knownInvoked)
+    let weak = try Action.Result(outcome: .unknown, operationId: operation.request.operationId,
+        deviceId: AudioForwardingDeviceID(hex: binding.deviceId)!, bindingSha256: nil, invoked: false)
+    expect(action.receiveReadback(weak, hostKey: current.fence!.hostKey,
+        device: AudioForwardingDeviceID(hex: binding.deviceId)!), "같은 operation의 조회 응답을 처리함")
+    guard case .completed(_, let saved) = action.phase else { fatalError("known query result missing") }
+    expect(saved.invoked == knownInvoked && saved.bindingSha256 == assignment &&
+        saved.reason == "executor-submitted-result-unknown", "약한 조회가 기존 실행 인계·binding·reason을 지우지 않음")
+}
+var (knownInvokedAction, knownInvokedOperation, knownInvokedContext) = knownQueryResult(invoked: true)
+let beforeRejectedQuery = knownInvokedAction.phase
+let rejectedQuery = try Action.Result(outcome: .rejected, operationId: knownInvokedOperation.request.operationId,
+    deviceId: AudioForwardingDeviceID(hex: binding.deviceId)!, bindingSha256: nil, invoked: false)
+expect(!knownInvokedAction.receiveReadback(rejectedQuery, hostKey: knownInvokedContext.fence!.hostKey,
+    device: AudioForwardingDeviceID(hex: binding.deviceId)!) && knownInvokedAction.phase == beforeRejectedQuery,
+    "이미 확인한 인계를 rejected false로 낮추지 않음")
+
 print("PASS \(checks) configured Craft action checks; actual Host/Core/device/media/input actions 0")
